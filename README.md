@@ -42,6 +42,9 @@ These safeguards reduce accidental actions; they are not a security boundary.
 
 - Windows 10 or 11
 - Python 3.10 or newer from [python.org](https://www.python.org/downloads/)
+- [Microsoft C++ Build Tools](https://visualstudio.microsoft.com/visual-cpp-build-tools/)
+  with the **Desktop development with C++** workload (required to compile
+  Python packages with native extensions)
 - A microphone and audio output
 - One supported LLM provider
 - Internet access for cloud models, Edge TTS, and networked plugins
