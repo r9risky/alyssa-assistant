@@ -1,0 +1,19 @@
+{
+  "pos_x": 1646,
+  "pos_y": 319,
+  "scale": 0.928,
+  "opacity": 1.0,
+  "always_on_top": true,
+  "character_image": "",
+  "character_image_talking": "",
+  "bubble_seconds": 7,
+  "talk_mouth_flap_enabled": true,
+  "talk_bounce_enabled": true,
+  "talk_bounce_height": 5,
+  "dim_when_idle_enabled": false,
+  "dim_when_idle_opacity": 55,
+  "dark_mode": true,
+  "color_theme": "emerald",
+  "chatbox_enabled": false,
+  "chatbox_position": "right"
+}

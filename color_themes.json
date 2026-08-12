@@ -1,0 +1,142 @@
+{
+    "dark": {
+        "name": "Dark Indigo",
+        "bg": "#0B0F19", "panel": "#151C2C", "card": "#1E293B", "border": "#2E3B52", "text": "#F8FAFC", "subtext": "#94A3B8",
+        "accent": "#6366F1", "accent_hover": "#818CF8", "accent_press": "#4F46E5", "accent2": "#38BDF8",
+        "header_grad_start": "#0F172A", "header_grad_end": "#1E1B4B",
+        "menu_hover": "#243047", "slider_groove": "#1E293B", "slider_fill": "#6366F1",
+        "success": "#10B981", "warning": "#F59E0B", "danger": "#EF4444",
+        "bubble_top": [21, 28, 44, 245], "bubble_bottom": [15, 20, 32, 245],
+        "bubble_border": [99, 102, 241, 190], "bubble_text": "#F8FAFC", "bubble_shadow": [2, 6, 12]
+    },
+    "light": {
+        "name": "Light Slate",
+        "bg": "#F8FAFC", "panel": "#FFFFFF", "card": "#F1F5F9", "border": "#E2E8F0", "text": "#0F172A", "subtext": "#64748B",
+        "accent": "#4F46E5", "accent_hover": "#6366F1", "accent_press": "#3730A3", "accent2": "#0EA5E9",
+        "header_grad_start": "#0F172A", "header_grad_end": "#1E293B",
+        "menu_hover": "#F1F5F9", "slider_groove": "#E2E8F0", "slider_fill": "#4F46E5",
+        "success": "#10B981", "warning": "#F59E0B", "danger": "#EF4444",
+        "bubble_top": [255, 255, 255, 250], "bubble_bottom": [248, 250, 252, 250],
+        "bubble_border": [79, 70, 229, 180], "bubble_text": "#0F172A", "bubble_shadow": [15, 23, 42]
+    },
+    "cyberpunk": {
+        "name": "Cyberpunk Neon",
+        "bg": "#090A0F", "panel": "#12131C", "card": "#1A1B29", "border": "#2D2F45", "text": "#F3F4F6", "subtext": "#9CA3AF",
+        "accent": "#00F0FF", "accent_hover": "#33F3FF", "accent_press": "#00B8C4", "accent2": "#FF007A",
+        "header_grad_start": "#120B24", "header_grad_end": "#051A2E",
+        "menu_hover": "#25273D", "slider_groove": "#1A1B29", "slider_fill": "#00F0FF",
+        "success": "#00FF9D", "warning": "#FFB800", "danger": "#FF0055",
+        "bubble_top": [18, 19, 28, 245], "bubble_bottom": [9, 10, 15, 245],
+        "bubble_border": [0, 240, 255, 190], "bubble_text": "#F3F4F6", "bubble_shadow": [0, 240, 255]
+    },
+    "emerald": {
+        "name": "Cyber Emerald",
+        "bg": "#06120E", "panel": "#0D1F19", "card": "#142D25", "border": "#1E4237", "text": "#ECFDF5", "subtext": "#6EE7B7",
+        "accent": "#10B981", "accent_hover": "#34D399", "accent_press": "#059669", "accent2": "#06B6D4",
+        "header_grad_start": "#022C22", "header_grad_end": "#064E3B",
+        "menu_hover": "#1A382E", "slider_groove": "#142D25", "slider_fill": "#10B981",
+        "success": "#34D399", "warning": "#F59E0B", "danger": "#F43F5E",
+        "bubble_top": [13, 31, 25, 245], "bubble_bottom": [6, 18, 14, 245],
+        "bubble_border": [16, 185, 129, 190], "bubble_text": "#ECFDF5", "bubble_shadow": [2, 44, 34]
+    },
+    "sunset": {
+        "name": "Sunset Crimson",
+        "bg": "#140A0D", "panel": "#211016", "card": "#2E1720", "border": "#472331", "text": "#FFF1F2", "subtext": "#FDA4AF",
+        "accent": "#F43F5E", "accent_hover": "#FB7185", "accent_press": "#E11D48", "accent2": "#F59E0B",
+        "header_grad_start": "#4C0519", "header_grad_end": "#881337",
+        "menu_hover": "#3B1E29", "slider_groove": "#2E1720", "slider_fill": "#F43F5E",
+        "success": "#10B981", "warning": "#F59E0B", "danger": "#FF0055",
+        "bubble_top": [33, 16, 22, 245], "bubble_bottom": [20, 10, 14, 245],
+        "bubble_border": [244, 63, 94, 190], "bubble_text": "#FFF1F2", "bubble_shadow": [76, 5, 25]
+    },
+    "dracula": {
+        "name": "Dracula Purple",
+        "bg": "#13101D", "panel": "#1D182B", "card": "#28213B", "border": "#3E345A", "text": "#F5F3FF", "subtext": "#A78BFA",
+        "accent": "#8B5CF6", "accent_hover": "#A78BFA", "accent_press": "#7C3AED", "accent2": "#EC4899",
+        "header_grad_start": "#2E1065", "header_grad_end": "#4C1D95",
+        "menu_hover": "#342B4D", "slider_groove": "#28213B", "slider_fill": "#8B5CF6",
+        "success": "#10B981", "warning": "#F59E0B", "danger": "#F43F5E",
+        "bubble_top": [29, 24, 43, 245], "bubble_bottom": [19, 16, 29, 245],
+        "bubble_border": [139, 92, 246, 190], "bubble_text": "#F5F3FF", "bubble_shadow": [46, 16, 101]
+    },
+    "midnight": {
+        "name": "Midnight Ocean",
+        "bg": "#0A111E", "panel": "#111A2E", "card": "#182642", "border": "#263B63", "text": "#F0F9FF", "subtext": "#7DD3FC",
+        "accent": "#0284C7", "accent_hover": "#38BDF8", "accent_press": "#0369A1", "accent2": "#06B6D4",
+        "header_grad_start": "#0C4A6E", "header_grad_end": "#075985",
+        "menu_hover": "#203254", "slider_groove": "#182642", "slider_fill": "#0284C7",
+        "success": "#10B981", "warning": "#F59E0B", "danger": "#EF4444",
+        "bubble_top": [17, 26, 46, 245], "bubble_bottom": [10, 17, 30, 245],
+        "bubble_border": [2, 132, 199, 190], "bubble_text": "#F0F9FF", "bubble_shadow": [12, 74, 110]
+    },
+    "sakura": {
+        "name": "Sakura Blossom",
+        "bg": "#1A0E17", "panel": "#271523", "card": "#351C30", "border": "#4D2946", "text": "#FDF2F8", "subtext": "#F472B6",
+        "accent": "#EC4899", "accent_hover": "#F472B6", "accent_press": "#DB2777", "accent2": "#FB7185",
+        "header_grad_start": "#4C0519", "header_grad_end": "#831843",
+        "menu_hover": "#3E1F39", "slider_groove": "#351C30", "slider_fill": "#EC4899",
+        "success": "#34D399", "warning": "#F59E0B", "danger": "#F43F5E",
+        "bubble_top": [39, 21, 35, 245], "bubble_bottom": [26, 14, 23, 245],
+        "bubble_border": [236, 72, 153, 190], "bubble_text": "#FDF2F8", "bubble_shadow": [76, 5, 25]
+    },
+    "nordic": {
+        "name": "Nordic Frost",
+        "bg": "#0B1320", "panel": "#131F33", "card": "#1B2B46", "border": "#2A4064", "text": "#F0F9FF", "subtext": "#93C5FD",
+        "accent": "#38BDF8", "accent_hover": "#60A5FA", "accent_press": "#0284C7", "accent2": "#A5F3FC",
+        "header_grad_start": "#0F172A", "header_grad_end": "#1E3A8A",
+        "menu_hover": "#233757", "slider_groove": "#1B2B46", "slider_fill": "#38BDF8",
+        "success": "#34D399", "warning": "#F59E0B", "danger": "#EF4444",
+        "bubble_top": [19, 31, 51, 245], "bubble_bottom": [11, 19, 32, 245],
+        "bubble_border": [56, 189, 248, 190], "bubble_text": "#F0F9FF", "bubble_shadow": [15, 23, 42]
+    },
+    "synthwave": {
+        "name": "Synthwave Amber",
+        "bg": "#140F0A", "panel": "#221810", "card": "#302216", "border": "#493422", "text": "#FEF3C7", "subtext": "#FDE047",
+        "accent": "#F59E0B", "accent_hover": "#FBBF24", "accent_press": "#D97706", "accent2": "#F97316",
+        "header_grad_start": "#451A03", "header_grad_end": "#78350F",
+        "menu_hover": "#3B2A1C", "slider_groove": "#302216", "slider_fill": "#F59E0B",
+        "success": "#10B981", "warning": "#FBBF24", "danger": "#EF4444",
+        "bubble_top": [34, 24, 16, 245], "bubble_bottom": [20, 15, 10, 245],
+        "bubble_border": [245, 158, 11, 190], "bubble_text": "#FEF3C7", "bubble_shadow": [69, 26, 3]
+    },
+    "tokyo": {
+        "name": "Tokyo Night",
+        "bg": "#1A1B26", "panel": "#24283B", "card": "#2F354F", "border": "#414868", "text": "#C0CAF5", "subtext": "#A9B1D6",
+        "accent": "#7AA2F7", "accent_hover": "#89DDFF", "accent_press": "#3D59A1", "accent2": "#BB9AF7",
+        "header_grad_start": "#16161E", "header_grad_end": "#24283B",
+        "menu_hover": "#343B58", "slider_groove": "#2F354F", "slider_fill": "#7AA2F7",
+        "success": "#9ECE6A", "warning": "#E0AF68", "danger": "#F7768E",
+        "bubble_top": [36, 40, 59, 245], "bubble_bottom": [26, 27, 38, 245],
+        "bubble_border": [122, 162, 247, 190], "bubble_text": "#C0CAF5", "bubble_shadow": [22, 22, 30]
+    },
+    "monokai": {
+        "name": "Monokai Charcoal",
+        "bg": "#19181A", "panel": "#222125", "card": "#2D2A2E", "border": "#403E41", "text": "#FCFCFA", "subtext": "#939293",
+        "accent": "#FFD866", "accent_hover": "#FFE49E", "accent_press": "#E6B800", "accent2": "#FF6188",
+        "header_grad_start": "#222125", "header_grad_end": "#363537",
+        "menu_hover": "#3A373B", "slider_groove": "#2D2A2E", "slider_fill": "#FFD866",
+        "success": "#A9DC76", "warning": "#FC9867", "danger": "#FF6188",
+        "bubble_top": [34, 33, 37, 245], "bubble_bottom": [25, 24, 26, 245],
+        "bubble_border": [255, 216, 102, 190], "bubble_text": "#FCFCFA", "bubble_shadow": [25, 24, 26]
+    },
+    "matcha": {
+        "name": "Matcha Sage",
+        "bg": "#0E1410", "panel": "#17221A", "card": "#213025", "border": "#324838", "text": "#F0FDF4", "subtext": "#86EFAC",
+        "accent": "#84CC16", "accent_hover": "#A3E635", "accent_press": "#65A30D", "accent2": "#34D399",
+        "header_grad_start": "#14532D", "header_grad_end": "#166534",
+        "menu_hover": "#283C2F", "slider_groove": "#213025", "slider_fill": "#84CC16",
+        "success": "#4ADE80", "warning": "#FACC15", "danger": "#F87171",
+        "bubble_top": [23, 34, 26, 245], "bubble_bottom": [14, 20, 16, 245],
+        "bubble_border": [132, 204, 22, 190], "bubble_text": "#F0FDF4", "bubble_shadow": [20, 83, 45]
+    },
+    "lavender": {
+        "name": "Lavender Dream",
+        "bg": "#FAF5FF", "panel": "#FFFFFF", "card": "#F3E8FF", "border": "#E9D5FF", "text": "#3B0764", "subtext": "#7E22CE",
+        "accent": "#9333EA", "accent_hover": "#A855F7", "accent_press": "#7E22CE", "accent2": "#C084FC",
+        "header_grad_start": "#3B0764", "header_grad_end": "#581C87",
+        "menu_hover": "#F3E8FF", "slider_groove": "#E9D5FF", "slider_fill": "#9333EA",
+        "success": "#10B981", "warning": "#F59E0B", "danger": "#EF4444",
+        "bubble_top": [255, 255, 255, 250], "bubble_bottom": [250, 245, 255, 250],
+        "bubble_border": [147, 51, 234, 180], "bubble_text": "#3B0764", "bubble_shadow": [59, 7, 100]
+    }
+}

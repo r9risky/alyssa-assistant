@@ -1,0 +1,142 @@
+"""
+Central Configuration Settings for Alyssa Assistant.
+"""
+import os
+
+# --- Identity ---
+ASSISTANT_NAME = 'Alyssa'
+CREATOR_NAME = "Riya"
+ASSISTANT_NAME_ALIASES = [
+    "alyssa", "alissa", "alisa", "alysa", "aleesa", "aleessa",
+    "alicia", "elisa", "elissa", "melissa", "larissa",
+]
+
+
+# --- LLM Provider ("ollama", "gemini", "openai", "anthropic", "custom_openai") ---
+LLM_PROVIDER = 'gemini'
+
+# --- Ollama Settings ---
+OLLAMA_MODEL = 'qwen2.5:3b'
+OLLAMA_URL = "http://localhost:11434/api/chat"
+OLLAMA_KEEP_ALIVE = "10m"
+
+# --- Gemini Settings ---
+GEMINI_API_KEY = ''
+GEMINI_MODEL = 'gemini-3.5-flash-lite'
+
+# --- OpenAI Settings ---
+OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "")
+OPENAI_MODEL = 'gpt-5-mini'
+OPENAI_BASE_URL = "https://api.openai.com/v1"
+
+# --- Integrations & APIs ---
+SPOTIFY_CLIENT_ID = os.environ.get("SPOTIFY_CLIENT_ID", "")
+SPOTIFY_CLIENT_SECRET = os.environ.get("SPOTIFY_CLIENT_SECRET", "")
+YOUTUBE_API_KEY = os.environ.get("YOUTUBE_API_KEY", "")
+
+# --- Anthropic Settings ---
+ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
+ANTHROPIC_MODEL = 'claude-sonnet-5'
+
+# --- Custom OpenAI-Compatible Provider ---
+CUSTOM_API_KEY = os.environ.get("CUSTOM_LLM_API_KEY", "")
+CUSTOM_BASE_URL = 'https://openrouter.ai/api/v1'
+CUSTOM_MODEL = 'meta-llama/llama-3.3-70b-instruct'
+
+
+
+# --- Screen Vision ---
+OLLAMA_VISION_MODEL = "llava"
+SCREEN_VISION_MAX_DIMENSION = 768
+
+# --- Speech-to-Text (Whisper) ---
+WHISPER_MODEL_SIZE = 'base.en'
+WHISPER_DEVICE = 'auto'
+WHISPER_COMPUTE_TYPE = 'auto'
+WHISPER_CPU_THREADS = 0
+WHISPER_NUM_WORKERS = 1
+WHISPER_LOG_PROB_THRESHOLD = -1.0
+WHISPER_INITIAL_PROMPT = (
+    "Alyssa, open Chrome, open Notepad, open Spotify, open Windows Explorer, "
+    "search for files, delete file, run command, remember that, type this, "
+    "Arknights Endfield."
+)
+VOCABULARY_CORRECTIONS = [
+    ("Arknights Endfield", ["arknights and field", "arc knights endfield", "arc nights and field"]),
+]
+
+# --- Audio Recording ---
+SAMPLE_RATE = 16000
+SILENCE_SECONDS = 0.8
+MAX_RECORD_SECONDS = 15
+
+# --- Adaptive Silence Timeout ---
+ADAPTIVE_SILENCE_ENABLED = True
+ADAPTIVE_SILENCE_MIN_SECONDS = 0.45
+ADAPTIVE_SILENCE_MAX_SECONDS = 1.6
+ADAPTIVE_SILENCE_FAST_WPS = 3.3
+ADAPTIVE_SILENCE_SLOW_WPS = 1.3
+ADAPTIVE_SILENCE_EMA_ALPHA = 0.3
+
+FAST_TOOL_RESPONSES = True
+
+# --- Text-to-Speech (TTS) ---
+SPEAK_RESPONSES = True
+TTS_PROVIDER = 'edge'  # "edge" or "elevenlabs"
+
+# Edge TTS Options
+EDGE_TTS_VOICE = 'ja-JP-NanamiNeural'
+EDGE_TTS_RATE = "+0%"
+EDGE_TTS_VOLUME = '+0%'
+EDGE_TTS_PITCH = "+0Hz"
+
+# ElevenLabs Options
+ELEVENLABS_API_KEY = ""
+ELEVENLABS_VOICE_ID = ''
+ELEVENLABS_MODEL = 'eleven_multilingual_v2'
+
+
+TTS_PIPELINE_SENTENCES = True
+
+# --- Interruption / Barge-in ---
+ALLOW_INTERRUPTIONS = True
+BARGE_IN_REQUIRE_NAME = True
+BARGE_IN_MIN_SPEECH_MS = 250
+BARGE_IN_VAD_AGGRESSIVENESS = 3
+
+# --- Memory & Context ---
+CONVERSATION_MEMORY_TURNS = 10
+MAX_SAVED_MEMORIES = 75
+MAX_MEMORY_FACT_CHARACTERS = 400
+MAX_MEMORIES_IN_PROMPT = 20
+RECENT_ACTION_CONTEXT_LIMIT = 6
+POWER_CONFIRMATION_TIMEOUT_SECONDS = 60
+FOLLOWUP_GRACE_SECONDS = 20
+CONVERSATION_TIMEOUT_SECONDS = 300
+
+# --- Plugins & Watchers ---
+PLUGINS_ENABLED = True
+ENABLE_BACKGROUND_WATCHER = True
+WEATHER_DEFAULT_LOCATION = ''
+WEATHER_UNITS = 'metric'
+AUTO_DETECT_LOCATION = True
+LOCATION_CACHE_MINUTES = 60
+REMINDER_UPCOMING_WINDOW_HOURS = 24
+
+# --- Desktop Companion GUI ---
+ENABLE_COMPANION_GUI = True
+HIDE_CONSOLE_WINDOW = True
+
+# --- Caveman Mode (runtime-toggled via plugins/caveman_mode.py) ---
+# None = off. Otherwise "lite" / "full" / "ultra" - shrinks Alyssa's own
+# reply length by instructing the LLM to speak tersely; never touches what
+# she knows or does, only how many words she uses to say it.
+CAVEMAN_MODE = None
+
+# --- App Launching & Safety ---
+LAUNCH_APPS_IN_BACKGROUND = True
+APP_LAUNCH_SETTLE_SECONDS = 1.5
+DEBUG_PRINT_TRANSCRIPTS = True
+CONFIRM_BEFORE_ACTIONS = True
+
+

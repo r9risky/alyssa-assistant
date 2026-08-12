@@ -1,0 +1,23 @@
+# --- Secrets & personal data — never commit these ---
+# Google OAuth client secret (plugins/calendar_gmail.py) - user-provided,
+# downloaded from Google Cloud Console.
+credentials.json
+# Google OAuth refresh token for the user's actual Calendar/Gmail
+# (plugins/calendar_gmail.py) - written automatically after first sign-in.
+token.json
+# Persistent assistant memory (memory.py) - personal facts the user has
+# asked Alyssa to remember, stored in plain text.
+memory.json
+
+# --- Python ---
+__pycache__/
+*.pyc
+*.pyo
+
+# --- Local virtual environment (created automatically by start_alyssa.bat) ---
+.venv/
+
+# --- PyInstaller build output (build_alyssa.bat) ---
+build/
+dist/
+*.spec

@@ -1,0 +1,14 @@
+# Optional - only installed automatically by start_alyssa.bat when
+# config.py's WHISPER_DEVICE is "auto" or "cuda". Skipped entirely on
+# WHISPER_DEVICE = "cpu", since none of this is touched on CPU-only
+# transcription and the three packages together are several GB.
+#
+# Pinned to cuDNN 9.x: current ctranslate2 (faster-whisper's GPU backend)
+# only supports CUDA 12 + cuDNN 9. Leaving nvidia-cudnn-cu12 unpinned can
+# let pip resolve an older cuDNN 8 build on a fresh install/venv rebuild,
+# which causes ctranslate2 to fail loading the CUDA 12 cuBLAS/cuDNN DLLs
+# (e.g. "Library cublas64_12.dll is not found or cannot be loaded") even
+# though the packages themselves installed successfully.
+nvidia-cublas-cu12
+nvidia-cudnn-cu12==9.*
+nvidia-cuda-runtime-cu12
