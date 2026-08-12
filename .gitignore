@@ -16,6 +16,7 @@ __pycache__/
 
 # --- Local virtual environment (created automatically by start_alyssa.bat) ---
 .venv/
+.plans/
 
 # --- PyInstaller build output (build_alyssa.bat) ---
 build/
