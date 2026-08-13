@@ -50,7 +50,7 @@ OLLAMA_VISION_MODEL = "llava"
 SCREEN_VISION_MAX_DIMENSION = 768
 
 # --- Speech-to-Text (Whisper) ---
-WHISPER_MODEL_SIZE = 'small.en'
+WHISPER_MODEL_SIZE = 'base.en'
 WHISPER_DEVICE = 'auto'
 WHISPER_COMPUTE_TYPE = 'auto'
 WHISPER_CPU_THREADS = 0
@@ -83,7 +83,7 @@ FAST_TOOL_RESPONSES = True
 
 # --- Text-to-Speech (TTS) ---
 SPEAK_RESPONSES = True
-TTS_PROVIDER = 'elevenlabs'  # "edge" or "elevenlabs"
+TTS_PROVIDER = 'edge'  # "edge" or "elevenlabs"
 
 # Edge TTS Options
 EDGE_TTS_VOICE = 'ja-JP-NanamiNeural'
@@ -126,7 +126,7 @@ REMINDER_UPCOMING_WINDOW_HOURS = 24
 
 # --- Desktop Companion GUI ---
 ENABLE_COMPANION_GUI = True
-HIDE_CONSOLE_WINDOW = True  # "Show command prompt" defaults to off
+HIDE_CONSOLE_WINDOW = False  # "Show command prompt" defaults to off
 
 # --- Caveman Mode (runtime-toggled via plugins/caveman_mode.py) ---
 # None = off. Otherwise "lite" / "full" / "ultra" - shrinks Alyssa's own
@@ -138,6 +138,6 @@ CAVEMAN_MODE = None
 LAUNCH_APPS_IN_BACKGROUND = True
 APP_LAUNCH_SETTLE_SECONDS = 1.5
 DEBUG_PRINT_TRANSCRIPTS = True
-CONFIRM_BEFORE_ACTIONS = True
+CONFIRM_BEFORE_ACTIONS = False
 
 
