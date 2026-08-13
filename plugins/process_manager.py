@@ -23,6 +23,18 @@ SHERB_NOPROGRESSUI = 0x00000002
 SHERB_NOSOUND = 0x00000004
 
 
+def _confirmation_result(name: str, description: str, arguments: dict, confirmed: bool):
+    if confirmed:
+        return None
+    callback = actions._critical_confirmation_callback
+    if callback is None:
+        return "Confirmation required: please ask the user to approve this action."
+    decision = callback(name, description, arguments)
+    if decision is None:
+        return "VOICE_CONFIRMATION_REQUIRED"
+    return None if decision else "Cancelled by user."
+
+
 def kill_process(app_name: str, confirmed: bool = False) -> str:
     """Closes/terminates running processes matching app_name."""
     if not app_name or not app_name.strip():
@@ -50,12 +62,11 @@ def kill_process(app_name: str, confirmed: bool = False) -> str:
 
     proc_summary = f"process '{matching[0].info['name']}' (PID {matching[0].pid})" if len(matching) == 1 else f"{len(matching)} process instances of '{target}'"
 
-    if not confirmed and actions._critical_confirmation_callback:
-        return actions._critical_confirmation_callback(
-            "kill_process",
-            f"terminate {proc_summary}",
-            {"app_name": app_name},
-        )
+    confirmation = _confirmation_result(
+        "kill_process", f"terminate {proc_summary}", {"app_name": app_name}, confirmed
+    )
+    if confirmation:
+        return confirmation
 
     killed_count = 0
     errors = 0
@@ -120,13 +131,22 @@ def get_heavy_processes(sort_by: str = "memory", top_n: int = 5) -> str:
     return "\n".join(lines)
 
 
-def clean_temp_files() -> str:
+def clean_temp_files(confirmed: bool = False) -> str:
     """Cleans temporary files from system TEMP directories."""
     temp_dirs = []
     for var in ["TEMP", "TMP"]:
         val = os.environ.get(var)
         if val and os.path.isdir(val) and val not in temp_dirs:
             temp_dirs.append(val)
+
+    confirmation = _confirmation_result(
+        "clean_temp_files",
+        "permanently delete files from the configured temporary folders",
+        {},
+        confirmed,
+    )
+    if confirmation:
+        return confirmation
 
     bytes_freed = 0
     files_deleted = 0
@@ -158,12 +178,11 @@ def empty_recycle_bin(confirmed: bool = False) -> str:
     if _shell32 is None or not hasattr(_shell32, "SHEmptyRecycleBinW"):
         return "Emptying the Recycle Bin is only supported on Windows."
 
-    if not confirmed and actions._critical_confirmation_callback:
-        return actions._critical_confirmation_callback(
-            "empty_recycle_bin",
-            "empty the Windows Recycle Bin",
-            {},
-        )
+    confirmation = _confirmation_result(
+        "empty_recycle_bin", "empty the Windows Recycle Bin", {}, confirmed
+    )
+    if confirmation:
+        return confirmation
 
     try:
         flags = SHERB_NOCONFIRMATION | SHERB_NOPROGRESSUI | SHERB_NOSOUND

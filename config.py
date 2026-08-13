@@ -21,7 +21,7 @@ OLLAMA_URL = "http://localhost:11434/api/chat"
 OLLAMA_KEEP_ALIVE = "10m"
 
 # --- Gemini Settings ---
-GEMINI_API_KEY = ''
+GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
 GEMINI_MODEL = 'gemini-3.5-flash-lite'
 
 # --- OpenAI Settings ---
@@ -125,7 +125,7 @@ REMINDER_UPCOMING_WINDOW_HOURS = 24
 
 # --- Desktop Companion GUI ---
 ENABLE_COMPANION_GUI = True
-HIDE_CONSOLE_WINDOW = True
+HIDE_CONSOLE_WINDOW = True  # "Show command prompt" defaults to off
 
 # --- Caveman Mode (runtime-toggled via plugins/caveman_mode.py) ---
 # None = off. Otherwise "lite" / "full" / "ultra" - shrinks Alyssa's own

@@ -29,6 +29,15 @@ import os
 import sys
 import webbrowser
 
+UNTRUSTED_OUTPUTS = {
+    "get_next_meeting", "get_todays_schedule", "check_important_emails",
+}
+
+
+def _format_time(value: datetime.datetime) -> str:
+    """Portable 12-hour time without a leading zero."""
+    return value.strftime("%I:%M %p").lstrip("0")
+
 try:
     from google.auth.transport.requests import Request
     from google.oauth2.credentials import Credentials
@@ -153,7 +162,7 @@ def _prompt_authentication() -> str:
 def _availability_check():
     if not _GOOGLE_LIBS_AVAILABLE:
         return _LIBS_MISSING_MSG
-    if not os.path.exists(_CREDENTIALS_PATH):
+    if not os.path.exists(_TOKEN_PATH) and _find_credentials_path() is None:
         return _NO_CREDENTIALS_MSG
     return None
 
@@ -204,7 +213,7 @@ def get_next_meeting() -> str:
     if start is None:
         return f"Your next event is '{title}', but I couldn't read its time."
     local_start = start.astimezone()
-    when = local_start.strftime("%A at %-I:%M %p")
+    when = f"{local_start.strftime('%A')} at {_format_time(local_start)}"
     return f"Your next event is '{title}' {when}."
 
 
@@ -229,7 +238,7 @@ def get_todays_schedule() -> str:
         todays.append((start.astimezone(), event.get("summary", "untitled")))
     if not todays:
         return "Nothing else on your calendar for today."
-    lines = [f"{t.strftime('%-I:%M %p')} - {title}" for t, title in todays]
+    lines = [f"{_format_time(t)} - {title}" for t, title in todays]
     return "Today: " + "; ".join(lines) + "."
 
 

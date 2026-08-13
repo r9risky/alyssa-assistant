@@ -25,6 +25,11 @@ if getattr(sys, "frozen", False):
 else:
     _BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
+
+def _format_time(value: datetime) -> str:
+    """Portable 12-hour time without a leading zero."""
+    return value.strftime("%I:%M %p").lstrip("0")
+
 REMINDERS_FILE = os.path.join(_BASE_DIR, "reminders.json")
 _lock = threading.RLock()
 
@@ -143,7 +148,8 @@ def add_reminder(task: str, when: str = "") -> str:
     _save(reminders)
 
     if due:
-        when_spoken = due.strftime("%A at %-I:%M %p") if due.date() != datetime.now().date() else due.strftime("today at %-I:%M %p")
+        day = due.strftime("%A") if due.date() != datetime.now().date() else "today"
+        when_spoken = f"{day} at {_format_time(due)}"
         return f"Got it - I'll have '{task}' on your list for {when_spoken}."
     return f"Added '{task}' to your list."
 
@@ -178,7 +184,7 @@ def list_reminders(only_due: bool = False) -> str:
             try:
                 due = datetime.fromisoformat(r["due"])
                 overdue = due < now
-                when_spoken = due.strftime("%A %-I:%M %p")
+                when_spoken = f"{due.strftime('%A')} {_format_time(due)}"
                 label += f" ({'overdue - was due' if overdue else 'due'} {when_spoken})"
             except ValueError:
                 pass

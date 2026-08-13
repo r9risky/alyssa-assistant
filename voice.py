@@ -311,15 +311,21 @@ def _play(path: str, stop_event=None) -> bool:
     """Plays *path* to completion, or stops as soon as *stop_event* is set.
     Returns True if playback finished on its own, False if cut off."""
     _ensure_mixer()
-    pygame.mixer.music.load(path)
-    pygame.mixer.music.set_volume(_volume_str_to_gain(getattr(config, "EDGE_TTS_VOLUME", "+0%")))
-    pygame.mixer.music.play()
-    while pygame.mixer.music.get_busy():
-        if stop_event is not None and stop_event.is_set():
-            pygame.mixer.music.stop()
-            return False
-        time.sleep(0.02)
-    return True
+    music = pygame.mixer.music
+    music.load(path)
+    try:
+        music.set_volume(_volume_str_to_gain(getattr(config, "EDGE_TTS_VOLUME", "+0%")))
+        music.play()
+        while music.get_busy():
+            if stop_event is not None and stop_event.is_set():
+                return False
+            time.sleep(0.02)
+        return True
+    finally:
+        try:
+            music.stop()
+        finally:
+            music.unload()
 
 
 def _speak_one(text: str, on_playback_start=None, on_playback_end=None, stop_event=None) -> bool:
@@ -387,7 +393,10 @@ def _speak_pipelined(sentences: list, on_playback_start=None, on_playback_end=No
         # Runs on its own thread so an interrupted speak() call can return
         # immediately instead of waiting on synthesis that's still in
         # flight for sentences we're no longer going to play.
-        for i, ev in enumerate(ready):
+        for i in range(played_through, len(sentences)):
+            if threads[i] is None:
+                continue
+            ev = ready[i]
             ev.wait()
             if paths[i]:
                 try:

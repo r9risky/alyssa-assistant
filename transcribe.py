@@ -14,7 +14,7 @@ from faster_whisper import WhisperModel
 import config
 
 _model = None
-_model_lock = threading.Lock()
+_model_lock = threading.RLock()
 _model_is_on_gpu = False
 _model_device = None
 _model_compute_type = None
@@ -204,8 +204,11 @@ def reload_model_async():
     """Same as reload_model(), but also starts loading the new model on a
     background thread, so the next command doesn't pay the load time inline.
     Never blocks - safe to call from the GUI thread."""
-    reload_model()
-    threading.Thread(target=_get_model, daemon=True).start()
+    def reload_and_preload():
+        reload_model()
+        _get_model()
+
+    threading.Thread(target=reload_and_preload, daemon=True).start()
 
 
 def preload():
@@ -300,6 +303,13 @@ def transcribe(audio) -> str:
 
 
 def _transcribe_impl(audio) -> str:
+    # Keep the cached model and its device metadata on the same generation
+    # until inference and any GPU fallback finish. Settings reloads wait here.
+    with _model_lock:
+        return _transcribe_impl_locked(audio)
+
+
+def _transcribe_impl_locked(audio) -> str:
     model = _get_model()
     try:
         segments, _ = model.transcribe(

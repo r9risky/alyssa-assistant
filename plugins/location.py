@@ -6,6 +6,8 @@ import time
 import requests
 import config
 
+UNTRUSTED_OUTPUTS = {"get_my_location"}
+
 _ENDPOINT = "https://ipapi.co/json/"
 _cache = {"location": None, "fetched_at": 0.0}
 
@@ -71,4 +73,3 @@ TOOLS = [
 FUNCTIONS = {
     "get_my_location": get_my_location,
 }
-

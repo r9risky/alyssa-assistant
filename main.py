@@ -14,8 +14,25 @@ if getattr(sys, "frozen", False):
     import os
     sys.path.insert(0, os.path.dirname(sys.executable))
 
-import requests
 import config
+
+
+def _apply_startup_console_setting():
+    """Hide the Windows console before the rest of Alyssa initializes."""
+    if sys.platform != "win32" or not getattr(config, "HIDE_CONSOLE_WINDOW", True):
+        return
+    try:
+        import ctypes
+        hwnd = ctypes.windll.kernel32.GetConsoleWindow()
+        if hwnd:
+            ctypes.windll.user32.ShowWindow(hwnd, 0)  # SW_HIDE
+    except Exception:
+        pass
+
+
+_apply_startup_console_setting()
+
+import requests
 import recorder
 import transcribe
 import brain
@@ -80,7 +97,9 @@ def speak(text: str, bridge=None):
             )
         finally:
             playback_done_event.set()
-            listener_thread.join(timeout=2.0)
+            # A broken audio driver can leave stream.read() blocked forever.
+            # The listener is a daemon, so never let that freeze all replies.
+            listener_thread.join(timeout=1.0)
 
         return interrupt_result["audio"]
 
@@ -99,20 +118,28 @@ def run_watcher_loop(bridge=None):
     plugins/system_watch.py for the pattern), so this loop doesn't need to
     know anything about de-duplication - it just calls check_watch() on
     each plugin's own schedule and speaks a non-empty result."""
-    watchers = plugin_loader.get_watchers()
-    if not watchers:
-        return  # no plugin registered a check_watch() - nothing to do
-
-    print(f"[watcher] Background monitoring active: {', '.join(w['name'] for w in watchers)}")
-    next_due = {id(w): 0.0 for w in watchers}  # 0 => run once immediately, then on its own interval
+    next_due = {}
+    watcher_signature = None
 
     while True:
+        # Reloads replace plugin_loader's watcher list. Read it each pass so
+        # disabled checks stop and newly enabled checks start immediately.
+        watchers = list(plugin_loader.get_watchers())
+        signature = tuple((w["name"], id(w["func"])) for w in watchers)
+        if signature != watcher_signature:
+            watcher_signature = signature
+            if watchers:
+                print(f"[watcher] Background monitoring active: {', '.join(w['name'] for w in watchers)}")
+        active_keys = {id(w) for w in watchers}
+        next_due = {key: due for key, due in next_due.items() if key in active_keys}
+
         now = time.time()
         soonest = 5.0
         for w in watchers:
             key = id(w)
-            if now < next_due[key]:
-                soonest = min(soonest, next_due[key] - now)
+            due = next_due.get(key, 0.0)
+            if now < due:
+                soonest = min(soonest, due - now)
                 continue
             next_due[key] = now + w["interval"]
             try:

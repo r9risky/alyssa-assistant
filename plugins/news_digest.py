@@ -24,6 +24,7 @@ DIGEST_TOPICS = []  # e.g. ["AI research", "world news", "your favorite team"]
 DIGEST_HOUR = 8      # 24h local time the daily briefing fires (once per day)
 
 WATCH_INTERVAL_SECONDS = 900  # only needs to check "has DIGEST_HOUR passed yet" a few times an hour
+UNTRUSTED_OUTPUTS = {"get_news_digest"}
 
 _last_digest_date = None
 

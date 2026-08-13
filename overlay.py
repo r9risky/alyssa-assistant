@@ -1925,6 +1925,23 @@ def _patch_config_line(text: str, key: str, value_literal: str) -> str:
     return new_text
 
 
+def _atomic_write_text(path: str, text: str) -> None:
+    """Replace a text file only after its complete new contents reach disk."""
+    tmp_path = path + ".tmp"
+    try:
+        with open(tmp_path, "w", encoding="utf-8") as f:
+            f.write(text)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp_path, path)
+    except OSError:
+        try:
+            os.remove(tmp_path)
+        except OSError:
+            pass
+        raise
+
+
 class _StatusLabel(QLabel):
     """A QLabel that hides itself whenever its text is empty, so an
     empty status line doesn't leave a blank gap in the layout."""
@@ -3859,10 +3876,9 @@ class ConfigDialog(QDialog):
         self._repolish()
 
     def _on_show_console_toggled(self, show: bool):
-        # Apply this one immediately so the control never feels broken while
-        # the normal config-file write remains safely debounced.
-        _set_console_visible(show)
-        self._queue_assistant_apply()
+        # Visibility and persistence both happen immediately for this switch;
+        # otherwise an app exit during the normal debounce can lose the choice.
+        self._apply_assistant_live()
 
     # -- Startup (Task Scheduler, Windows only) ------------------------------
     def _refresh_startup_status(self):
@@ -4665,10 +4681,10 @@ TOOLS = [
                 text = f.read()
             for key, literal in updates.items():
                 text = _patch_config_line(text, key, literal)
-            with open(config_path, "w", encoding="utf-8") as f:
-                f.write(text)
+            _atomic_write_text(config_path, text)
         except OSError as e:
             QMessageBox.warning(self, "Settings", f"Couldn't write changes to config.py: {e}")
+            return
 
         # Apply in-memory too, so it's live this session even though the
         # file write above is what makes it stick after a restart.

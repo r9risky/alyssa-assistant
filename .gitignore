@@ -15,9 +15,7 @@ __pycache__/
 *.pyo
 
 # --- Local development files ---
-tests/
 build_alyssa.bat
-pytest.ini
 
 # --- Local virtual environment (created automatically by start_alyssa.bat) ---
 .venv/

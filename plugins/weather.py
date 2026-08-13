@@ -15,6 +15,7 @@ import requests
 import config
 from location import get_ip_location
 
+UNTRUSTED_OUTPUTS = {"get_weather"}
 
 _GEOCODE_ENDPOINT = "https://geocoding-api.open-meteo.com/v1/search"
 _FORECAST_ENDPOINT = "https://api.open-meteo.com/v1/forecast"

@@ -2,12 +2,15 @@
 PC automation actions and system control utilities for Alyssa.
 """
 
+import codecs
 import ctypes
+import contextlib
 import datetime
 import os
 import re
 import shutil
 import subprocess
+import threading
 import time
 import urllib.parse
 import webbrowser
@@ -114,6 +117,22 @@ def _close_foreground_window() -> bool:
 # independent of the voice-conversation logic.
 _power_confirmation_callback = None
 _critical_confirmation_callback = None
+_tool_confirmation = threading.local()
+
+
+class VoiceConfirmationRequired(Exception):
+    """Raised internally when a tool has been deferred for spoken approval."""
+
+
+@contextlib.contextmanager
+def tool_confirmation_context(name: str, arguments: dict, approved: bool = False):
+    """Makes the current tool call visible to the shared confirmation hook."""
+    previous = getattr(_tool_confirmation, "current", None)
+    _tool_confirmation.current = (name, dict(arguments), approved)
+    try:
+        yield
+    finally:
+        _tool_confirmation.current = previous
 
 
 def set_power_confirmation_callback(callback):
@@ -133,8 +152,17 @@ def _confirm(description: str, force: bool = False) -> bool:
     enabled in config.py - but force=True (used by delete_file, run_command,
     and restart/shutdown) always asks regardless of that setting, since
     those are the actions that are genuinely hard to undo."""
+    current = getattr(_tool_confirmation, "current", None)
+    if current and current[2]:
+        return True
     if not force and not config.CONFIRM_BEFORE_ACTIONS:
         return True
+    if current and _critical_confirmation_callback is not None:
+        name, arguments, _approved = current
+        decision = _critical_confirmation_callback(name, description, arguments)
+        if decision is None:
+            raise VoiceConfirmationRequired
+        return bool(decision)
     answer = input(f'About to: {description}\nProceed? [y/N] ').strip().lower()
     return answer == "y"
 
@@ -512,7 +540,7 @@ def open_app(app_name: str) -> str:
             return f"Found {app_name} but couldn't launch it: {e}"
 
     print(f"[open_app] no installed app matched {app_name!r}")
-    return f"You don't have {app_name} installed."
+    return f"I couldn't find {app_name} installed."
 
 
 def type_text(text: str) -> str:
@@ -635,7 +663,7 @@ def _resolve_placeholder_user_path(path: str) -> str:
     )
     if home_match:
         return os.path.normpath(os.path.join(os.path.expanduser("~"), home_match.group(1) or ""))
-    return path
+    return os.path.normpath(expanded)
 
 
 def _friendly_file_name(path: str) -> str:
@@ -1279,22 +1307,24 @@ def system_power_action(action: str, confirmed: bool = False) -> str:
     try:
         if action == "lock":
             import ctypes
-            ctypes.windll.user32.LockWorkStation()
+            if not ctypes.windll.user32.LockWorkStation():
+                return "Couldn't lock the PC."
             return "Locked the PC."
         if action == "sleep":
             subprocess.run(
                 ["rundll32.exe", "powrprof.dll,SetSuspendState", "0,1,0"],
                 timeout=5,
+                check=True,
             )
             return "Putting the PC to sleep."
         if action == "signout":
-            subprocess.run(["shutdown", "/l"], timeout=5)
+            subprocess.run(["shutdown", "/l"], timeout=5, check=True)
             return "Signing out."
         if action == "restart":
-            subprocess.run(["shutdown", "/r", "/t", "0"], timeout=5)
+            subprocess.run(["shutdown", "/r", "/t", "0"], timeout=5, check=True)
             return "Restarting the PC."
         if action == "shutdown":
-            subprocess.run(["shutdown", "/s", "/t", "0"], timeout=5)
+            subprocess.run(["shutdown", "/s", "/t", "0"], timeout=5, check=True)
             return "Shutting down the PC."
     except Exception as e:
         return f"Couldn't {action} the PC: {e}"
@@ -1319,6 +1349,31 @@ def remember_fact(fact: str) -> str:
 def forget_fact(fact_snippet: str) -> str:
     """Removes a previously remembered fact that matches the given snippet."""
     return memory.forget(fact_snippet)
+
+
+_MAX_CONTENT_FILE_BYTES = 2_000_000
+_MAX_CONTENT_SEARCH_BYTES = 25_000_000
+
+
+def _file_contains_text(path: str, query: str, max_bytes: int) -> tuple[bool, int]:
+    """Search UTF-8 text without ever reading beyond max_bytes."""
+    decoder = codecs.getincrementaldecoder("utf-8")("ignore")
+    overlap = ""
+    bytes_read = 0
+    with open(path, "rb") as f:
+        while bytes_read < max_bytes:
+            chunk = f.read(min(64 * 1024, max_bytes - bytes_read))
+            if not chunk:
+                break
+            bytes_read += len(chunk)
+            text = (overlap + decoder.decode(chunk)).casefold()
+            if query in text:
+                return True, bytes_read
+            overlap_length = max(0, len(query) - 1)
+            overlap = text[-overlap_length:] if overlap_length else ""
+        if query in (overlap + decoder.decode(b"", final=True)).casefold():
+            return True, bytes_read
+    return False, bytes_read
 
 
 def search_files(query: str, location: str = "", search_contents: bool = False) -> str:
@@ -1351,6 +1406,8 @@ def search_files(query: str, location: str = "", search_contents: bool = False) 
 
     matches = []
     scanned = 0
+    content_bytes_scanned = 0
+    content_limit_reached = False
     max_scanned = 5000
     max_results = 25
 
@@ -1370,10 +1427,24 @@ def search_files(query: str, location: str = "", search_contents: bool = False) 
 
             if search_contents and os.path.splitext(filename)[1].lower() in text_extensions:
                 try:
-                    if os.path.getsize(full_path) <= 2_000_000:
-                        with open(full_path, "r", encoding="utf-8", errors="ignore") as f:
-                            if query_lower in f.read().lower():
-                                matches.append(full_path)
+                    size = os.path.getsize(full_path)
+                    if size <= _MAX_CONTENT_FILE_BYTES:
+                        remaining = _MAX_CONTENT_SEARCH_BYTES - content_bytes_scanned
+                        if remaining <= 0:
+                            content_limit_reached = True
+                            search_contents = False
+                            continue
+                        found, bytes_read = _file_contains_text(
+                            full_path,
+                            query.casefold(),
+                            min(_MAX_CONTENT_FILE_BYTES, remaining),
+                        )
+                        content_bytes_scanned += bytes_read
+                        if found:
+                            matches.append(full_path)
+                        if content_bytes_scanned >= _MAX_CONTENT_SEARCH_BYTES:
+                            content_limit_reached = True
+                            search_contents = False
                 except OSError:
                     pass
 
@@ -1381,7 +1452,10 @@ def search_files(query: str, location: str = "", search_contents: bool = False) 
             break
 
     if not matches:
-        return f"No files matching '{query}' found under {root}."
+        result = f"No files matching '{query}' found under {root}."
+        if content_limit_reached:
+            result += " Content search stopped after 25 MB; narrow the folder to search more."
+        return result
 
     result = f"Found {len(matches)} match(es) for '{query}' under {root}:\n"
     # Relative to the search root rather than the full absolute path - still
@@ -1390,6 +1464,8 @@ def search_files(query: str, location: str = "", search_contents: bool = False) 
     result += "\n".join(os.path.relpath(m, root) for m in matches)
     if len(matches) >= max_results:
         result += "\n(stopped at 25 results - narrow your search for more precise results.)"
+    elif content_limit_reached:
+        result += "\n(content search stopped after 25 MB - narrow the folder to search more.)"
     return result
 
 

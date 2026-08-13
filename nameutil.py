@@ -8,21 +8,23 @@ import re
 import config
 
 
-@functools.cache
 def name_variants():
     """Returns deduplicated configured assistant name and aliases."""
     names = [config.ASSISTANT_NAME] + list(getattr(config, "ASSISTANT_NAME_ALIASES", []))
     return list(dict.fromkeys(names))
 
 
-@functools.cache
-def name_pattern():
-    """Compiled regex for matching assistant name variants."""
-    variants = name_variants()
+@functools.lru_cache(maxsize=16)
+def _compile_name_pattern(variants: tuple):
     return re.compile(
         r"\b(" + "|".join(re.escape(v) for v in variants) + r")\b",
         flags=re.IGNORECASE,
     )
+
+
+def name_pattern():
+    """Compiled regex keyed by the current configured name variants."""
+    return _compile_name_pattern(tuple(name_variants()))
 
 
 def find_name_span(text: str):

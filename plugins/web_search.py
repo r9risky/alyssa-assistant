@@ -27,6 +27,8 @@ import urllib.parse
 
 import requests
 
+UNTRUSTED_OUTPUTS = {"search_web"}
+
 _BRAVE_API_KEY = os.environ.get("BRAVE_SEARCH_API_KEY", "")
 _BRAVE_ENDPOINT = "https://api.search.brave.com/res/v1/web/search"
 _DDG_ENDPOINT = "https://lite.duckduckgo.com/lite/"

@@ -71,6 +71,7 @@ def load_plugins():
 
         plugin_functions = getattr(module, "FUNCTIONS", {}) or {}
         plugin_tools = getattr(module, "TOOLS", []) or []
+        untrusted_outputs = set(getattr(module, "UNTRUSTED_OUTPUTS", ()) or ())
         if not isinstance(plugin_functions, dict):
             print(f"[plugins] Skipping '{filename}' - FUNCTIONS must be a dict.")
             _load_errors.append(f"'{filename}': FUNCTIONS must be a dict")
@@ -94,6 +95,8 @@ def load_plugins():
                 _load_errors.append(f"'{filename}': '{name}' duplicates another plugin's tool name")
                 continue
             functions[name] = func
+            if name in untrusted_outputs:
+                func._alyssa_untrusted_output = True
             loaded_names.append(name)
 
         for tool in plugin_tools:
