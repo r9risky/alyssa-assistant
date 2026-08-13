@@ -15,6 +15,7 @@ import requests
 import actions
 import config
 import memory
+import nameutil
 import transcribe
 
 _HTTP_SESSION = requests.Session()
@@ -32,7 +33,8 @@ _CONFIRM_POSITIVE_PHRASES = {
     "yes", "yes please", "yes proceed", "yes do it", "yes go ahead",
     "yeah", "yep", "yup", "confirm", "confirmed", "approve", "approved",
     "proceed", "sure", "okay", "ok", "affirmative", "absolutely",
-    "do it", "go ahead", "go for it", "you have permission",
+    "do it", "go ahead", "go for it", "sure do it", "sure go ahead",
+    "you have permission",
 }
 
 
@@ -70,6 +72,9 @@ def _handle_pending_power_confirmation(user_text: str):
         _pending_confirmation = None
         _pending_confirmation_time = None
         return "Okay, I cancelled it."
+    normalized = nameutil.name_pattern().sub(" ", normalized)
+    words = normalized.split()
+    normalized = " ".join(word for i, word in enumerate(words) if i == 0 or word != words[i - 1])
     if normalized in _CONFIRM_POSITIVE_PHRASES:
         pending = _pending_confirmation
         if not pending:

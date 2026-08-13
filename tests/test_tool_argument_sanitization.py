@@ -48,7 +48,7 @@ class TestProtectedActionConfirmation(unittest.TestCase):
         brain._pending_confirmation = None
         brain._pending_confirmation_time = None
 
-    def test_yes_executes_pending_action(self):
+    def test_common_yes_variants_execute_pending_action(self):
         calls = []
 
         def approved_action(confirmed=False):
@@ -59,12 +59,17 @@ class TestProtectedActionConfirmation(unittest.TestCase):
             patch.dict(brain.actions.FUNCTIONS, {"approved_action": approved_action}),
             patch.object(brain, "_natural_fast_reply", return_value="Approved."),
         ):
-            brain._request_voice_confirmation("approved_action", "test action", {})
-            reply = brain._handle_pending_power_confirmation("yes, proceed")
+            for spoken_reply in (
+                "yes, proceed", "Yes Alyssa.", "Yes. Yes.", "confirm",
+                "sure", "sure, do it", "sure, go ahead",
+            ):
+                with self.subTest(spoken_reply=spoken_reply):
+                    brain._request_voice_confirmation("approved_action", "test action", {})
+                    reply = brain._handle_pending_power_confirmation(spoken_reply)
+                    self.assertEqual(reply, "Approved.")
+                    self.assertFalse(brain.has_pending_power_confirmation())
 
-        self.assertEqual(reply, "Approved.")
-        self.assertEqual(calls, [True])
-        self.assertFalse(brain.has_pending_power_confirmation())
+        self.assertEqual(calls, [True] * 7)
 
     def test_no_cancels_pending_action(self):
         brain._request_voice_confirmation("unused", "test action", {})
