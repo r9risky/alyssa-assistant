@@ -28,6 +28,9 @@ it with elevated privileges.
 - The default configuration asks for confirmation before actions.
 - Commands, deletion, vision-guided clicks, process termination, Recycle Bin
   emptying, and disruptive power actions require a separate approval step.
+- Spoken approval recognizes confirmation words such as `yes`, `confirm`, and
+  `go ahead`; it does not authenticate the speaker or provide a security
+  boundary against another person near the microphone.
 - Deleted files are normally moved to the Windows Recycle Bin.
 - Speech transcription is local. Prompts and screenshots are sent to the
   configured LLM provider when a cloud provider is selected.
@@ -44,7 +47,8 @@ These safeguards reduce accidental actions; they are not a security boundary.
 - Python 3.10 or newer from [python.org](https://www.python.org/downloads/)
 - [Microsoft C++ Build Tools](https://visualstudio.microsoft.com/visual-cpp-build-tools/)
   with the **Desktop development with C++** workload (required to compile
-  Python packages with native extensions)
+  native packages when a matching prebuilt wheel is unavailable, including
+  `webrtcvad-wheels` on Python 3.14)
 - A microphone and audio output
 - One supported LLM provider
 - Internet access for cloud models, Edge TTS, and networked plugins
@@ -133,6 +137,7 @@ The most useful settings are in `config.py`:
 | `WHISPER_DEVICE` | `cpu`, `cuda`, or `auto` |
 | `TTS_PROVIDER` | `edge` or `elevenlabs` |
 | `CONFIRM_BEFORE_ACTIONS` | Confirm ordinary actions before running them |
+| `POWER_CONFIRMATION_TIMEOUT_SECONDS` | How long a protected-action approval remains pending |
 | `ALLOW_INTERRUPTIONS` | Permit speech to interrupt replies |
 | `PLUGINS_ENABLED` | Load tools from `plugins/` |
 | `ENABLE_BACKGROUND_WATCHER` | Run proactive plugin checks |
@@ -203,18 +208,6 @@ A plugin may also expose `check_watch() -> str | None` and an optional
 
 Saved memories are plain JSON and use lightweight keyword matching. Session
 conversation history stays in memory and expires after the configured timeout.
-
-## Tests
-
-Install pytest in the project environment, then run:
-
-```powershell
-.venv\Scripts\python -m pip install pytest
-.venv\Scripts\python -m pytest
-```
-
-The suite covers memory behavior, assistant-name handling, provider message
-conversion, settings behavior, protected tool arguments, and webpage parsing.
 
 ## Build an executable
 
