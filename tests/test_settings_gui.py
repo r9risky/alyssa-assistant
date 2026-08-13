@@ -176,6 +176,14 @@ class SettingsGuiTests(unittest.TestCase):
         )
         self.assertEqual(self.dialog._plugin_splitter.orientation(), Qt.Horizontal)
 
+    def test_updates_tab_has_check_update_button(self):
+        labels = [
+            self.dialog.tabs.navigation.item(i).text()
+            for i in range(self.dialog.tabs.navigation.count())
+        ]
+        self.assertIn("Updates", labels)
+        self.assertEqual(self.dialog.check_update_btn.text(), "Check Update")
+
 
 if __name__ == "__main__":
     unittest.main()

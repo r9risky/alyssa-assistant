@@ -144,7 +144,8 @@ The most useful settings are in `config.py`:
 | `ENABLE_COMPANION_GUI` | Show the desktop companion |
 
 The Settings window exposes the common provider, voice, assistant, and
-companion options without requiring manual edits.
+companion options without requiring manual edits. Its Updates tab installs
+the latest published GitHub release while preserving local settings and data.
 
 ## Included plugins
 

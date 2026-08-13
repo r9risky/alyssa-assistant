@@ -117,6 +117,7 @@ import actions
 import brain
 import config
 import plugin_loader
+import updater
 
 # --------------------------------------------------------------------------
 # Persistent *companion* settings (position, size, appearance). Kept
@@ -2071,6 +2072,7 @@ class ConfigDialog(QDialog):
     # Spotify's pair is verified together as one signal, since the token
     # request needs both at once.
     _spotify_verified_signal = Signal(bool, str)
+    _update_finished_signal = Signal(bool, bool, str)
 
     # A cohesive theme matching the companion/speech-bubble palette,
     # built from the shared color themes so the dialog, speech bubble, and
@@ -2450,6 +2452,7 @@ class ConfigDialog(QDialog):
         self._key_verified_signal.connect(self._on_key_verification_result)
         self._custom_models_fetched_signal.connect(self._on_custom_models_fetch_result)
         self._spotify_verified_signal.connect(self._on_spotify_verify_result)
+        self._update_finished_signal.connect(self._on_update_finished)
 
         self.tabs = _SidebarTabs(self)
         self.tabs.addTab(self._wrap_in_scroll_area(self._build_assistant_tab()), "Assistant")
@@ -2460,6 +2463,7 @@ class ConfigDialog(QDialog):
         # the full available height itself rather than being able to
         # shrink to content size inside a QScrollArea.
         self.tabs.addTab(self._build_plugins_tab(), "Plugins")
+        self.tabs.addTab(self._wrap_in_scroll_area(self._build_updates_tab()), "Updates")
 
         # Root-cause fix for clipped combo text (provider/model dropdowns
         # etc.): QFormLayout's ExpandingFieldsGrow stretches QLineEdit
@@ -3901,6 +3905,73 @@ class ConfigDialog(QDialog):
         if hasattr(self, "_last_companion_form_values"):
             self._last_companion_form_values["scale"] = self.scale_slider.value() / 100.0
         self._refresh_preview()
+
+    # -- Updates tab ----------------------------------------------------
+    def _build_updates_tab(self) -> _QW:
+        w = _QW()
+        w.setObjectName("tabPage")
+        outer = QVBoxLayout(w)
+        outer.setContentsMargins(16, 16, 16, 16)
+        outer.setSpacing(12)
+
+        outer.addWidget(self._section_header("Application Updates", "↻", first=True))
+        intro = self._help_label(
+            "Download and install the latest published Alyssa source release from GitHub. "
+            "Your preferences, API settings, themes, memories, credentials, and existing "
+            "plugins are kept unchanged."
+        )
+        intro.setVisible(True)
+        outer.addWidget(intro)
+
+        self.check_update_btn = QPushButton("Check Update")
+        self.check_update_btn.setObjectName("primaryButton")
+        self.check_update_btn.setToolTip("Check GitHub and install the latest published release.")
+        self.check_update_btn.clicked.connect(self._on_check_update)
+        outer.addWidget(self.check_update_btn, 0, Qt.AlignLeft)
+
+        self.update_status_label = self._help_label("")
+        outer.addWidget(self.update_status_label)
+        outer.addStretch(1)
+        return w
+
+    def _on_check_update(self):
+        self._flush_pending_applies()
+        self.check_update_btn.setEnabled(False)
+        self.update_status_label.setStyleSheet(
+            f"color: {self._t()['subtext']}; font-size: 11px;"
+        )
+        self.update_status_label.setText("Checking GitHub for the latest release…")
+
+        def _worker():
+            try:
+                updated, tag = updater.install_latest(_BASE_DIR)
+                self._update_finished_signal.emit(True, updated, tag)
+            except Exception as error:
+                self._update_finished_signal.emit(False, False, str(error))
+
+        threading.Thread(target=_worker, daemon=True).start()
+
+    def _on_update_finished(self, ok: bool, updated: bool, detail: str):
+        self.check_update_btn.setEnabled(True)
+        if not ok:
+            self.update_status_label.setStyleSheet(
+                f"color: {self._t()['danger']}; font-size: 11px;"
+            )
+            self.update_status_label.setText(f"Update failed: {detail}")
+            QMessageBox.warning(self, "Update Failed", detail)
+            return
+
+        self.update_status_label.setStyleSheet(
+            f"color: {self._t()['success']}; font-size: 11px;"
+        )
+        if updated:
+            message = f"Alyssa {detail} was installed. Restart Alyssa to use the update."
+            self.update_status_label.setText(message)
+            QMessageBox.information(self, "Update Installed", message)
+        else:
+            self.update_status_label.setText(
+                f"No newer release is available (latest: {detail})."
+            )
 
     # -- Plugins tab ----------------------------------------------------
     def _build_plugins_tab(self) -> _QW:

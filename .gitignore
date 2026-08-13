@@ -20,6 +20,7 @@ build_alyssa.bat
 # --- Local virtual environment (created automatically by start_alyssa.bat) ---
 .venv/
 .plans/
+.alyssa-version
 
 # --- PyInstaller build output (build_alyssa.bat) ---
 build/
