@@ -31,11 +31,34 @@ _active_streams = 0
 _active_streams_lock = threading.Lock()
 
 
+def _configured_input_device():
+    """Return the first compatible input whose name matches the setting."""
+    configured = getattr(config, "MICROPHONE_DEVICE", None)
+    if not configured or str(configured).lower() == "default":
+        return None
+    if isinstance(configured, int):
+        return configured
+
+    needle = str(configured).lower()
+    for index, device in enumerate(sd.query_devices()):
+        if device["max_input_channels"] <= 0 or needle not in device["name"].lower():
+            continue
+        try:
+            sd.check_input_settings(
+                device=index, channels=1, dtype="int16", samplerate=config.SAMPLE_RATE
+            )
+        except Exception:
+            continue
+        return index
+    raise RuntimeError(f"No compatible microphone matching {configured!r} was found")
+
+
 @contextlib.contextmanager
 def _open_stream(**kwargs):
     """sd.InputStream(**kwargs), tracked so _reap_and_recover can tell
     whether any stream - not just the one that stalled - is still live."""
     global _active_streams
+    kwargs.setdefault("device", _configured_input_device())
     with sd.InputStream(**kwargs) as stream:
         with _active_streams_lock:
             _active_streams += 1

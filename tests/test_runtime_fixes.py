@@ -14,6 +14,7 @@ import overlay
 import actions
 import brain
 import nameutil
+import recorder
 import transcribe
 import voice
 import config
@@ -132,6 +133,34 @@ class VoiceLifecycleTests(unittest.TestCase):
             main.speak("hello")
 
         self.assertEqual(join_calls, [((), {"timeout": 1.0})])
+
+
+class MicrophoneSelectionTests(unittest.TestCase):
+    def test_configured_microphone_is_used_for_every_input_stream(self):
+        opened_with = {}
+
+        class Stream:
+            def __init__(self, **kwargs):
+                opened_with.update(kwargs)
+            def __enter__(self):
+                return self
+            def __exit__(self, *_args):
+                pass
+
+        devices = [
+            {"name": "Silent virtual input", "max_input_channels": 2},
+            {"name": "Microphone (PD100X)", "max_input_channels": 1},
+        ]
+        with (
+            patch.object(recorder.config, "MICROPHONE_DEVICE", "PD100X", create=True),
+            patch.object(recorder.sd, "query_devices", return_value=devices),
+            patch.object(recorder.sd, "check_input_settings"),
+            patch.object(recorder.sd, "InputStream", Stream),
+        ):
+            with recorder._open_stream(samplerate=16000, channels=1, dtype="int16"):
+                pass
+
+        self.assertEqual(opened_with["device"], 1)
 
 
 class FollowupAuditFixTests(unittest.TestCase):
