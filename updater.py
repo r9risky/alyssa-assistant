@@ -14,7 +14,6 @@ import zipfile
 
 import requests
 
-
 LATEST_RELEASE_URL = "https://api.github.com/repos/r9risky/alyssa-assistant/releases/latest"
 CURRENT_VERSION = "v1.0.8"
 MAX_DOWNLOAD_BYTES = 250 * 1024 * 1024
