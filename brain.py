@@ -608,6 +608,17 @@ _BASE_TOOLS = [
     {
         "type": "function",
         "function": {
+            "name": "restart_alyssa",
+            "description": (
+                "Restarts Alyssa herself, not the computer. Use when the user asks "
+                "to restart, relaunch, or reboot Alyssa or the assistant app."
+            ),
+            "parameters": {"type": "object", "properties": {}, "required": []},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "system_power_action",
             "description": (
                 "Locks, sleeps, signs out, restarts, or shuts down the PC. Also use "
@@ -2428,6 +2439,15 @@ def handle_command(user_text: str, on_partial_reply=None) -> str:
             _remember_turn(user_text, reply)
             return reply
         return "Please say yes to confirm, or no to cancel."
+
+    if re.fullmatch(
+        r"\s*(?:restart|relaunch|reboot)(?:\s+(?:yourself|alyssa|the\s+(?:assistant|app|application)))?[.!]?\s*",
+        user_text or "",
+        re.IGNORECASE,
+    ):
+        reply = actions.restart_alyssa()
+        _remember_turn(user_text, reply)
+        return reply
 
     creator_reply = _handle_creator_question(user_text)
     if creator_reply is not None:

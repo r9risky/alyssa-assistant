@@ -3934,7 +3934,16 @@ class ConfigDialog(QDialog):
         self.check_update_btn.setObjectName("primaryButton")
         self.check_update_btn.setToolTip("Check GitHub for a newer release.")
         self.check_update_btn.clicked.connect(self._on_check_update)
-        outer.addWidget(self.check_update_btn, 0, Qt.AlignLeft)
+
+        self.restart_alyssa_btn = QPushButton("Restart Alyssa")
+        self.restart_alyssa_btn.setToolTip("Close and reopen Alyssa.")
+        self.restart_alyssa_btn.clicked.connect(self._on_restart_alyssa)
+
+        button_row = QHBoxLayout()
+        button_row.addWidget(self.check_update_btn)
+        button_row.addWidget(self.restart_alyssa_btn)
+        button_row.addStretch(1)
+        outer.addLayout(button_row)
 
         self.update_status_label = self._help_label("")
         outer.addWidget(self.update_status_label)
@@ -3956,6 +3965,15 @@ class ConfigDialog(QDialog):
                 self._update_checked_signal.emit(False, str(error))
 
         threading.Thread(target=_worker, daemon=True).start()
+
+    def _on_restart_alyssa(self):
+        self._flush_pending_applies()
+        self.update_status_label.setText("Restarting Alyssa…")
+        try:
+            actions.relaunch_alyssa()
+        except OSError as error:
+            self.update_status_label.setText(f"Restart failed: {error}")
+            QMessageBox.warning(self, "Restart Failed", str(error))
 
     def _on_update_checked(self, ok: bool, detail):
         self.check_update_btn.setEnabled(True)

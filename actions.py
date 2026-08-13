@@ -10,6 +10,7 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 import threading
 import time
 import urllib.parse
@@ -61,6 +62,26 @@ _SC_MINIMIZE = 0xF020
 _SC_MAXIMIZE = 0xF030
 _WM_SYSCOMMAND = 0x0112
 _SW_SHOWNOACTIVATE = 4  # show the window but don't activate/foreground it
+
+_restart_requested = threading.Event()
+
+
+def restart_alyssa() -> str:
+    """Requests an app restart after Alyssa finishes her current reply."""
+    _restart_requested.set()
+    return "Restarting Alyssa."
+
+
+def consume_restart_request() -> bool:
+    requested = _restart_requested.is_set()
+    _restart_requested.clear()
+    return requested
+
+
+def relaunch_alyssa():
+    """Replaces this process with a fresh Alyssa instance."""
+    args = [sys.executable] + (sys.argv[1:] if getattr(sys, "frozen", False) else sys.argv)
+    os.execv(sys.executable, args)
 
 
 def _launch_without_stealing_focus(path_or_url: str) -> bool:
@@ -1697,6 +1718,7 @@ _BUILTIN_FUNCTIONS = {
     "describe_screen": describe_screen,
     "click_screen_element": click_screen_element,
     "get_datetime": get_datetime,
+    "restart_alyssa": restart_alyssa,
     "system_power_action": system_power_action,
     "reset_conversation": reset_conversation,
     "run_diagnostics": run_diagnostics,

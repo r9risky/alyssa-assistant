@@ -184,7 +184,18 @@ class SettingsGuiTests(unittest.TestCase):
         ]
         self.assertIn("Updates", labels)
         self.assertEqual(self.dialog.check_update_btn.text(), "Check Update")
+        self.assertEqual(self.dialog.restart_alyssa_btn.text(), "Restart Alyssa")
         self.assertIn(updater.CURRENT_VERSION, self.dialog.current_version_label.text())
+
+    def test_restart_button_flushes_settings_and_relaunches(self):
+        with (
+            patch.object(self.dialog, "_flush_pending_applies") as flush,
+            patch.object(overlay.actions, "relaunch_alyssa") as relaunch,
+        ):
+            self.dialog.restart_alyssa_btn.click()
+
+        flush.assert_called_once_with()
+        relaunch.assert_called_once_with()
 
     def test_update_check_reports_when_current_version_is_latest(self):
         release = {

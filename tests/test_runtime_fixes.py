@@ -259,6 +259,32 @@ class FollowupAuditFixTests(unittest.TestCase):
 
 
 class FinalAuditFixTests(unittest.TestCase):
+    def tearDown(self):
+        actions.consume_restart_request()
+
+    def test_restart_alyssa_request_is_consumed_once(self):
+        self.assertEqual(actions.restart_alyssa(), "Restarting Alyssa.")
+        self.assertTrue(actions.consume_restart_request())
+        self.assertFalse(actions.consume_restart_request())
+
+    def test_relaunch_alyssa_reuses_the_current_python_command(self):
+        with (
+            patch.object(actions.sys, "executable", r"C:\Python\python.exe"),
+            patch.object(actions.sys, "argv", ["main.py", "--demo"]),
+            patch.object(actions.os, "execv") as execv,
+        ):
+            actions.relaunch_alyssa()
+
+        execv.assert_called_once_with(
+            r"C:\Python\python.exe",
+            [r"C:\Python\python.exe", "main.py", "--demo"],
+        )
+
+    def test_restart_alyssa_voice_command_does_not_restart_pc(self):
+        with patch.object(brain, "_call_model") as call_model:
+            self.assertEqual(brain.handle_command("restart"), "Restarting Alyssa.")
+        call_model.assert_not_called()
+
     def test_gemini_api_key_loads_from_environment(self):
         with patch.dict(os.environ, {"GEMINI_API_KEY": "environment-key"}):
             loaded = runpy.run_path(config.__file__)

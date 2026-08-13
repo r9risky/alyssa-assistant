@@ -36,6 +36,7 @@ import requests
 import recorder
 import transcribe
 import brain
+import actions
 import voice
 import plugin_loader
 import nameutil
@@ -462,6 +463,8 @@ def run_assistant_loop(bridge=None):
             # If you interrupt her (partial or final reply), speak() returns
             # what you'd started saying, picked up at the top of next pass.
             final_interrupt_audio = speak(reply, bridge)
+            if actions.consume_restart_request():
+                actions.relaunch_alyssa()
             pending_interrupt_audio = final_interrupt_audio or (
                 partial_interrupt_audio[0] if partial_interrupt_audio else None
             )
