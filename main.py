@@ -431,7 +431,7 @@ def run_assistant_loop(bridge=None):
                 if audio is not None:
                     partial_interrupt_audio.append(audio)
 
-            reply = brain.handle_command(command, on_partial_reply=_speak_partial, audio=audio)
+            reply = brain.handle_command(command, on_partial_reply=_speak_partial)
             # If you interrupt her (partial or final reply), speak() returns
             # what you'd started saying, picked up at the top of next pass.
             final_interrupt_audio = speak(reply, bridge)

@@ -6,17 +6,13 @@ Pillow
 pyperclip
 requests
 webrtcvad-wheels
-setuptools<81
 edge-tts
 # Plays her TTS audio. Used instead of playsound because pygame.mixer.music
 # can be stopped mid-playback (playsound can't), which is what lets you
 # interrupt her by talking - see ALLOW_INTERRUPTIONS in config.py.
 # Using pygame-ce (Community Edition) instead of plain "pygame": same
-# "import pygame" name and the same mixer.music API voice.py uses, but it
-# actually ships prebuilt wheels for current Python versions. Plain pygame's
-# last release (2.6.1) has no wheel for newer Pythons, so pip falls back to
-# compiling it from source - which fails on current setuptools because that
-# old build script needs distutils.msvccompiler, removed in setuptools 80+.
+# "import pygame" name and the same mixer.music API voice.py uses, with
+# prebuilt wheels for current Python versions.
 pygame-ce
 
 send2trash

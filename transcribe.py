@@ -79,13 +79,6 @@ def _add_nvidia_dll_dirs():
             os.environ["PATH"] = bin_dir + os.pathsep + os.environ.get("PATH", "")
 
 
-def get_dll_diagnostics() -> list:
-    """Returns what _add_nvidia_dll_dirs() found (or didn't) for each of the
-    three nvidia-*-cu12 pip packages. Used by get_engine_status() to explain
-    a GPU fallback with the actual root cause instead of just "CPU"."""
-    return list(_dll_diagnostics)
-
-
 _add_nvidia_dll_dirs()  # once at import time, before anything touches ctranslate2/CUDA
 if any("couldn't import it" in line or "no 'bin'" in line or "failed (" in line for line in _dll_diagnostics):
     # Only print if something actually looks wrong.

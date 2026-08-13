@@ -14,7 +14,6 @@ import requests
 import actions
 import config
 import memory
-import token_compression
 import transcribe
 
 _HTTP_SESSION = requests.Session()
@@ -56,14 +55,8 @@ def has_pending_power_confirmation() -> bool:
     return True
 
 
-def _handle_pending_power_confirmation(user_text: str, audio=None):
-    """Returns a reply for a spoken confirmation, or None if it was unclear.
-
-    audio: the raw recorded utterance for this confirmation (None for a
-    typed confirmation - see voice_id.py's module docstring for why that's
-    an intentional exception, not an oversight). Passed to voice_id.verify()
-    so an approval only proceeds if it came from the enrolled voice, when
-    VOICE_ID_ENABLED is on in config.py."""
+def _handle_pending_power_confirmation(user_text: str):
+    """Returns a reply for a spoken confirmation, or None if it was unclear."""
     global _pending_confirmation, _pending_confirmation_time
     normalized = " ".join(user_text.lower().split())
     # Match whole words only: "yesterday" must never be mistaken for "yes".
@@ -75,13 +68,6 @@ def _handle_pending_power_confirmation(user_text: str, audio=None):
         pending = _pending_confirmation
         if not pending:
             return None
-
-        import voice_id
-        voice_ok, voice_reason = voice_id.verify(audio)
-        if not voice_ok:
-            _pending_confirmation = None
-            _pending_confirmation_time = None
-            return f"I'm not going to proceed - {voice_reason}"
 
         _pending_confirmation = None
         _pending_confirmation_time = None
@@ -568,20 +554,6 @@ _BASE_TOOLS = [
                 },
                 "required": ["description"],
             },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "enroll_voice",
-            "description": (
-                "Sets up (or redoes) voice-based access control by "
-                "recording a few short phrases and building a voiceprint "
-                "- e.g. 'enroll my voice', 'set up voice ID', 'redo my "
-                "voice enrollment'. Only meaningful once VOICE_ID_ENABLED "
-                "is turned on in config.py."
-            ),
-            "parameters": {"type": "object", "properties": {}, "required": []},
         },
     },
     {
@@ -1081,7 +1053,7 @@ _CONFIRMATION_GATED_TOOLS = {"delete_file", "run_command", "system_power_action"
 # Tools whose result IS the reply and returns near-instantly - splitting
 # these into "Checking the time..." + "It's 3:45." reads as stilted rather
 # than natural, so they keep the single-reply-after behavior instead.
-_SKIP_ANNOUNCE_TOOLS = {"get_datetime", "read_clipboard", "run_diagnostics", "reset_conversation", "enroll_voice"}
+_SKIP_ANNOUNCE_TOOLS = {"get_datetime", "read_clipboard", "run_diagnostics", "reset_conversation"}
 
 
 def _sanitize_tool_arguments(arguments: dict) -> dict:
@@ -1639,7 +1611,6 @@ def _call_model(messages, force_tools: bool = False):
     providers don't currently need it: this codebase hasn't observed the
     same "replies with plain text instead of calling a tool" laziness from
     them, so they're left on their normal default tool-calling behavior."""
-    messages = token_compression.compress_messages(messages)
     provider = config.LLM_PROVIDER
     if provider == "gemini":
         return _call_gemini(messages, force_tools=force_tools)
@@ -2215,26 +2186,6 @@ def _handle_model_question(user_text: str):
     return _current_model_description()
 
 
-# --- "How much have you compressed" (token compression stats) --------------
-# Answered locally from compression.py's running session totals - the model
-# itself has no visibility into what got trimmed before its own request went
-# out, so this can't be answered by asking it.
-_COMPRESSION_QUESTION_RE = re.compile(
-    r"\btoken\s+compression\b|\bprompt\s+compression\b|\bcompression\s+stat"
-    r"|\bhow\s+much\s+(?:have\s+you\s+)?(?:saved|compressed)\b"
-    r"|\bhow\s+many\s+tokens\s+(?:have\s+you\s+)?saved\b",
-    re.IGNORECASE,
-)
-
-
-def _handle_compression_question(user_text: str):
-    """Returns a session token-savings summary if `user_text` is asking
-    about compression, otherwise None."""
-    if not _COMPRESSION_QUESTION_RE.search(user_text or ""):
-        return None
-    return token_compression.spoken_stats_summary()
-
-
 # --- "What engine are you using for speech recognition" --------------------
 # Same reasoning as above: answered locally from transcribe.py's tracked
 # state, since the LLM has no way to know whether Whisper actually landed
@@ -2410,7 +2361,7 @@ def _call_model_with_error_handling(messages, provider_label, force_tools=False)
         return None, str(e)  # e.g. missing API key
 
 
-def handle_command(user_text: str, on_partial_reply=None, audio=None) -> str:
+def handle_command(user_text: str, on_partial_reply=None) -> str:
     """Sends the command to the configured LLM, executes any tool calls, returns the final reply.
 
     on_partial_reply: optional callback(text) invoked immediately after an
@@ -2418,16 +2369,12 @@ def handle_command(user_text: str, on_partial_reply=None, audio=None) -> str:
     confirmation right away instead of waiting on a second, purely-checking-
     for-a-follow-up model round trip before saying anything at all - see the
     comment further down for why that round trip exists and why it's safe
-    to speak this part of the reply early.
-
-    audio: the raw recorded utterance behind user_text, if any (None for
-    typed input). Only used when there's a pending power/critical
-    confirmation and VOICE_ID_ENABLED - see voice_id.py."""
+    to speak this part of the reply early."""
     _maybe_expire_conversation_history()
     already_delivered_partial = False
 
     if has_pending_power_confirmation():
-        reply = _handle_pending_power_confirmation(user_text, audio)
+        reply = _handle_pending_power_confirmation(user_text)
         if reply is not None:
             _remember_turn(user_text, reply)
             return reply
@@ -2447,11 +2394,6 @@ def handle_command(user_text: str, on_partial_reply=None, audio=None) -> str:
     if engine_reply is not None:
         _remember_turn(user_text, engine_reply)
         return engine_reply
-
-    compression_reply = _handle_compression_question(user_text)
-    if compression_reply is not None:
-        _remember_turn(user_text, compression_reply)
-        return compression_reply
 
     echo_reply = _handle_echo_request(user_text)
     if echo_reply is not None:

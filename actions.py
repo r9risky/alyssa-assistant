@@ -1251,37 +1251,6 @@ def click_screen_element(description: str, double_click: bool = False, confirmed
     return f"Clicked '{description}'."
 
 
-def enroll_voice() -> str:
-    """Records a few short phrases and builds a voiceprint, so voice-based
-    access control (see VOICE_ID_ENABLED in config.py) can recognize the
-    enrolled user specifically before approving sensitive actions (delete,
-    run command, power actions, screen clicks). Re-running this overwrites
-    any previous enrollment."""
-    import recorder
-    import voice as voice_module
-    import voice_id
-
-    phrases_needed = 3
-    samples = []
-    voice_module.speak(
-        f"Let's set up voice ID. I'll ask you to speak {phrases_needed} times - "
-        "just say a full sentence naturally each time, then pause."
-    )
-    for i in range(phrases_needed):
-        voice_module.speak(f"Phrase {i + 1} of {phrases_needed} - go ahead.")
-        time.sleep(0.3)
-        audio = recorder.record_command()
-        if audio is not None:
-            samples.append(audio)
-        else:
-            voice_module.speak("I didn't catch that one - let's try again.")
-            time.sleep(0.3)
-            audio = recorder.record_command()
-            if audio is not None:
-                samples.append(audio)
-    return voice_id.enroll_from_samples(samples)
-
-
 def get_datetime() -> str:
     """Returns the current local date and time."""
     now = datetime.datetime.now()
@@ -1576,23 +1545,6 @@ def run_diagnostics() -> str:
         else:
             _append_check("Background watcher", True, "enabled, but no plugin currently registers a proactive check")
 
-    # --- Voice ID ---
-    if getattr(config, "VOICE_ID_ENABLED", False):
-        try:
-            import voice_id
-        except Exception as e:
-            _append_check("Voice ID", False, f"enabled, but the voice ID module could not be imported ({e})")
-        else:
-            try:
-                enrolled = voice_id.is_enrolled()
-            except Exception as e:
-                _append_check("Voice ID", False, f"enabled, but checking enrollment failed ({e})")
-            else:
-                if enrolled:
-                    _append_check("Voice ID", True, "enabled and a voiceprint is enrolled")
-                else:
-                    _append_check("Voice ID", False, "enabled, but no voiceprint enrolled yet - say 'enroll my voice'")
-
     problems = [c for c in checks if not c[1]]
 
     def _health_hint(label: str, detail: str) -> str:
@@ -1609,8 +1561,6 @@ def run_diagnostics() -> str:
             return "If this is unexpected, check that the memory.json file is writable and the folder permissions are correct."
         if "plugin" in lowered:
             return "If this is unexpected, review the plugin file for import errors or conflicting tool names."
-        if "voice id" in lowered:
-            return "If this is unexpected, run the voice enrollment flow again to create a new voiceprint."
         return ""
 
     if not problems:
@@ -1670,7 +1620,6 @@ _BUILTIN_FUNCTIONS = {
     "take_screenshot": take_screenshot,
     "describe_screen": describe_screen,
     "click_screen_element": click_screen_element,
-    "enroll_voice": enroll_voice,
     "get_datetime": get_datetime,
     "system_power_action": system_power_action,
     "reset_conversation": reset_conversation,
