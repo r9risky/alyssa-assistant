@@ -3916,16 +3916,15 @@ class ConfigDialog(QDialog):
 
         outer.addWidget(self._section_header("Application Updates", "↻", first=True))
         intro = self._help_label(
-            "Download and install the latest published Alyssa source release from GitHub. "
-            "Your preferences, API settings, themes, memories, credentials, and existing "
-            "plugins are kept unchanged."
+            "Install the latest Alyssa release. Your settings and personal data stay "
+            "unchanged, and updates stop before overwriting edited app files."
         )
         intro.setVisible(True)
         outer.addWidget(intro)
 
         self.check_update_btn = QPushButton("Check Update")
         self.check_update_btn.setObjectName("primaryButton")
-        self.check_update_btn.setToolTip("Check GitHub and install the latest published release.")
+        self.check_update_btn.setToolTip("Check for and install updates.")
         self.check_update_btn.clicked.connect(self._on_check_update)
         outer.addWidget(self.check_update_btn, 0, Qt.AlignLeft)
 

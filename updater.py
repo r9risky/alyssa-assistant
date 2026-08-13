@@ -1,11 +1,14 @@
 """Download and install the latest Alyssa source release safely."""
 
 import ast
+import hashlib
+import json
 import os
 from pathlib import Path, PurePosixPath
 import re
 import shutil
 import stat
+import subprocess
 import tempfile
 import zipfile
 
@@ -24,6 +27,92 @@ PRESERVED_FILES = {
     "token.json",
 }
 PRESERVED_DIRS = {".git", ".venv", "__pycache__", "build", "dist"}
+MANIFEST_FILE = ".alyssa-manifest.json"
+
+
+class LocalChangesError(RuntimeError):
+    """Raised before an update could overwrite locally edited app code."""
+
+
+def _is_managed(relative: Path, destination: Path) -> bool:
+    parts_lower = tuple(part.lower() for part in relative.parts)
+    return not (
+        parts_lower[0] in PRESERVED_DIRS
+        or relative.as_posix().lower() in PRESERVED_FILES
+        or relative.as_posix().lower() == "config.py"
+        or (parts_lower[0] == "plugins" and destination.exists())
+    )
+
+
+def _managed_paths(source_root: Path, install_root: Path) -> set[str]:
+    return {
+        source.relative_to(source_root).as_posix()
+        for source in source_root.rglob("*")
+        if source.is_file()
+        and _is_managed(
+            source.relative_to(source_root),
+            install_root / source.relative_to(source_root),
+        )
+    }
+
+
+def _file_hash(path: Path) -> str:
+    digest = hashlib.sha256()
+    with open(path, "rb") as source:
+        for chunk in iter(lambda: source.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _local_changes(source_root: Path, install_root: Path) -> list[str]:
+    """Find edited files that the incoming release would replace."""
+    managed = _managed_paths(source_root, install_root)
+    changed = set()
+    manifest_path = install_root / MANIFEST_FILE
+    if manifest_path.is_file():
+        try:
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            changed.update(
+                relative for relative in managed
+                if relative in manifest
+                and (
+                    not (install_root / relative).is_file()
+                    or _file_hash(install_root / relative) != manifest[relative]
+                )
+            )
+        except (OSError, ValueError, TypeError):
+            pass
+
+    if not (install_root / ".git").is_dir():
+        return sorted(changed)
+    try:
+        commands = (
+            ["git", "diff", "--name-only", "-z", "HEAD"],
+            ["git", "ls-files", "--others", "--exclude-standard", "-z"],
+        )
+        for command in commands:
+            result = subprocess.run(
+                command, cwd=install_root, capture_output=True, check=True
+            )
+            changed.update(
+                name.decode("utf-8", errors="replace").replace("\\", "/")
+                for name in result.stdout.split(b"\0") if name
+            )
+        return sorted(managed & changed)
+    except (OSError, subprocess.SubprocessError):
+        return sorted(changed)
+
+
+def _write_manifest(source_root: Path, install_root: Path) -> None:
+    manifest = {
+        relative: _file_hash(install_root / relative)
+        for relative in sorted(_managed_paths(source_root, install_root))
+        if (install_root / relative).is_file()
+    }
+    path = install_root / MANIFEST_FILE
+    temporary = path.with_name(path.name + ".update-tmp")
+    temporary.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
+    os.replace(temporary, path)
 
 
 def _version_key(value: str):
@@ -128,13 +217,8 @@ def _apply_release(source_root: Path, install_root: Path) -> None:
                 if not source.is_file():
                     continue
                 relative = source.relative_to(source_root)
-                parts_lower = tuple(part.lower() for part in relative.parts)
                 destination = install_root / relative
-                if parts_lower[0] in PRESERVED_DIRS:
-                    continue
-                if relative.as_posix().lower() in PRESERVED_FILES:
-                    continue
-                if parts_lower[0] == "plugins" and destination.exists():
+                if not _is_managed(relative, destination) and relative.as_posix().lower() != "config.py":
                     continue
 
                 backup = backup_root / relative
@@ -204,7 +288,19 @@ def install_latest(install_root: str | os.PathLike) -> tuple[bool, str]:
             raise RuntimeError(f"Couldn't download the latest release: {error}") from error
 
         source_root = _safe_extract(archive_path, temporary / "source")
+        changed = _local_changes(source_root, install_root)
+        if changed:
+            shown = ", ".join(changed[:8])
+            if len(changed) > 8:
+                shown += f", and {len(changed) - 8} more"
+            raise LocalChangesError(
+                "Update stopped to protect your work. Alyssa found locally edited "
+                f"application files that the update would replace: {shown}. "
+                "Your settings and personal data were not changed. Back up or commit "
+                "those code changes, then update them manually."
+            )
         _apply_release(source_root, install_root)
+        _write_manifest(source_root, install_root)
 
     temporary_marker = marker.with_name(marker.name + ".update-tmp")
     temporary_marker.write_text(tag + "\n", encoding="utf-8")

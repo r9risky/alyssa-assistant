@@ -146,6 +146,8 @@ The most useful settings are in `config.py`:
 The Settings window exposes the common provider, voice, assistant, and
 companion options without requiring manual edits. Its Updates tab installs
 the latest published GitHub release while preserving local settings and data.
+It stops before replacing locally edited application code and lists the files
+that need attention, so custom GUI changes are not silently overwritten.
 
 ## Included plugins
 

@@ -92,6 +92,61 @@ class UpdaterTests(unittest.TestCase):
                 )
         get.assert_called_once()
 
+    def test_manifest_detects_locally_edited_application_file(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            install = root / "install"
+            release = root / "release"
+            install.mkdir()
+            release.mkdir()
+            (install / "overlay.py").write_text("official\n", encoding="utf-8")
+            (release / "overlay.py").write_text("next release\n", encoding="utf-8")
+            updater._write_manifest(release, install)
+
+            (install / "overlay.py").write_text("my custom tab\n", encoding="utf-8")
+
+            self.assertEqual(
+                updater._local_changes(release, install), ["overlay.py"]
+            )
+
+    def test_manifest_ignores_personal_config_and_plugins(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            install = root / "install"
+            release = root / "release"
+            (install / "plugins").mkdir(parents=True)
+            (release / "plugins").mkdir(parents=True)
+            for path, text in (
+                (install / "config.py", "MY_SETTING = True\n"),
+                (release / "config.py", "MY_SETTING = False\n"),
+                (install / "plugins" / "mine.py", "personal\n"),
+                (release / "plugins" / "mine.py", "official\n"),
+            ):
+                path.write_text(text, encoding="utf-8")
+
+            updater._write_manifest(release, install)
+
+            self.assertEqual(updater._local_changes(release, install), [])
+
+    def test_git_detects_custom_tab_code_but_ignores_personal_settings(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            install = root / "install"
+            release = root / "release"
+            (install / ".git").mkdir(parents=True)
+            release.mkdir()
+            (release / "overlay.py").write_text("next release\n", encoding="utf-8")
+            (release / "overlay_config.json").write_text("{}\n", encoding="utf-8")
+            results = (
+                Mock(stdout=b"overlay.py\0overlay_config.json\0"),
+                Mock(stdout=b""),
+            )
+
+            with patch.object(updater.subprocess, "run", side_effect=results):
+                self.assertEqual(
+                    updater._local_changes(release, install), ["overlay.py"]
+                )
+
 
 if __name__ == "__main__":
     unittest.main()

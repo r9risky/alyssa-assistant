@@ -21,6 +21,7 @@ build_alyssa.bat
 .venv/
 .plans/
 .alyssa-version
+.alyssa-manifest.json
 
 # --- PyInstaller build output (build_alyssa.bat) ---
 build/
