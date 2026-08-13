@@ -1,3 +1,4 @@
+import io
 import tempfile
 from pathlib import Path
 import unittest
@@ -81,16 +82,71 @@ class UpdaterTests(unittest.TestCase):
     def test_current_release_does_not_download_again(self):
         response = Mock()
         response.json.return_value = {
-            "tag_name": f"v{updater.APP_VERSION}",
+            "tag_name": updater.CURRENT_VERSION,
             "zipball_url": "https://example.invalid/release.zip",
         }
         with tempfile.TemporaryDirectory() as temporary:
             with patch.object(updater.requests, "get", return_value=response) as get:
                 self.assertEqual(
                     updater.install_latest(temporary),
-                    (False, f"v{updater.APP_VERSION}"),
+                    (False, updater.CURRENT_VERSION),
                 )
         get.assert_called_once()
+
+    def test_check_latest_compares_versions_and_returns_release_notes(self):
+        response = Mock()
+        response.json.return_value = {
+            "tag_name": "v1.6.0",
+            "zipball_url": "https://example.invalid/release.zip",
+            "body": "New update flow",
+        }
+        with tempfile.TemporaryDirectory() as temporary:
+            with patch.object(updater.requests, "get", return_value=response):
+                release = updater.check_latest(temporary)
+
+        self.assertEqual(release["current_version"], updater.CURRENT_VERSION)
+        self.assertEqual(release["latest_version"], "v1.6.0")
+        self.assertTrue(release["update_available"])
+        self.assertEqual(release["notes"], "New update flow")
+
+    def test_check_latest_rejects_uncomparable_version(self):
+        response = Mock()
+        response.json.return_value = {
+            "tag_name": "latest",
+            "zipball_url": "https://example.invalid/release.zip",
+        }
+        with tempfile.TemporaryDirectory() as temporary:
+            with patch.object(updater.requests, "get", return_value=response):
+                with self.assertRaisesRegex(RuntimeError, "Couldn't compare"):
+                    updater.check_latest(temporary)
+
+    def test_install_release_downloads_applies_and_records_version(self):
+        archive_bytes = io.BytesIO()
+        with zipfile.ZipFile(archive_bytes, "w") as zipped:
+            for name, contents in (
+                ("alyssa-release/main.py", "new main\n"),
+                ("alyssa-release/overlay.py", "new overlay\n"),
+                ("alyssa-release/config.py", "SETTING = 'default'\n"),
+            ):
+                zipped.writestr(name, contents)
+
+        response = Mock()
+        response.iter_content.return_value = [archive_bytes.getvalue()]
+        release = {
+            "latest_version": "v1.6.0",
+            "download_url": "https://example.invalid/release.zip",
+        }
+        with tempfile.TemporaryDirectory() as temporary:
+            install = Path(temporary)
+            (install / "main.py").write_text("old main\n", encoding="utf-8")
+            (install / "config.py").write_text("SETTING = 'mine'\n", encoding="utf-8")
+            with patch.object(updater.requests, "get", return_value=response):
+                self.assertEqual(updater.install_release(install, release), "v1.6.0")
+
+            self.assertEqual((install / "main.py").read_text(encoding="utf-8"), "new main\n")
+            self.assertEqual((install / "overlay.py").read_text(encoding="utf-8"), "new overlay\n")
+            self.assertIn("SETTING = 'mine'", (install / "config.py").read_text(encoding="utf-8"))
+            self.assertEqual((install / ".alyssa-version").read_text(encoding="utf-8"), "v1.6.0\n")
 
     def test_manifest_detects_locally_edited_application_file(self):
         with tempfile.TemporaryDirectory() as temporary:

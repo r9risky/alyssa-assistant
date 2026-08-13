@@ -16,7 +16,7 @@ import requests
 
 
 LATEST_RELEASE_URL = "https://api.github.com/repos/r9risky/alyssa-assistant/releases/latest"
-APP_VERSION = "1.5.0"
+CURRENT_VERSION = "v1.5.0"
 MAX_DOWNLOAD_BYTES = 250 * 1024 * 1024
 PRESERVED_FILES = {
     "color_themes.json",
@@ -247,29 +247,43 @@ def _apply_release(source_root: Path, install_root: Path) -> None:
             raise
 
 
-def install_latest(install_root: str | os.PathLike) -> tuple[bool, str]:
-    """Install GitHub's latest published release. Return (updated, tag)."""
-    install_root = Path(install_root)
-    marker = install_root / ".alyssa-version"
-    headers = {"Accept": "application/vnd.github+json", "User-Agent": "Alyssa-Updater"}
+def current_version(install_root: str | os.PathLike) -> str:
+    marker = Path(install_root) / ".alyssa-version"
+    return marker.read_text(encoding="utf-8").strip() if marker.is_file() else CURRENT_VERSION
 
+
+def check_latest(install_root: str | os.PathLike) -> dict:
+    """Return GitHub's latest release metadata and whether it is newer."""
+    headers = {"Accept": "application/vnd.github+json", "User-Agent": "Alyssa-Updater"}
     try:
         response = requests.get(LATEST_RELEASE_URL, headers=headers, timeout=20)
         response.raise_for_status()
         release = response.json()
         tag = str(release["tag_name"]).strip()
-        download_url = release["zipball_url"]
+        download_url = str(release["zipball_url"])
     except (requests.RequestException, KeyError, TypeError, ValueError) as error:
         raise RuntimeError(f"Couldn't check GitHub for updates: {error}") from error
 
-    installed = (
-        marker.read_text(encoding="utf-8").strip()
-        if marker.is_file()
-        else APP_VERSION
-    )
+    installed = current_version(install_root)
     latest_key, installed_key = _version_key(tag), _version_key(installed)
-    if tag == installed or (latest_key and installed_key and latest_key <= installed_key):
-        return False, tag
+    if latest_key is None or installed_key is None:
+        raise RuntimeError(f"Couldn't compare release versions: installed {installed}, latest {tag}.")
+    return {
+        "current_version": installed,
+        "latest_version": tag,
+        "update_available": installed_key < latest_key,
+        "notes": str(release.get("body") or "No release notes were provided.").strip(),
+        "download_url": download_url,
+    }
+
+
+def install_release(install_root: str | os.PathLike, release: dict) -> str:
+    """Download and transactionally install a release returned by check_latest."""
+    install_root = Path(install_root)
+    marker = install_root / ".alyssa-version"
+    tag = release["latest_version"]
+    download_url = release["download_url"]
+    headers = {"Accept": "application/vnd.github+json", "User-Agent": "Alyssa-Updater"}
 
     with tempfile.TemporaryDirectory(prefix="alyssa-update-") as temporary_name:
         temporary = Path(temporary_name)
@@ -305,4 +319,12 @@ def install_latest(install_root: str | os.PathLike) -> tuple[bool, str]:
     temporary_marker = marker.with_name(marker.name + ".update-tmp")
     temporary_marker.write_text(tag + "\n", encoding="utf-8")
     os.replace(temporary_marker, marker)
-    return True, tag
+    return tag
+
+
+def install_latest(install_root: str | os.PathLike) -> tuple[bool, str]:
+    """Compatibility helper: check for and install GitHub's latest release."""
+    release = check_latest(install_root)
+    if not release["update_available"]:
+        return False, release["latest_version"]
+    return True, install_release(install_root, release)

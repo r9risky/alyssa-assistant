@@ -11,6 +11,7 @@ from PySide6.QtWidgets import QApplication, QFormLayout
 
 import overlay
 import config
+import updater
 
 
 class SettingsGuiTests(unittest.TestCase):
@@ -183,6 +184,44 @@ class SettingsGuiTests(unittest.TestCase):
         ]
         self.assertIn("Updates", labels)
         self.assertEqual(self.dialog.check_update_btn.text(), "Check Update")
+        self.assertIn(updater.CURRENT_VERSION, self.dialog.current_version_label.text())
+
+    def test_update_check_reports_when_current_version_is_latest(self):
+        release = {
+            "current_version": updater.CURRENT_VERSION,
+            "latest_version": "v1.0.4",
+            "update_available": False,
+            "notes": "Older release",
+            "download_url": "https://example.invalid/release.zip",
+        }
+
+        self.dialog._on_update_checked(True, release)
+
+        self.assertEqual(
+            self.dialog.update_status_label.text(),
+            f"You are on the latest version ({updater.CURRENT_VERSION}). No update needed.",
+        )
+
+    def test_update_check_shows_notes_and_requires_confirmation(self):
+        release = {
+            "current_version": updater.CURRENT_VERSION,
+            "latest_version": "v1.6.0",
+            "update_available": True,
+            "notes": "A safer updater",
+            "download_url": "https://example.invalid/release.zip",
+        }
+
+        with (
+            patch.object(overlay.QMessageBox, "exec", return_value=overlay.QMessageBox.No),
+            patch.object(overlay.QMessageBox, "setInformativeText") as set_notes,
+        ):
+            self.dialog._on_update_checked(True, release)
+
+        set_notes.assert_called_once_with("Changes in this release:\n\nA safer updater")
+        self.assertEqual(
+            self.dialog.update_status_label.text(),
+            "Update cancelled. No files were changed.",
+        )
 
 
 if __name__ == "__main__":

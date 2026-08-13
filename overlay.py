@@ -2072,7 +2072,8 @@ class ConfigDialog(QDialog):
     # Spotify's pair is verified together as one signal, since the token
     # request needs both at once.
     _spotify_verified_signal = Signal(bool, str)
-    _update_finished_signal = Signal(bool, bool, str)
+    _update_checked_signal = Signal(bool, object)
+    _update_installed_signal = Signal(bool, str)
 
     # A cohesive theme matching the companion/speech-bubble palette,
     # built from the shared color themes so the dialog, speech bubble, and
@@ -2452,7 +2453,8 @@ class ConfigDialog(QDialog):
         self._key_verified_signal.connect(self._on_key_verification_result)
         self._custom_models_fetched_signal.connect(self._on_custom_models_fetch_result)
         self._spotify_verified_signal.connect(self._on_spotify_verify_result)
-        self._update_finished_signal.connect(self._on_update_finished)
+        self._update_checked_signal.connect(self._on_update_checked)
+        self._update_installed_signal.connect(self._on_update_installed)
 
         self.tabs = _SidebarTabs(self)
         self.tabs.addTab(self._wrap_in_scroll_area(self._build_assistant_tab()), "Assistant")
@@ -3922,9 +3924,15 @@ class ConfigDialog(QDialog):
         intro.setVisible(True)
         outer.addWidget(intro)
 
+        self.current_version_label = self._help_label(
+            f"Current Version: {updater.current_version(_BASE_DIR)}"
+        )
+        self.current_version_label.setVisible(True)
+        outer.addWidget(self.current_version_label)
+
         self.check_update_btn = QPushButton("Check Update")
         self.check_update_btn.setObjectName("primaryButton")
-        self.check_update_btn.setToolTip("Check for and install updates.")
+        self.check_update_btn.setToolTip("Check GitHub for a newer release.")
         self.check_update_btn.clicked.connect(self._on_check_update)
         outer.addWidget(self.check_update_btn, 0, Qt.AlignLeft)
 
@@ -3943,14 +3951,13 @@ class ConfigDialog(QDialog):
 
         def _worker():
             try:
-                updated, tag = updater.install_latest(_BASE_DIR)
-                self._update_finished_signal.emit(True, updated, tag)
+                self._update_checked_signal.emit(True, updater.check_latest(_BASE_DIR))
             except Exception as error:
-                self._update_finished_signal.emit(False, False, str(error))
+                self._update_checked_signal.emit(False, str(error))
 
         threading.Thread(target=_worker, daemon=True).start()
 
-    def _on_update_finished(self, ok: bool, updated: bool, detail: str):
+    def _on_update_checked(self, ok: bool, detail):
         self.check_update_btn.setEnabled(True)
         if not ok:
             self.update_status_label.setStyleSheet(
@@ -3960,17 +3967,61 @@ class ConfigDialog(QDialog):
             QMessageBox.warning(self, "Update Failed", detail)
             return
 
+        current = detail["current_version"]
+        latest = detail["latest_version"]
+        self.current_version_label.setText(f"Current Version: {current} | Latest Version: {latest}")
         self.update_status_label.setStyleSheet(
             f"color: {self._t()['success']}; font-size: 11px;"
         )
-        if updated:
-            message = f"Alyssa {detail} was installed. Restart Alyssa to use the update."
-            self.update_status_label.setText(message)
-            QMessageBox.information(self, "Update Installed", message)
-        else:
+        if not detail["update_available"]:
             self.update_status_label.setText(
-                f"No newer release is available (latest: {detail})."
+                f"You are on the latest version ({current}). No update needed."
             )
+            return
+
+        self.update_status_label.setText(
+            f"Update available: {current} → {latest}. Review the changes to continue."
+        )
+        prompt = QMessageBox(self)
+        prompt.setIcon(QMessageBox.Information)
+        prompt.setWindowTitle(f"Alyssa {latest} Update")
+        prompt.setText(f"Current Version: {current} | Latest Version: {latest}")
+        prompt.setInformativeText("Changes in this release:\n\n" + detail["notes"])
+        prompt.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
+        prompt.setDefaultButton(QMessageBox.No)
+        prompt.button(QMessageBox.Yes).setText("Download and Install")
+        if prompt.exec() != QMessageBox.Yes:
+            self.update_status_label.setText("Update cancelled. No files were changed.")
+            return
+
+        self.check_update_btn.setEnabled(False)
+        self.update_status_label.setText(f"Downloading and installing {latest}…")
+
+        def _worker():
+            try:
+                self._update_installed_signal.emit(True, updater.install_release(_BASE_DIR, detail))
+            except Exception as error:
+                self._update_installed_signal.emit(False, str(error))
+
+        threading.Thread(target=_worker, daemon=True).start()
+
+    def _on_update_installed(self, ok: bool, detail: str):
+        self.check_update_btn.setEnabled(True)
+        if not ok:
+            self.update_status_label.setStyleSheet(
+                f"color: {self._t()['danger']}; font-size: 11px;"
+            )
+            self.update_status_label.setText(f"Update failed: {detail}")
+            QMessageBox.warning(self, "Update Failed", detail)
+            return
+
+        self.current_version_label.setText(f"Current Version: {detail} | Latest Version: {detail}")
+        self.update_status_label.setStyleSheet(
+            f"color: {self._t()['success']}; font-size: 11px;"
+        )
+        message = f"Alyssa {detail} was installed. Restart Alyssa to use the update."
+        self.update_status_label.setText(message)
+        QMessageBox.information(self, "Update Installed", message)
 
     # -- Plugins tab ----------------------------------------------------
     def _build_plugins_tab(self) -> _QW:
