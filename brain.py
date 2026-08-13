@@ -1839,10 +1839,15 @@ def _describe_image_gemini(image_bytes: bytes, mime_type: str, prompt: str) -> s
 
     url = _GEMINI_URL_TEMPLATE.format(model=config.GEMINI_MODEL)
     try:
-        response = _HTTP_SESSION.post(
-            url, params={"key": config.GEMINI_API_KEY}, json=body, timeout=60
-        )
-        response.raise_for_status()
+        for attempt in range(3):
+            response = _HTTP_SESSION.post(
+                url, params={"key": config.GEMINI_API_KEY}, json=body, timeout=60
+            )
+            if response.status_code != 503 or attempt == 2:
+                response.raise_for_status()
+                break
+            print(f"[Gemini vision unavailable] Retrying in {attempt + 1}s...")
+            time.sleep(attempt + 1)
     except requests.exceptions.Timeout:
         return "Looking at the screen timed out - try again in a moment."
     except requests.exceptions.ConnectionError:
@@ -1855,6 +1860,8 @@ def _describe_image_gemini(image_bytes: bytes, mime_type: str, prompt: str) -> s
             return "Gemini rejected my API key - double check GEMINI_API_KEY in config.py."
         if status == 429:
             return _describe_gemini_429(e.response)
+        if status == 503:
+            return "Gemini is busy right now, even after retrying - try again in a moment."
         return f"Gemini API returned an error ({status}) while looking at the screen."
 
     data = response.json()

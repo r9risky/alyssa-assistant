@@ -44,6 +44,38 @@ class AtomicConfigWriteTests(unittest.TestCase):
             self.assertFalse(os.path.exists(path + ".tmp"))
 
 
+class GeminiVisionRetryTests(unittest.TestCase):
+    def test_temporary_unavailable_response_is_retried(self):
+        class Response:
+            def __init__(self, status_code, body):
+                self.status_code = status_code
+                self.text = str(body)
+                self._body = body
+
+            def raise_for_status(self):
+                if self.status_code >= 400:
+                    raise brain.requests.exceptions.HTTPError(response=self)
+
+            def json(self):
+                return self._body
+
+        unavailable = Response(503, {"error": {"status": "UNAVAILABLE"}})
+        success = Response(200, {
+            "candidates": [{"content": {"parts": [{"text": "I can see your desktop."}]}}]
+        })
+
+        with (
+            patch.object(config, "GEMINI_API_KEY", "test-key"),
+            patch.object(brain._HTTP_SESSION, "post", side_effect=[unavailable, success]) as post,
+            patch.object(brain.time, "sleep") as sleep,
+        ):
+            result = brain._describe_image_gemini(b"image", "image/jpeg", "describe")
+
+        self.assertEqual(result, "I can see your desktop.")
+        self.assertEqual(post.call_count, 2)
+        sleep.assert_called_once_with(1)
+
+
 class VoiceLifecycleTests(unittest.TestCase):
     def test_interrupted_pipeline_cleanup_skips_unstarted_jobs(self):
         fd, path = tempfile.mkstemp(suffix=".mp3")
