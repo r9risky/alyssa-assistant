@@ -314,9 +314,14 @@ def _play(path: str, stop_event=None) -> bool:
     music = pygame.mixer.music
     music.load(path)
     try:
-        music.set_volume(_volume_str_to_gain(getattr(config, "EDGE_TTS_VOLUME", "+0%")))
+        volume = getattr(config, "EDGE_TTS_VOLUME", "+0%")
+        music.set_volume(_volume_str_to_gain(volume))
         music.play()
         while music.get_busy():
+            current_volume = getattr(config, "EDGE_TTS_VOLUME", "+0%")
+            if current_volume != volume:
+                volume = current_volume
+                music.set_volume(_volume_str_to_gain(volume))
             if stop_event is not None and stop_event.is_set():
                 return False
             time.sleep(0.02)

@@ -87,6 +87,7 @@ from PySide6.QtWidgets import (
     QFormLayout,
     QVBoxLayout,
     QHBoxLayout,
+    QGridLayout,
     QLineEdit,
     QComboBox,
     QSizePolicy,
@@ -102,7 +103,6 @@ from PySide6.QtWidgets import (
     QSystemTrayIcon,
     QScrollArea,
     QFrame,
-    QSizeGrip,
     QSplitter,
     QListWidget,
     QListWidgetItem,
@@ -251,7 +251,7 @@ def _scale_centered(src: QPixmap, size: QSize) -> QPixmap:
     return out
 
 
-def render_character(settings: dict, size: QSize, blink: bool = False, mouth_open: bool = False) -> QPixmap:
+def render_character(settings: dict, size: QSize, mouth_open: bool = False) -> QPixmap:
     """Renders the current character (built-in or user-supplied image) at
     the given size, preserving aspect ratio and centering it.
 
@@ -378,13 +378,9 @@ def _load_color_themes() -> dict:
 COLOR_THEMES = _load_color_themes()
 
 _THEME_LIGHT = COLOR_THEMES["light"]
-_THEME_DARK = COLOR_THEMES["dark"]
 _CODE_EDITOR_COLORS = {"bg": "#1e1e2e", "text": "#cdd6f4", "selection": "#45475a"}
 
-# Dialog/header outer corner radius - shared by _build_style's r_xl (for
-# QSS corners on #dialogContent) and _TitleBar's hand-painted top corners
-# (see _TitleBar.paintEvent), so the two halves of the dialog's rounded
-# outline can't drift apart into mismatched corners.
+# Settings dialog outer corner radius.
 _DIALOG_RADIUS = 6
 
 # Single type scale for ConfigDialog._build_style. Was previously ad-hoc
@@ -396,8 +392,6 @@ TYPE_SCALE = {
     "eyebrow": 10.5,  # QLabel#sectionHeader/-First letter-spaced labels
     "hint": 11.5,      # secondary/status/note labels
     "body": 13,        # QLabel, QCheckBox, default field text
-    "emphasis": 14.5,  # avatar initial, plugin file name
-    "title": 17.5,     # header banner title
 }
 
 
@@ -440,47 +434,6 @@ def _apply_elevation(widget: "_QW", blur: int = 28, y: int = 6, alpha: int = 110
     shadow.setColor(QColor(0, 0, 0, alpha))
     widget.setGraphicsEffect(shadow)
     return shadow
-
-
-class _ThemedSizeGrip(QSizeGrip):
-    """QSizeGrip ignores stylesheets entirely (Qt always paints it with
-    the native OS look), so it stayed the same flat gray dots no matter
-    which color theme was picked - the one corner of the dialog that
-    never matched. This repaints it as three small theme-accent dots,
-    same visual language as the companion's own resize-grip glyph
-    (see CompanionWindow.paintEvent)."""
-
-    def __init__(self, parent: QWidget, get_theme):
-        super().__init__(parent)
-        self._get_theme = get_theme
-        self._hovered = False
-        self.setFixedSize(28, 28)
-
-    def enterEvent(self, event):
-        self._hovered = True
-        self.update()
-        super().enterEvent(event)
-
-    def leaveEvent(self, event):
-        self._hovered = False
-        self.update()
-        super().leaveEvent(event)
-
-    def paintEvent(self, event):
-        if not self._hovered:
-            return
-        t = self._get_theme()
-        accent_hex = t["accent"]
-        r, g, b = int(accent_hex[1:3], 16), int(accent_hex[3:5], 16), int(accent_hex[5:7], 16)
-        painter = QPainter(self)
-        painter.setRenderHint(QPainter.Antialiasing)
-        painter.setPen(Qt.NoPen)
-        painter.setBrush(QColor(r, g, b, 190))
-        for i in range(3):
-            for j in range(3 - i):
-                cx = self.width() - 4 - i * 5
-                cy = self.height() - 4 - j * 5
-                painter.drawEllipse(QPoint(cx, cy), 1.4, 1.4)
 
 
 class _HoverPress(QObject):
@@ -1097,8 +1050,6 @@ class CompanionWindow(QWidget):
         self._drag_offset = QPoint()
         self._resize_start_pos = QPoint()
         self._resize_start_size = QSize()
-        self._blinking = False
-
         # -- PNGTuber-style talk state --------------------------------
         self._talking = False
         self._mouth_open = False
@@ -1124,10 +1075,6 @@ class CompanionWindow(QWidget):
         self._update_pixmap()
         self._update_effective_opacity()
 
-        self._blink_timer = QTimer(self)
-        self._blink_timer.timeout.connect(self._do_blink)
-        self._schedule_next_blink()
-
         self._talk_anim_timer = QTimer(self)
         self._talk_anim_timer.timeout.connect(self._on_talk_tick)
 
@@ -1146,7 +1093,7 @@ class CompanionWindow(QWidget):
             self._pixmap = self._frame_from_movie(path, mouth_open)
         else:
             self._stop_active_movie()
-            self._pixmap = render_character(self.settings, self.size(), blink=self._blinking, mouth_open=mouth_open)
+            self._pixmap = render_character(self.settings, self.size(), mouth_open=mouth_open)
         self._update_mask()
         self.update()
 
@@ -1176,7 +1123,7 @@ class CompanionWindow(QWidget):
             # First call, before the movie has decoded frame 0 yet - fall
             # back to a static render just for this one paint so there's
             # never a blank flash; the next frameChanged tick replaces it.
-            return render_character(self.settings, self.size(), blink=self._blinking, mouth_open=mouth_open)
+            return render_character(self.settings, self.size(), mouth_open=mouth_open)
         return _scale_centered(frame, self.size())
 
     def _stop_active_movie(self):
@@ -1231,20 +1178,6 @@ class CompanionWindow(QWidget):
                 gx + RESIZE_GRIP - off, gy + RESIZE_GRIP - 3,
                 gx + RESIZE_GRIP - 3, gy + RESIZE_GRIP - off,
             )
-
-    # -- blinking --------------------------------------------------------
-    def _schedule_next_blink(self):
-        self._blink_timer.start(random.randint(2500, 6000))
-
-    def _do_blink(self):
-        self._blinking = True
-        self._update_pixmap()
-        QTimer.singleShot(120, self._end_blink)
-
-    def _end_blink(self):
-        self._blinking = False
-        self._update_pixmap()
-        self._schedule_next_blink()
 
     # -- thread-safe entry points for Bridge signals ----------------------
     # Real bound methods (not a lambda) so PySide6 detects they belong to
@@ -1960,12 +1893,16 @@ class _SidebarTabs(QWidget):
 
         self.navigation = QListWidget()
         self.navigation.setObjectName("settingsNavigation")
-        self.navigation.setFixedWidth(190)
+        self.navigation.setMinimumWidth(120)
+        self.navigation.setMaximumWidth(190)
+        self.navigation.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Expanding)
         self.navigation.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.navigation.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
 
         self.pages = QStackedWidget()
         self.pages.setObjectName("settingsPages")
+        self.pages.setMinimumWidth(0)
+        self.pages.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Expanding)
         self.navigation.currentRowChanged.connect(self.pages.setCurrentIndex)
 
         layout = QHBoxLayout(self)
@@ -1976,7 +1913,7 @@ class _SidebarTabs(QWidget):
 
     def addTab(self, page: QWidget, label: str):
         item = QListWidgetItem(label)
-        item.setSizeHint(QSize(190, 50))
+        item.setSizeHint(QSize(0, 50))
         self.navigation.addItem(item)
         self.pages.addWidget(page)
         if self.navigation.currentRow() < 0:
@@ -1985,52 +1922,9 @@ class _SidebarTabs(QWidget):
     def setCurrentIndex(self, index: int):
         self.navigation.setCurrentRow(index)
 
-
-class _TitleBar(_QW):
-    """Custom replacement for the native Windows title bar, used once the
-    Settings dialog goes frameless (see ConfigDialog.__init__). Dragging
-    it moves the window via Qt's startSystemMove() - the modern
-    OS-assisted equivalent of manually tracking mouse deltas, so window
-    snapping/etc. still behaves like a normal Windows title bar despite
-    not being one. Double-clicking toggles maximize/restore, same as a
-    real title bar.
-
-    The gradient background used to be hand-painted (get_theme +
-    paintEvent) rather than QSS, on the theory that a plain QWidget's
-    QSS background/border-radius doesn't reliably get redrawn just from
-    re-running setStyleSheet() on an ancestor. In practice that custom
-    paintEvent was the actual bug: every *other* themed surface in this
-    dialog (#dialogContent, checkboxes, sliders, section labels) is
-    driven by ConfigDialog._build_style()'s QSS and updates live and
-    correctly the moment the theme changes, because Qt reliably
-    reapplies QSS on unpolish/polish. This bar now uses that same QSS
-    path (see "QWidget#headerBanner" in _build_style) instead of a
-    separate hand-painted code path that could silently fall out of
-    sync with it - WA_StyledBackground below is what makes a plain
-    QWidget actually honor its QSS background/border-radius."""
-
-    def __init__(self, get_theme, radius: int, parent=None):
-        super().__init__(parent)
-        self._get_theme = get_theme
-        self._radius = radius
-        self.setAttribute(Qt.WA_StyledBackground, True)
-
-    def mousePressEvent(self, event):
-        if event.button() == Qt.LeftButton:
-            handle = self.window().windowHandle()
-            if handle is not None:
-                handle.startSystemMove()
-                event.accept()
-                return
-        super().mousePressEvent(event)
-
-    def mouseDoubleClickEvent(self, event):
-        if event.button() == Qt.LeftButton:
-            win = self.window()
-            win.showNormal() if win.isMaximized() else win.showMaximized()
-            event.accept()
-            return
-        super().mouseDoubleClickEvent(event)
+    def fit_navigation(self, available_width: int):
+        """Keep the rail proportional without letting it crowd the form."""
+        self.navigation.setFixedWidth(max(120, min(190, round(available_width * 0.22))))
 
 
 class VoiceBrowserDialog(QDialog):
@@ -2169,29 +2063,18 @@ class VoiceBrowserDialog(QDialog):
 
 
 class ConfigDialog(QDialog):
-    # Emitted from the background verification thread (see
-    # _do_verify_gemini_key); Qt auto-queues this onto the GUI thread since
-    # the receiving slot lives on this QObject. The third argument is the
-    # list of models the key can use, so Verify can also populate the
-    # model dropdown, not just report valid/invalid.
-    _gemini_key_verified_signal = Signal(bool, str, list)
-    # Same pattern for the other cloud providers' API keys.
-    _openai_key_verified_signal = Signal(bool, str, list)
-    _anthropic_key_verified_signal = Signal(bool, str, list)
+    # Background checks emit here so Qt queues the result onto the GUI thread.
+    _key_verified_signal = Signal(str, bool, str, list)
     # Custom OpenAI-compatible server - fetching its model list doubles as
     # its "verify" step, since there's no separate cheap auth-only probe.
     _custom_models_fetched_signal = Signal(bool, str, list)
-    # ElevenLabs TTS: fetching the account's voice list doubles as its
-    # verify step too, same reasoning as the custom LLM provider above.
-    _elevenlabs_key_verified_signal = Signal(bool, str, list)
     # Spotify's pair is verified together as one signal, since the token
     # request needs both at once.
     _spotify_verified_signal = Signal(bool, str)
-    _youtube_key_verified_signal = Signal(bool, str)
 
     # A cohesive theme matching the companion/speech-bubble palette,
-    # built from _THEME_LIGHT/_THEME_DARK so light/dark mode share one
-    # source of truth with the speech bubble and the menus.
+    # built from the shared color themes so the dialog, speech bubble, and
+    # menus use one source of truth.
     @staticmethod
     def _build_style(dark: bool) -> str:
         t = _theme(dark)
@@ -2200,9 +2083,8 @@ class ConfigDialog(QDialog):
         # (not pill-shaped) and near-opaque (solid cards, not see-through
         # glass) per the flat/cute redesign.
         r_xl, r_lg, r_md, r_sm = _DIALOG_RADIUS, 6, 4, 3
-        f_eyebrow, f_hint, f_body, f_em, f_title = (
+        f_eyebrow, f_hint, f_body = (
             TYPE_SCALE["eyebrow"], TYPE_SCALE["hint"], TYPE_SCALE["body"],
-            TYPE_SCALE["emphasis"], TYPE_SCALE["title"],
         )
         glass_1 = _rgba(t['panel'], 0.97)   # dialog body, tab pane
         glass_2 = _rgba(t['card'], 0.94)    # inputs, buttons, list rows
@@ -2268,60 +2150,10 @@ class ConfigDialog(QDialog):
             font-size: {f_body}px;
             background: transparent;
         }}
-        QLabel#headerTitle {{
-            color: #FFFFFF;
-            font-size: {f_title}px;
-            font-weight: 600;
-            letter-spacing: 0.3px;
-        }}
-        QLabel#headerSubtitle {{
-            color: rgba(255, 255, 255, 0.75);
-            font-size: {f_hint}px;
-        }}
-        QLabel#headerAvatar {{
-            color: #FFFFFF;
-            background: {_rgba(t['accent'], 0.38)};
-            border: 1px solid {_rgba(t['accent'], 0.65)};
-            border-radius: 20px;
-            font-size: {f_em}px;
-            font-weight: 600;
-        }}
-        QWidget#headerBanner {{
-            background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
-                stop:0 {_rgba(t['header_grad_start'], 0.97)},
-                stop:1 {_rgba(t['header_grad_end'], 0.97)});
-            border-top-left-radius: {r_xl}px;
-            border-top-right-radius: {r_xl}px;
-            border: 1px solid rgba(255, 255, 255, 0.10);
-            border-bottom: 1px solid rgba(255, 255, 255, 0.24);
-        }}
         QWidget#dialogContent {{
             background: {glass_1};
             border-radius: {r_xl}px;
             border: 1px solid {edge};
-        }}
-        QPushButton#titleBarButton, QPushButton#titleBarCloseButton {{
-            background: transparent;
-            color: rgba(255, 255, 255, 0.8);
-            border: none;
-            border-radius: 3px;
-            font-size: {f_body}px;
-            font-weight: 600;
-            padding: 0px;
-        }}
-        QPushButton#titleBarButton:hover {{
-            background: rgba(255, 255, 255, 0.15);
-            color: #FFFFFF;
-        }}
-        QPushButton#titleBarButton:pressed {{
-            background: rgba(255, 255, 255, 0.25);
-        }}
-        QPushButton#titleBarCloseButton:hover {{
-            background: {t['danger']};
-            color: #FFFFFF;
-        }}
-        QPushButton#titleBarCloseButton:pressed {{
-            background: {t['accent_press']};
         }}
         QLabel#sectionHeader {{
             color: {t['accent']};
@@ -2489,9 +2321,9 @@ class ConfigDialog(QDialog):
         QToolTip {{
             background: {glass_3};
             color: {t['text']};
-            border: 1px solid {edge};
-            border-radius: 3px;
-            padding: 5px 9px;
+            border: none;
+            border-radius: 2px;
+            padding: 2px 6px;
         }}
         QListWidget#pluginList {{
             background: {glass_2};
@@ -2588,8 +2420,18 @@ class ConfigDialog(QDialog):
         # and trigger a Windows geometry warning. Each tab scrolls
         # internally instead (see _wrap_in_scroll_area).
         screen = self.screen() or QGuiApplication.primaryScreen()
-        self.resize(900, 700)
+        available = screen.availableGeometry().size()
+        self.resize(
+            min(max(640, round(available.width() * 0.72)), available.width() - 32),
+            min(max(520, round(available.height() * 0.82)), available.height() - 32),
+        )
+        self.setMinimumSize(
+            min(560, max(420, available.width() - 32)),
+            min(420, max(360, available.height() - 32)),
+        )
         self.setStyleSheet(self._build_style(companion.settings))
+        self._responsive_forms = []
+        self._compact_layout = None
 
         # Every field applies as you change it - no Save button. Each tab
         # has its own debounce timer so a burst of changes (a slider drag,
@@ -2605,17 +2447,9 @@ class ConfigDialog(QDialog):
         self._assistant_apply_timer.setInterval(400)
         self._assistant_apply_timer.timeout.connect(self._apply_assistant_live)
 
-        self._gemini_key_verified_signal.connect(self._on_gemini_key_verify_result)
-        self._openai_key_verified_signal.connect(self._on_openai_key_verify_result)
-        self._anthropic_key_verified_signal.connect(self._on_anthropic_key_verify_result)
+        self._key_verified_signal.connect(self._on_key_verification_result)
         self._custom_models_fetched_signal.connect(self._on_custom_models_fetch_result)
-        self._elevenlabs_key_verified_signal.connect(self._on_elevenlabs_key_verify_result)
         self._spotify_verified_signal.connect(self._on_spotify_verify_result)
-        self._youtube_key_verified_signal.connect(self._on_youtube_key_verify_result)
-        self._last_verified_key_checked = None
-        self._last_verified_openai_key_checked = None
-        self._last_verified_anthropic_key_checked = None
-        self._last_verified_elevenlabs_key_checked = None
 
         self.tabs = _SidebarTabs(self)
         self.tabs.addTab(self._wrap_in_scroll_area(self._build_assistant_tab()), "Assistant")
@@ -2668,6 +2502,8 @@ class ConfigDialog(QDialog):
         outer.setSpacing(0)
         outer.addWidget(content)
 
+        self._update_responsive_layout()
+
         if focus_gemini:
             self.tabs.setCurrentIndex(0)
             self.provider_combo.setCurrentText("gemini")
@@ -2681,6 +2517,63 @@ class ConfigDialog(QDialog):
         # stale size slider and snap her back.
         self._last_companion_form_values = self._gather_companion_settings()
 
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._update_responsive_layout()
+
+    def _update_responsive_layout(self):
+        """Reflow the few rows that cannot shrink cleanly on their own."""
+        if not hasattr(self, "tabs"):
+            return
+        self.tabs.fit_navigation(self.width())
+        page_width = max(0, self.width() - self.tabs.navigation.width() - 48)
+        compact = page_width < 560
+
+        for form in self._responsive_forms:
+            form.setRowWrapPolicy(
+                QFormLayout.WrapAllRows if compact else QFormLayout.WrapLongRows
+            )
+            form.setLabelAlignment(
+                Qt.AlignLeft | Qt.AlignVCenter
+                if compact else Qt.AlignRight | Qt.AlignVCenter
+            )
+
+        if compact != self._compact_layout:
+            if hasattr(self, "_companion_grid"):
+                if compact:
+                    self._companion_grid.addWidget(
+                        self._preview_panel, 0, 0, 1, 2, Qt.AlignHCenter | Qt.AlignTop
+                    )
+                    self._companion_grid.addWidget(self._companion_form_panel, 1, 0, 1, 2)
+                else:
+                    self._companion_grid.addWidget(self._preview_panel, 0, 0, Qt.AlignTop)
+                    self._companion_grid.addWidget(self._companion_form_panel, 0, 1)
+                self._companion_grid.setColumnStretch(0, 0 if not compact else 1)
+                self._companion_grid.setColumnStretch(1, 1)
+
+            if hasattr(self, "_plugin_splitter"):
+                self._plugin_splitter.setOrientation(
+                    Qt.Vertical if compact else Qt.Horizontal
+                )
+                self._plugin_splitter.setSizes(
+                    [190, 360] if compact else [190, 500]
+                )
+
+            if hasattr(self, "_plugin_header_grid"):
+                grid = self._plugin_header_grid
+                if compact:
+                    grid.addWidget(self.plugin_file_label, 0, 0, 1, 3)
+                    grid.addWidget(self.plugin_enable_btn, 1, 0)
+                    grid.addWidget(self.plugin_save_btn, 1, 1)
+                    grid.addWidget(self.plugin_delete_btn, 1, 2)
+                else:
+                    grid.addWidget(self.plugin_file_label, 0, 0)
+                    grid.addWidget(self.plugin_enable_btn, 0, 1)
+                    grid.addWidget(self.plugin_save_btn, 0, 2)
+                    grid.addWidget(self.plugin_delete_btn, 0, 3)
+                grid.setColumnStretch(0, 1)
+            self._compact_layout = compact
+
     def finalize_initial_layout(self):
         """Resolve every nested layout after the native window is visible."""
         for widget in [self] + self.findChildren(QWidget):
@@ -2690,61 +2583,6 @@ class ConfigDialog(QDialog):
                 layout.activate()
             widget.updateGeometry()
         self.update()
-
-    # -- Header banner & section helpers -------------------------------------
-    def _build_header_banner(self) -> _QW:
-        """Doubles as the dialog's custom title bar, since the window is
-        frameless (no native Windows title bar - see __init__): a round
-        avatar with the assistant's first initial, her name, a friendly
-        one-line subtitle, and minimize/close buttons on the right.
-        Dragging anywhere on the bar moves the window (see _TitleBar);
-        double-clicking toggles maximize. Re-styles itself along with the
-        rest of the dialog when dark mode is toggled (see
-        _on_dark_mode_toggled)."""
-        banner = _TitleBar(self._t, _DIALOG_RADIUS, self)
-        banner.setObjectName("headerBanner")
-        banner.setFixedHeight(56)
-        self._header_banner = banner
-
-        avatar = QLabel((config.ASSISTANT_NAME or "A").strip()[:1].upper() or "A")
-        avatar.setObjectName("headerAvatar")
-        avatar.setFixedSize(38, 38)
-        avatar.setAlignment(Qt.AlignCenter)
-
-        title = QLabel(config.ASSISTANT_NAME)
-        title.setObjectName("headerTitle")
-        subtitle = QLabel("Settings & preferences")
-        subtitle.setObjectName("headerSubtitle")
-        self._header_title_label = title
-
-        text_col = QVBoxLayout()
-        text_col.setSpacing(1)
-        text_col.addStretch(1)
-        text_col.addWidget(title)
-        text_col.addWidget(subtitle)
-        text_col.addStretch(1)
-
-        minimize_btn = QPushButton("—")
-        minimize_btn.setObjectName("titleBarButton")
-        minimize_btn.setFixedSize(30, 30)
-        minimize_btn.setCursor(Qt.PointingHandCursor)
-        minimize_btn.clicked.connect(self.showMinimized)
-
-        close_titlebar_btn = QPushButton("✕")
-        close_titlebar_btn.setObjectName("titleBarCloseButton")
-        close_titlebar_btn.setFixedSize(30, 30)
-        close_titlebar_btn.setCursor(Qt.PointingHandCursor)
-        close_titlebar_btn.clicked.connect(self._on_close)
-
-        row = QHBoxLayout(banner)
-        row.setContentsMargins(16, 8, 10, 8)
-        row.setSpacing(12)
-        row.addWidget(avatar)
-        row.addLayout(text_col)
-        row.addStretch(1)
-        row.addWidget(minimize_btn)
-        row.addWidget(close_titlebar_btn)
-        return banner
 
     def _section_header(self, text: str, icon: str = "", first: bool = False) -> QLabel:
         """A small bold, accent-colored label with a hairline divider
@@ -2765,6 +2603,11 @@ class ConfigDialog(QDialog):
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QFrame.NoFrame)
+        scroll.setMinimumWidth(0)
+        scroll.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Expanding)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        content.setMinimumWidth(0)
+        content.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
         scroll.setWidget(content)
         return scroll
 
@@ -2773,29 +2616,22 @@ class ConfigDialog(QDialog):
         the row can be shown/hidden as a unit later (e.g. only the
         currently-selected LLM provider's fields)."""
         label_widget = QLabel(label) if isinstance(label, str) else label
-        field_widget = self._wrap_layout(field) if isinstance(field, QHBoxLayout) else field
-        form.addRow(label_widget, field_widget)
-        return (label_widget, field_widget)
-
-    def _wrap_layout(self, layout) -> _QW:
-        """Wraps a bare layout in a plain QWidget so it can be handed to
-        QFormLayout/addWidget as a single widget."""
-        layout.setContentsMargins(0, 0, 0, 0)
-        wrapper = _QW()
-        wrapper.setLayout(layout)
-        return wrapper
+        form.addRow(label_widget, field)
+        return (label_widget, field)
 
     def _stack_under(self, primary, *extras) -> _QW:
         """Stacks `extras` (status text, "don't have one?" links, etc.)
         directly beneath `primary` in a single column, so they line up
         under their field instead of spanning the full row width the way
         addRow("", ...) would."""
-        primary_widget = self._wrap_layout(primary) if isinstance(primary, QHBoxLayout) else primary
         wrapper = _QW()
         col = QVBoxLayout(wrapper)
         col.setContentsMargins(0, 0, 0, 0)
         col.setSpacing(4)
-        col.addWidget(primary_widget)
+        if isinstance(primary, QHBoxLayout):
+            col.addLayout(primary)
+        else:
+            col.addWidget(primary)
         for extra in extras:
             col.addWidget(extra)
         return wrapper
@@ -2815,8 +2651,7 @@ class ConfigDialog(QDialog):
     def _link_label(self, url: str, prefix: str, link_text: str) -> QLabel:
         accent = _theme(self.companion.settings)["accent"]
         label = QLabel(
-            f'{prefix} <a href="{url}" style="color:{accent};">{link_text}</a> '
-            "(opens in your browser)."
+            f'{prefix} <a href="{url}" style="color:{accent};">{link_text}</a>'
         )
         label.setOpenExternalLinks(True)
         label.setStyleSheet("font-size: 11px;")
@@ -2923,6 +2758,7 @@ class ConfigDialog(QDialog):
         form.setLabelAlignment(Qt.AlignRight | Qt.AlignVCenter)
         form.setFieldGrowthPolicy(QFormLayout.ExpandingFieldsGrow)
         form.setRowWrapPolicy(QFormLayout.WrapLongRows)
+        self._responsive_forms.append(form)
         self._assistant_form = form  # so _update_provider_rows_visibility can setRowVisible()
 
         form.addRow("", self._section_header("Identity & Brain", "🧠", first=True))
@@ -2953,7 +2789,7 @@ class ConfigDialog(QDialog):
         get_key_link = self._link_label(
             "https://aistudio.google.com/apikey", "Don't have one?", "Get a free Gemini API key"
         )
-        self.gemini_setup_hint = QLabel("⬆ Paste your key above — it takes effect right away.")
+        self.gemini_setup_hint = QLabel("⬆ Paste your key above; it applies immediately.")
         self.gemini_setup_hint.setStyleSheet(f"color: {self._t()['warning']}; font-weight: 600; font-size: 11px;")
         self.gemini_setup_hint.setVisible(False)
         self.gemini_key_edit, self.gemini_key_row_label, self._gemini_key_rows = self._build_api_key_row(
@@ -3032,20 +2868,13 @@ class ConfigDialog(QDialog):
         self._custom_rows.append(self._add_row(form, "Custom model:", custom_model_field))
 
         custom_note = self._help_label(
-            "Any OpenAI-compatible provider works here - Groq, OpenRouter, "
-            "Together, a local LM Studio server, etc. See CUSTOM_BASE_URL "
-            "in config.py for examples. \"Fetch models\" hits the server's "
-            "standard /models list - most compatible providers support it, "
-            "but a few don't, in which case just type the model name in "
-            "by hand."
+            "Works with OpenAI-compatible providers. Fetch or enter a model name."
         )
         custom_note.setStyleSheet(f"color: {self._t()['subtext']}; font-size: 11px;")
         self._custom_rows.append(self._add_row(form, "", custom_note))
 
         note = self._help_label(
-            "Keys are applied as you type and saved directly into config.py "
-            "in plain text - same tradeoff as pasting them in by hand. "
-            "Click the eye icon to reveal a key."
+            "Keys apply immediately and are stored as plain text in config.py."
         )
         note.setStyleSheet(f"color: {self._t()['subtext']}; font-size: 11px;")
         form.addRow("", note)
@@ -3054,8 +2883,7 @@ class ConfigDialog(QDialog):
         # play_music can only open a search page (see actions.py).
         form.addRow("", self._section_header("Music (Spotify / YouTube Music)", "🎵"))
         music_intro = self._help_label(
-            "Optional - lets play_music start a specific song/video "
-            "playing instead of just opening a search page to click through."
+            "Optional: plays results directly instead of opening search."
         )
         music_intro.setStyleSheet(f"color: {self._t()['subtext']}; font-size: 11px;")
         form.addRow("", music_intro)
@@ -3131,9 +2959,7 @@ class ConfigDialog(QDialog):
         self._edge_voice_rows.append(self._add_row(form, "Voice:", edge_voice_row))
 
         edge_note = self._help_label(
-            "This short list is just the popular picks - \"Browse all "
-            "voices\" searches Microsoft's full catalog (400+ voices "
-            "across ~140 languages/accents)."
+            "Browse Microsoft's full voice catalog."
         )
         edge_note.setStyleSheet(f"color: {self._t()['subtext']}; font-size: 11px;")
         self._edge_voice_rows.append(self._add_row(form, "", edge_note))
@@ -3164,9 +2990,7 @@ class ConfigDialog(QDialog):
         self._elevenlabs_rows.append(self._add_row(form, "ElevenLabs voice:", self.elevenlabs_voice_combo))
 
         elevenlabs_note = self._help_label(
-            "Click Verify above (with a key entered) to load your "
-            "account's voices - premade and any you've cloned/designed - "
-            "into this dropdown. You can also paste a voice ID directly."
+            "Verify the key to load voices, or enter a voice ID."
         )
         elevenlabs_note.setStyleSheet(f"color: {self._t()['subtext']}; font-size: 11px;")
         self._elevenlabs_rows.append(self._add_row(form, "", elevenlabs_note))
@@ -3194,7 +3018,7 @@ class ConfigDialog(QDialog):
             lambda v: self.volume_value_label.setText(_percent_to_volume_str(v))
         )
         self.volume_value_label.setText(_percent_to_volume_str(self.volume_slider.value()))
-        self.volume_slider.valueChanged.connect(self._queue_assistant_apply)
+        self.volume_slider.valueChanged.connect(self._apply_edge_volume_live)
         volume_row = QHBoxLayout()
         volume_row.addWidget(self.volume_slider)
         volume_row.addWidget(self.volume_value_label)
@@ -3238,9 +3062,7 @@ class ConfigDialog(QDialog):
         form.addRow("", self._section_header("Memory & Location", "🧾"))
 
         memory_intro = self._help_label(
-            "Short-term memory is the current conversation only (cleared on "
-            "restart or after being idle). Saved memories are permanent "
-            "facts (\"remember that...\") stored in memory.json."
+            "Short-term memory expires; saved facts persist in memory.json."
         )
         memory_intro.setStyleSheet(f"color: {self._t()['subtext']}; font-size: 11px;")
         form.addRow("", memory_intro)
@@ -3249,10 +3071,7 @@ class ConfigDialog(QDialog):
         self.conversation_turns_spin.setRange(1, 50)
         self.conversation_turns_spin.setValue(int(getattr(config, "CONVERSATION_MEMORY_TURNS", 10)))
         self.conversation_turns_spin.setToolTip(
-            "How many back-and-forth exchanges she keeps in short-term "
-            "memory during one conversation. Higher = better context in a "
-            "long back-and-forth, but a bigger prompt sent to the LLM every "
-            "turn (slightly slower/costlier on cloud providers)."
+            "Conversation turns kept in short-term memory."
         )
         self.conversation_turns_spin.valueChanged.connect(self._queue_assistant_apply)
         form.addRow("Short-term memory (turns):", self.conversation_turns_spin)
@@ -3262,8 +3081,7 @@ class ConfigDialog(QDialog):
         self.conversation_timeout_spin.setSuffix(" sec")
         self.conversation_timeout_spin.setValue(int(getattr(config, "CONVERSATION_TIMEOUT_SECONDS", 300)))
         self.conversation_timeout_spin.setToolTip(
-            "Seconds of no command before short-term memory auto-clears. 0 "
-            "= never auto-clear (still clears if you say 'start fresh')."
+            "Idle seconds before memory clears. 0 disables auto-clear."
         )
         self.conversation_timeout_spin.valueChanged.connect(self._queue_assistant_apply)
         form.addRow("Auto-clear after idle:", self.conversation_timeout_spin)
@@ -3272,8 +3090,7 @@ class ConfigDialog(QDialog):
         self.max_saved_memories_spin.setRange(1, 1000)
         self.max_saved_memories_spin.setValue(int(getattr(config, "MAX_SAVED_MEMORIES", 75)))
         self.max_saved_memories_spin.setToolTip(
-            "How many permanent facts she can remember at once. The oldest "
-            "is dropped once this is full."
+            "Maximum saved facts; oldest are removed first."
         )
         self.max_saved_memories_spin.valueChanged.connect(self._queue_assistant_apply)
         form.addRow("Saved memories (max facts):", self.max_saved_memories_spin)
@@ -3282,7 +3099,7 @@ class ConfigDialog(QDialog):
         self.max_memory_chars_spin.setRange(20, 2000)
         self.max_memory_chars_spin.setSuffix(" chars")
         self.max_memory_chars_spin.setValue(int(getattr(config, "MAX_MEMORY_FACT_CHARACTERS", 400)))
-        self.max_memory_chars_spin.setToolTip("Longest a single saved memory/fact can be.")
+        self.max_memory_chars_spin.setToolTip("Maximum characters per saved fact.")
         self.max_memory_chars_spin.valueChanged.connect(self._queue_assistant_apply)
         form.addRow("Max length per fact:", self.max_memory_chars_spin)
 
@@ -3290,15 +3107,13 @@ class ConfigDialog(QDialog):
         self.max_memories_in_prompt_spin.setRange(0, 200)
         self.max_memories_in_prompt_spin.setValue(int(getattr(config, "MAX_MEMORIES_IN_PROMPT", 20)))
         self.max_memories_in_prompt_spin.setToolTip(
-            "How many saved facts get pulled into context per request "
-            "(most relevant first). Higher gives her more to draw on but "
-            "makes every request's prompt bigger."
+            "Relevant saved facts included per request."
         )
         self.max_memories_in_prompt_spin.valueChanged.connect(self._queue_assistant_apply)
         form.addRow("Facts recalled per request:", self.max_memories_in_prompt_spin)
 
         location_note = self._help_label(
-            "Used for weather and \"where am I\" - no account/key needed."
+            "Used for weather and location requests; no key needed."
         )
         location_note.setStyleSheet(f"color: {self._t()['subtext']}; font-size: 11px;")
         form.addRow("", location_note)
@@ -3306,8 +3121,7 @@ class ConfigDialog(QDialog):
         self.auto_detect_location_check = QCheckBox("Auto-detect my location from my IP address")
         self.auto_detect_location_check.setChecked(bool(getattr(config, "AUTO_DETECT_LOCATION", True)))
         self.auto_detect_location_check.setToolTip(
-            "City/metro-area accuracy at best - can be off on a VPN. Turn "
-            "off to always require a city to be named or set below."
+            "Approximate city detection; VPNs may affect accuracy."
         )
         self.auto_detect_location_check.toggled.connect(self._queue_assistant_apply)
         form.addRow("", self.auto_detect_location_check)
@@ -3339,12 +3153,11 @@ class ConfigDialog(QDialog):
         form.setLabelAlignment(Qt.AlignRight | Qt.AlignVCenter)
         form.setFieldGrowthPolicy(QFormLayout.ExpandingFieldsGrow)
         form.setRowWrapPolicy(QFormLayout.WrapLongRows)
+        self._responsive_forms.append(form)
 
         form.addRow("", self._section_header("Speech Recognition", "🎙️", first=True))
         intro = QLabel(
-            "Controls the local Whisper speech-to-text engine that turns\n"
-            "your voice into text before it's sent to the LLM - separate\n"
-            "from the LLM provider settings on the Assistant tab."
+            "Local Whisper converts speech to text before LLM processing."
         )
         intro.setStyleSheet(f"color: {self._t()['subtext']}; font-size: 11px;")
         form.addRow("", intro)
@@ -3360,9 +3173,7 @@ class ConfigDialog(QDialog):
         self.whisper_model_combo.currentTextChanged.connect(self._queue_assistant_apply)
         form.addRow("Whisper model:", self.whisper_model_combo)
         model_hint = QLabel(
-            "Bigger = more accurate but slower. large-v3-turbo is the best\n"
-            "accuracy for its speed, but wants a GPU to feel snappy - drop\n"
-            "to small.en/base.en if you're CPU-only and it feels slow."
+            "Larger models are more accurate but slower; GPUs help."
         )
         model_hint.setStyleSheet(f"color: {self._t()['subtext']}; font-size: 11px;")
         form.addRow("", model_hint)
@@ -3382,13 +3193,7 @@ class ConfigDialog(QDialog):
         self.whisper_device_combo.currentTextChanged.connect(self._queue_assistant_apply)
         form.addRow("Device:", self.whisper_device_combo)
         device_hint = QLabel(
-            "GPU acceleration only works with an NVIDIA GPU (CUDA) - there's\n"
-            "no AMD/ROCm support in faster-whisper's backend. On an AMD or\n"
-            "Intel GPU (or no GPU at all), leave this on Auto-detect or set\n"
-            "it to Force CPU - both behave the same way in that case, since\n"
-            "no CUDA device will ever be found. If a CUDA/cuDNN library is\n"
-            "missing or broken, Alyssa now recovers on her own by reloading\n"
-            "on CPU and retrying rather than crashing the listening loop."
+            "GPU mode requires NVIDIA CUDA; otherwise use Auto or CPU."
         )
         device_hint.setWordWrap(True)
         device_hint.setStyleSheet(f"color: {self._t()['subtext']}; font-size: 11px;")
@@ -3404,15 +3209,13 @@ class ConfigDialog(QDialog):
         self.whisper_compute_combo.currentTextChanged.connect(self._queue_assistant_apply)
         form.addRow("Compute type:", self.whisper_compute_combo)
         compute_hint = QLabel(
-            "\"auto\" picks float16 on GPU / int8 on CPU, which is right for\n"
-            "almost everyone - only change this if you know what you need."
+            "Auto uses float16 on GPU and int8 on CPU."
         )
         compute_hint.setStyleSheet(f"color: {self._t()['subtext']}; font-size: 11px;")
         form.addRow("", compute_hint)
 
         restart_note = QLabel(
-            "Model size/device/compute type reload automatically in the\n"
-            "background a moment after you change them - no restart needed."
+            "Changes reload automatically; no restart needed."
         )
         restart_note.setWordWrap(True)
         restart_note.setStyleSheet(f"color: {self._t()['subtext']}; font-size: 11px;")
@@ -3427,9 +3230,6 @@ class ConfigDialog(QDialog):
         self.engine_status_label = QLabel("Checking current status…")
         self.engine_status_label.setWordWrap(True)
         self.engine_status_label.setMinimumHeight(44)
-        sp = self.engine_status_label.sizePolicy()
-        sp.setVerticalPolicy(sp.Policy.MinimumExpanding)
-        self.engine_status_label.setSizePolicy(sp)
         self.engine_status_label.setStyleSheet("font-size: 11px;")
         form.addRow("Currently running:", self.engine_status_label)
 
@@ -3469,158 +3269,87 @@ class ConfigDialog(QDialog):
         if self._engine_status_poll_ticks <= 0:
             self._engine_status_poll_timer.stop()
 
-    def _toggle_gemini_key_visibility(self, show: bool):
-        self.gemini_key_edit.setEchoMode(QLineEdit.Normal if show else QLineEdit.Password)
-        self.gemini_key_edit._toggle_btn.setText("Hide" if show else "Show")
+    def _toggle_key_visibility(self, edit, show: bool):
+        edit.setEchoMode(QLineEdit.Normal if show else QLineEdit.Password)
+        edit._toggle_btn.setText("Hide" if show else "Show")
 
-    def _reset_gemini_key_verify_status(self, *args):
-        # The key just changed, so whatever we last found out about the
-        # previous value no longer applies - clear the green/red styling
-        # and status text back to neutral until it's verified again.
-        self.gemini_key_edit.setStyleSheet("")
-        self.gemini_key_status_label.setText("")
+    def _reset_key_status(self, edit, status):
+        edit.setStyleSheet("")
+        status.setText("")
 
-    def _start_gemini_key_verify(self):
-        key = self.gemini_key_edit.text().strip()
+    def _start_key_verification(self, provider, edit, status, verify, checking):
+        key = edit.text().strip()
         if not key:
-            self.gemini_key_edit.setStyleSheet(f"border: 2px solid {self._t()['danger']};")
-            self.gemini_key_status_label.setStyleSheet(f"font-size: 11px; color: {self._t()['danger']};")
-            self.gemini_key_status_label.setText("Paste a key first.")
+            edit.setStyleSheet(f"border: 2px solid {self._t()['danger']};")
+            status.setStyleSheet(f"font-size: 11px; color: {self._t()['danger']};")
+            status.setText("Paste a key first.")
             return
-
-        self.gemini_key_edit._verify_btn.setEnabled(False)
-        self.gemini_key_edit._verify_btn.setText("…")
-        self.gemini_key_edit.setStyleSheet("")
-        self.gemini_key_status_label.setStyleSheet(f"font-size: 11px; color: {self._t()['subtext']};")
-        self.gemini_key_status_label.setText("Checking with Gemini…")
-        self._last_verified_key_checked = key
+        edit._verify_btn.setEnabled(False)
+        edit._verify_btn.setText("…")
+        edit.setStyleSheet("")
+        status.setStyleSheet(f"font-size: 11px; color: {self._t()['subtext']};")
+        status.setText(checking)
+        edit._verified_value = key
         threading.Thread(
-            target=self._do_verify_gemini_key, args=(key,), daemon=True
+            target=self._verify_key, args=(provider, verify, key), daemon=True
         ).start()
 
-    def _do_verify_gemini_key(self, key: str):
-        # Runs on a background thread - the blocking network call must
-        # never run on the GUI thread. Results come back via a Signal,
-        # which Qt safely queues onto the GUI thread.
-        valid, message, models = _verify_gemini_key(key)
-        self._gemini_key_verified_signal.emit(valid, message, models)
+    def _verify_key(self, provider, verify, key):
+        result = verify(key)
+        valid, message = result[:2]
+        self._key_verified_signal.emit(
+            provider, valid, message, result[2] if len(result) > 2 else []
+        )
 
-    def _on_gemini_key_verify_result(self, valid: bool, message: str, models: list):
-        self.gemini_key_edit._verify_btn.setEnabled(True)
-        self.gemini_key_edit._verify_btn.setText("Verify")
-
-        # The user may have edited the field again while the check was in
-        # flight - don't paint a stale result over a key it no longer
-        # matches.
-        if self.gemini_key_edit.text().strip() != self._last_verified_key_checked:
+    def _on_key_verification_result(self, provider, valid, message, items):
+        edit, status, target, item_name = {
+            "gemini": (self.gemini_key_edit, self.gemini_key_status_label, self.gemini_model_edit, "models"),
+            "openai": (self.openai_key_edit, self.openai_key_status_label, self.openai_model_edit, "models"),
+            "anthropic": (self.anthropic_key_edit, self.anthropic_key_status_label, self.anthropic_model_edit, "models"),
+            "elevenlabs": (self.elevenlabs_key_edit, self.elevenlabs_key_status_label, self.elevenlabs_voice_combo, "voices"),
+            "youtube": (self.youtube_key_edit, self.youtube_status_label, None, "items"),
+        }[provider]
+        edit._verify_btn.setEnabled(True)
+        edit._verify_btn.setText("Verify")
+        if edit.text().strip() != edit._verified_value:
             return
-
-        if valid:
-            self.gemini_key_edit.setStyleSheet(f"border: 2px solid {self._t()['success']};")
-            self.gemini_key_status_label.setStyleSheet(f"font-size: 11px; color: {self._t()['success']};")
-            if models:
-                self._populate_model_combo(self.gemini_model_edit, models)
-                self.gemini_key_status_label.setText(f"✓ Valid key - {len(models)} models loaded.")
-            else:
-                self.gemini_key_status_label.setText("✓ Valid key.")
+        color = self._t()["success" if valid else "danger"]
+        edit.setStyleSheet(f"border: 2px solid {color};")
+        status.setStyleSheet(f"font-size: 11px; color: {color};")
+        if not valid:
+            status.setText(f"✗ {message}")
+        elif items:
+            self._populate_model_combo(target, items)
+            status.setText(f"✓ Valid key - {len(items)} {item_name} loaded.")
         else:
-            self.gemini_key_edit.setStyleSheet(f"border: 2px solid {self._t()['danger']};")
-            self.gemini_key_status_label.setStyleSheet(f"font-size: 11px; color: {self._t()['danger']};")
-            self.gemini_key_status_label.setText(f"✗ {message}")
+            status.setText("✓ Valid key.")
 
-    # -- OpenAI key verification (mirrors the Gemini block above) -----------
-    def _toggle_openai_key_visibility(self, show: bool):
-        self.openai_key_edit.setEchoMode(QLineEdit.Normal if show else QLineEdit.Password)
-        self.openai_key_edit._toggle_btn.setText("Hide" if show else "Show")
+    def _toggle_gemini_key_visibility(self, show):
+        self._toggle_key_visibility(self.gemini_key_edit, show)
+
+    def _reset_gemini_key_verify_status(self, *args):
+        self._reset_key_status(self.gemini_key_edit, self.gemini_key_status_label)
+
+    def _start_gemini_key_verify(self):
+        self._start_key_verification("gemini", self.gemini_key_edit, self.gemini_key_status_label, _verify_gemini_key, "Checking with Gemini…")
+
+    def _toggle_openai_key_visibility(self, show):
+        self._toggle_key_visibility(self.openai_key_edit, show)
 
     def _reset_openai_key_verify_status(self, *args):
-        self.openai_key_edit.setStyleSheet("")
-        self.openai_key_status_label.setText("")
+        self._reset_key_status(self.openai_key_edit, self.openai_key_status_label)
 
     def _start_openai_key_verify(self):
-        key = self.openai_key_edit.text().strip()
-        if not key:
-            self.openai_key_edit.setStyleSheet(f"border: 2px solid {self._t()['danger']};")
-            self.openai_key_status_label.setStyleSheet(f"font-size: 11px; color: {self._t()['danger']};")
-            self.openai_key_status_label.setText("Paste a key first.")
-            return
+        self._start_key_verification("openai", self.openai_key_edit, self.openai_key_status_label, _verify_openai_key, "Checking with OpenAI…")
 
-        self.openai_key_edit._verify_btn.setEnabled(False)
-        self.openai_key_edit._verify_btn.setText("…")
-        self.openai_key_edit.setStyleSheet("")
-        self.openai_key_status_label.setStyleSheet(f"font-size: 11px; color: {self._t()['subtext']};")
-        self.openai_key_status_label.setText("Checking with OpenAI…")
-        self._last_verified_openai_key_checked = key
-        threading.Thread(target=self._do_verify_openai_key, args=(key,), daemon=True).start()
-
-    def _do_verify_openai_key(self, key: str):
-        valid, message, models = _verify_openai_key(key)
-        self._openai_key_verified_signal.emit(valid, message, models)
-
-    def _on_openai_key_verify_result(self, valid: bool, message: str, models: list):
-        self.openai_key_edit._verify_btn.setEnabled(True)
-        self.openai_key_edit._verify_btn.setText("Verify")
-        if self.openai_key_edit.text().strip() != self._last_verified_openai_key_checked:
-            return
-        if valid:
-            self.openai_key_edit.setStyleSheet(f"border: 2px solid {self._t()['success']};")
-            self.openai_key_status_label.setStyleSheet(f"font-size: 11px; color: {self._t()['success']};")
-            if models:
-                self._populate_model_combo(self.openai_model_edit, models)
-                self.openai_key_status_label.setText(f"✓ Valid key - {len(models)} models loaded.")
-            else:
-                self.openai_key_status_label.setText("✓ Valid key.")
-        else:
-            self.openai_key_edit.setStyleSheet(f"border: 2px solid {self._t()['danger']};")
-            self.openai_key_status_label.setStyleSheet(f"font-size: 11px; color: {self._t()['danger']};")
-            self.openai_key_status_label.setText(f"✗ {message}")
-
-    # -- Anthropic key verification (mirrors the Gemini block above) --------
-    def _toggle_anthropic_key_visibility(self, show: bool):
-        self.anthropic_key_edit.setEchoMode(QLineEdit.Normal if show else QLineEdit.Password)
-        self.anthropic_key_edit._toggle_btn.setText("Hide" if show else "Show")
+    def _toggle_anthropic_key_visibility(self, show):
+        self._toggle_key_visibility(self.anthropic_key_edit, show)
 
     def _reset_anthropic_key_verify_status(self, *args):
-        self.anthropic_key_edit.setStyleSheet("")
-        self.anthropic_key_status_label.setText("")
+        self._reset_key_status(self.anthropic_key_edit, self.anthropic_key_status_label)
 
     def _start_anthropic_key_verify(self):
-        key = self.anthropic_key_edit.text().strip()
-        if not key:
-            self.anthropic_key_edit.setStyleSheet(f"border: 2px solid {self._t()['danger']};")
-            self.anthropic_key_status_label.setStyleSheet(f"font-size: 11px; color: {self._t()['danger']};")
-            self.anthropic_key_status_label.setText("Paste a key first.")
-            return
-
-        self.anthropic_key_edit._verify_btn.setEnabled(False)
-        self.anthropic_key_edit._verify_btn.setText("…")
-        self.anthropic_key_edit.setStyleSheet("")
-        self.anthropic_key_status_label.setStyleSheet(f"font-size: 11px; color: {self._t()['subtext']};")
-        self.anthropic_key_status_label.setText("Checking with Anthropic…")
-        self._last_verified_anthropic_key_checked = key
-        threading.Thread(target=self._do_verify_anthropic_key, args=(key,), daemon=True).start()
-
-    def _do_verify_anthropic_key(self, key: str):
-        valid, message, models = _verify_anthropic_key(key)
-        self._anthropic_key_verified_signal.emit(valid, message, models)
-
-    def _on_anthropic_key_verify_result(self, valid: bool, message: str, models: list):
-        self.anthropic_key_edit._verify_btn.setEnabled(True)
-        self.anthropic_key_edit._verify_btn.setText("Verify")
-        if self.anthropic_key_edit.text().strip() != self._last_verified_anthropic_key_checked:
-            return
-        if valid:
-            self.anthropic_key_edit.setStyleSheet(f"border: 2px solid {self._t()['success']};")
-            self.anthropic_key_status_label.setStyleSheet(f"font-size: 11px; color: {self._t()['success']};")
-            if models:
-                self._populate_model_combo(self.anthropic_model_edit, models)
-                self.anthropic_key_status_label.setText(f"✓ Valid key - {len(models)} models loaded.")
-            else:
-                self.anthropic_key_status_label.setText("✓ Valid key.")
-        else:
-            self.anthropic_key_edit.setStyleSheet(f"border: 2px solid {self._t()['danger']};")
-            self.anthropic_key_status_label.setStyleSheet(f"font-size: 11px; color: {self._t()['danger']};")
-            self.anthropic_key_status_label.setText(f"✗ {message}")
+        self._start_key_verification("anthropic", self.anthropic_key_edit, self.anthropic_key_status_label, _verify_anthropic_key, "Checking with Anthropic…")
 
     # -- Custom OpenAI-compatible provider: "Fetch models" doubles as its
     # verify step, since there's no separate cheap auth-only probe. --------
@@ -3665,53 +3394,18 @@ class ConfigDialog(QDialog):
             self.custom_models_status_label.setStyleSheet(f"font-size: 11px; color: {self._t()['danger']};")
             self.custom_models_status_label.setText(f"✗ {message}")
 
-    # -- ElevenLabs key verification: fetching the voice list doubles as
-    # its verify step, same reasoning as the custom LLM provider above. --
-    def _toggle_elevenlabs_key_visibility(self, show: bool):
-        self.elevenlabs_key_edit.setEchoMode(QLineEdit.Normal if show else QLineEdit.Password)
-        self.elevenlabs_key_edit._toggle_btn.setText("Hide" if show else "Show")
+    def _toggle_elevenlabs_key_visibility(self, show):
+        self._toggle_key_visibility(self.elevenlabs_key_edit, show)
 
     def _reset_elevenlabs_key_verify_status(self, *args):
-        self.elevenlabs_key_edit.setStyleSheet("")
-        self.elevenlabs_key_status_label.setText("")
+        self._reset_key_status(self.elevenlabs_key_edit, self.elevenlabs_key_status_label)
 
     def _start_elevenlabs_key_verify(self):
-        key = self.elevenlabs_key_edit.text().strip()
-        if not key:
-            self.elevenlabs_key_edit.setStyleSheet(f"border: 2px solid {self._t()['danger']};")
-            self.elevenlabs_key_status_label.setStyleSheet(f"font-size: 11px; color: {self._t()['danger']};")
-            self.elevenlabs_key_status_label.setText("Paste a key first.")
-            return
-
-        self.elevenlabs_key_edit._verify_btn.setEnabled(False)
-        self.elevenlabs_key_edit._verify_btn.setText("…")
-        self.elevenlabs_key_edit.setStyleSheet("")
-        self.elevenlabs_key_status_label.setStyleSheet(f"font-size: 11px; color: {self._t()['subtext']};")
-        self.elevenlabs_key_status_label.setText("Loading voices from ElevenLabs…")
-        self._last_verified_elevenlabs_key_checked = key
-        threading.Thread(target=self._do_verify_elevenlabs_key, args=(key,), daemon=True).start()
-
-    def _do_verify_elevenlabs_key(self, key: str):
-        valid, message, voices = _verify_elevenlabs_key(key)
-        self._elevenlabs_key_verified_signal.emit(valid, message, voices)
-
-    def _on_elevenlabs_key_verify_result(self, valid: bool, message: str, voices: list):
-        self.elevenlabs_key_edit._verify_btn.setEnabled(True)
-        self.elevenlabs_key_edit._verify_btn.setText("Verify")
-        if self.elevenlabs_key_edit.text().strip() != self._last_verified_elevenlabs_key_checked:
-            return  # user edited the key again while this was in flight
-        if valid:
-            self.elevenlabs_key_edit.setStyleSheet(f"border: 2px solid {self._t()['success']};")
-            self.elevenlabs_key_status_label.setStyleSheet(f"font-size: 11px; color: {self._t()['success']};")
-            if voices:
-                self._populate_model_combo(self.elevenlabs_voice_combo, voices)
-                self.elevenlabs_key_status_label.setText(f"✓ Valid key - {len(voices)} voices loaded.")
-            else:
-                self.elevenlabs_key_status_label.setText("✓ Valid key.")
-        else:
-            self.elevenlabs_key_edit.setStyleSheet(f"border: 2px solid {self._t()['danger']};")
-            self.elevenlabs_key_status_label.setStyleSheet(f"font-size: 11px; color: {self._t()['danger']};")
-            self.elevenlabs_key_status_label.setText(f"✗ {message}")
+        self._start_key_verification(
+            "elevenlabs", self.elevenlabs_key_edit,
+            self.elevenlabs_key_status_label, _verify_elevenlabs_key,
+            "Loading voices from ElevenLabs…",
+        )
 
     # -- Edge TTS "Browse all voices" - opens VoiceBrowserDialog, which
     # fetches the full catalog on its own background thread. -------------
@@ -3729,12 +3423,10 @@ class ConfigDialog(QDialog):
     # except it checks a Client ID/Secret pair together instead of a
     # single key) -----------------------------------------------------------
     def _toggle_spotify_secret_visibility(self, show: bool):
-        self.spotify_client_secret_edit.setEchoMode(QLineEdit.Normal if show else QLineEdit.Password)
-        self.spotify_client_secret_edit._toggle_btn.setText("Hide" if show else "Show")
+        self._toggle_key_visibility(self.spotify_client_secret_edit, show)
 
     def _reset_spotify_verify_status(self, *args):
-        self.spotify_client_secret_edit.setStyleSheet("")
-        self.spotify_status_label.setText("")
+        self._reset_key_status(self.spotify_client_secret_edit, self.spotify_status_label)
 
     def _start_spotify_verify(self):
         client_id = self.spotify_client_id_edit.text().strip()
@@ -3774,62 +3466,24 @@ class ConfigDialog(QDialog):
             self.spotify_status_label.setStyleSheet(f"font-size: 11px; color: {self._t()['danger']};")
             self.spotify_status_label.setText(f"✗ {message}")
 
-    # -- YouTube key verification (mirrors the Gemini block above) ----------
-    def _toggle_youtube_key_visibility(self, show: bool):
-        self.youtube_key_edit.setEchoMode(QLineEdit.Normal if show else QLineEdit.Password)
-        self.youtube_key_edit._toggle_btn.setText("Hide" if show else "Show")
+    def _toggle_youtube_key_visibility(self, show):
+        self._toggle_key_visibility(self.youtube_key_edit, show)
 
     def _reset_youtube_key_verify_status(self, *args):
-        self.youtube_key_edit.setStyleSheet("")
-        self.youtube_status_label.setText("")
+        self._reset_key_status(self.youtube_key_edit, self.youtube_status_label)
 
     def _start_youtube_key_verify(self):
-        key = self.youtube_key_edit.text().strip()
-        if not key:
-            self.youtube_key_edit.setStyleSheet(f"border: 2px solid {self._t()['danger']};")
-            self.youtube_status_label.setStyleSheet(f"font-size: 11px; color: {self._t()['danger']};")
-            self.youtube_status_label.setText("Paste a key first.")
-            return
-
-        self.youtube_key_edit._verify_btn.setEnabled(False)
-        self.youtube_key_edit._verify_btn.setText("…")
-        self.youtube_key_edit.setStyleSheet("")
-        self.youtube_status_label.setStyleSheet(f"font-size: 11px; color: {self._t()['subtext']};")
-        self.youtube_status_label.setText("Checking with YouTube…")
-        self._last_verified_youtube_key_checked = key
-        threading.Thread(target=self._do_verify_youtube_key, args=(key,), daemon=True).start()
-
-    def _do_verify_youtube_key(self, key: str):
-        valid, message = _verify_youtube_key(key)
-        self._youtube_key_verified_signal.emit(valid, message)
-
-    def _on_youtube_key_verify_result(self, valid: bool, message: str):
-        self.youtube_key_edit._verify_btn.setEnabled(True)
-        self.youtube_key_edit._verify_btn.setText("Verify")
-        if self.youtube_key_edit.text().strip() != self._last_verified_youtube_key_checked:
-            return
-        if valid:
-            self.youtube_key_edit.setStyleSheet(f"border: 2px solid {self._t()['success']};")
-            self.youtube_status_label.setStyleSheet(f"font-size: 11px; color: {self._t()['success']};")
-            self.youtube_status_label.setText("✓ Valid key.")
-        else:
-            self.youtube_key_edit.setStyleSheet(f"border: 2px solid {self._t()['danger']};")
-            self.youtube_status_label.setStyleSheet(f"font-size: 11px; color: {self._t()['danger']};")
-            self.youtube_status_label.setText(f"✗ {message}")
+        self._start_key_verification(
+            "youtube", self.youtube_key_edit, self.youtube_status_label,
+            _verify_youtube_key, "Checking with YouTube…",
+        )
 
     def _apply_theme_stylesheet(self):
         self.setStyleSheet("")
         self.setStyleSheet(self._build_style(self.companion.settings))
 
     def _repolish(self):
-        """setStyleSheet() on the dialog updates the QSS text, but Qt
-        doesn't repaint already-built widgets just because the text
-        changed underneath them - each one needs an explicit
-        unpolish/polish/update to actually pick up the new theme colors
-        live. This now covers every themed surface uniformly, including
-        the header banner (see _TitleBar), since that bar is QSS-driven
-        like everything else here rather than a separate hand-painted
-        code path that could fall out of sync with this loop."""
+        """Force existing widgets to pick up live theme changes."""
         for w in [self] + self.findChildren(QWidget):
             w.style().unpolish(w)
             w.style().polish(w)
@@ -3876,9 +3530,21 @@ class ConfigDialog(QDialog):
         self._repolish()
 
     def _on_show_console_toggled(self, show: bool):
-        # Visibility and persistence both happen immediately for this switch;
-        # otherwise an app exit during the normal debounce can lose the choice.
-        self._apply_assistant_live()
+        hide = not show
+        try:
+            config_path = os.path.join(_BASE_DIR, "config.py")
+            with open(config_path, "r", encoding="utf-8") as f:
+                text = _patch_config_line(f.read(), "HIDE_CONSOLE_WINDOW", str(hide))
+            _atomic_write_text(config_path, text)
+        except OSError as e:
+            self.show_console_check.blockSignals(True)
+            self.show_console_check.setChecked(not config.HIDE_CONSOLE_WINDOW)
+            self.show_console_check.blockSignals(False)
+            QMessageBox.warning(self, "Settings", f"Couldn't save command prompt setting: {e}")
+            return
+
+        config.HIDE_CONSOLE_WINDOW = hide
+        _set_console_visible(show)
 
     # -- Startup (Task Scheduler, Windows only) ------------------------------
     def _refresh_startup_status(self):
@@ -3943,8 +3609,15 @@ class ConfigDialog(QDialog):
         outer.setContentsMargins(16, 16, 16, 16)
         outer.setSpacing(10)
 
-        top_row = QHBoxLayout()
-        preview_col = QVBoxLayout()
+        top_row = QGridLayout()
+        top_row.setContentsMargins(0, 0, 0, 0)
+        top_row.setHorizontalSpacing(16)
+        top_row.setVerticalSpacing(12)
+        self._companion_grid = top_row
+
+        self._preview_panel = _QW()
+        preview_col = QVBoxLayout(self._preview_panel)
+        preview_col.setContentsMargins(0, 0, 0, 0)
         preview_col.setSpacing(2)
         preview_col.setAlignment(Qt.AlignTop | Qt.AlignHCenter)
         self._preview_layout = preview_col
@@ -3955,14 +3628,17 @@ class ConfigDialog(QDialog):
         self.preview_talking_check = QCheckBox("Preview talking")
         self.preview_talking_check.toggled.connect(self._refresh_preview)
         preview_col.addWidget(self.preview_talking_check, 0, Qt.AlignHCenter)
-        top_row.addLayout(preview_col)
+        top_row.addWidget(self._preview_panel, 0, 0, Qt.AlignTop)
 
-        form_col = QVBoxLayout()
+        self._companion_form_panel = _QW()
+        form_col = QVBoxLayout(self._companion_form_panel)
+        form_col.setContentsMargins(0, 0, 0, 0)
         form = QFormLayout()
         form.setSpacing(10)
         form.setLabelAlignment(Qt.AlignRight | Qt.AlignVCenter)
         form.setFieldGrowthPolicy(QFormLayout.ExpandingFieldsGrow)
         form.setRowWrapPolicy(QFormLayout.WrapLongRows)
+        self._responsive_forms.append(form)
 
         form.addRow("", self._section_header("Character Appearance", "🎨", first=True))
         self.image_edit = QLineEdit(self.companion.settings.get("character_image", ""))
@@ -4032,15 +3708,13 @@ class ConfigDialog(QDialog):
             startup_row = QHBoxLayout()
             self.startup_enable_btn = QPushButton("Enable admin startup")
             self.startup_enable_btn.setToolTip(
-                "Registers a Task Scheduler task so Alyssa starts, elevated, "
-                "at every Windows login. Runs install_startup.bat, which "
-                "asks Windows for admin rights to do this."
+                "Start Alyssa as administrator at Windows login."
             )
             self.startup_enable_btn.clicked.connect(self._on_enable_startup)
             startup_row.addWidget(self.startup_enable_btn)
 
             self.startup_disable_btn = QPushButton("Disable")
-            self.startup_disable_btn.setToolTip("Removes that scheduled task (runs uninstall_startup.bat).")
+            self.startup_disable_btn.setToolTip("Disable startup at Windows login.")
             self.startup_disable_btn.clicked.connect(self._on_disable_startup)
             startup_row.addWidget(self.startup_disable_btn)
             form.addRow("Start at login (admin):", startup_row)
@@ -4056,9 +3730,7 @@ class ConfigDialog(QDialog):
         self.chatbox_enabled_check = QCheckBox("Show typed-command chat box")
         self.chatbox_enabled_check.setChecked(bool(self.companion.settings.get("chatbox_enabled", True)))
         self.chatbox_enabled_check.setToolTip(
-            "A small text box next to her for typing commands instead of "
-            "speaking them - handy if you're mute, in a quiet/shared space, "
-            "or just don't feel like talking out loud."
+            "Type commands instead of speaking them."
         )
         form.addRow("", self.chatbox_enabled_check)
 
@@ -4101,7 +3773,8 @@ class ConfigDialog(QDialog):
         form.addRow("Dimmed level:", self.dim_idle_spin)
 
         form_col.addLayout(form)
-        top_row.addLayout(form_col)
+        top_row.addWidget(self._companion_form_panel, 0, 1)
+        top_row.setColumnStretch(1, 1)
         outer.addLayout(top_row)
 
         for widget, signal in [
@@ -4246,15 +3919,14 @@ class ConfigDialog(QDialog):
         outer.setSpacing(10)
 
         intro = self._help_label(
-            "Plugins live in the plugins/ folder and add new abilities "
-            "without touching the core app. Pick one to edit its code, "
-            "or start a new one from the template."
+            "Edit plugins or create one from the template."
         )
         intro.setWordWrap(True)
         intro.setStyleSheet(f"color: {self._t()['subtext']}; font-size: 11px;")
         outer.addWidget(intro)
 
         splitter = QSplitter(Qt.Horizontal)
+        self._plugin_splitter = splitter
         splitter.setChildrenCollapsible(False)
         # Default handle renders as a stark, unstyled bar in this theme -
         # given a little width and a themed color via QSplitter::handle
@@ -4278,7 +3950,7 @@ class ConfigDialog(QDialog):
         left_layout.addWidget(new_plugin_btn)
 
         reload_btn = QPushButton("⟳ Reload Plugins")
-        reload_btn.setToolTip("Re-scans plugins/ and applies any changes to this running session.")
+        reload_btn.setToolTip("Reload plugin changes now.")
         reload_btn.clicked.connect(self._on_reload_plugins)
         left_layout.addWidget(reload_btn)
 
@@ -4290,28 +3962,33 @@ class ConfigDialog(QDialog):
         right_layout.setContentsMargins(10, 0, 0, 0)
         right_layout.setSpacing(8)
 
-        header_row = QHBoxLayout()
+        header_widget = _QW()
+        header_row = QGridLayout(header_widget)
+        header_row.setContentsMargins(0, 0, 0, 0)
+        header_row.setHorizontalSpacing(8)
+        header_row.setVerticalSpacing(8)
+        self._plugin_header_grid = header_row
         self.plugin_file_label = QLabel("Select a plugin to edit")
         self.plugin_file_label.setObjectName("pluginFileLabel")
-        header_row.addWidget(self.plugin_file_label)
-        header_row.addStretch(1)
+        header_row.addWidget(self.plugin_file_label, 0, 0)
+        header_row.setColumnStretch(0, 1)
 
         self.plugin_enable_btn = QPushButton("Enable")
         self.plugin_enable_btn.setObjectName("compactButton")
         self.plugin_enable_btn.setCheckable(True)
         self.plugin_enable_btn.clicked.connect(self._on_toggle_plugin_enabled)
-        header_row.addWidget(self.plugin_enable_btn)
+        header_row.addWidget(self.plugin_enable_btn, 0, 1)
 
         self.plugin_save_btn = QPushButton("💾 Save")
         self.plugin_save_btn.setObjectName("primaryButton")
         self.plugin_save_btn.clicked.connect(self._on_save_plugin)
-        header_row.addWidget(self.plugin_save_btn)
+        header_row.addWidget(self.plugin_save_btn, 0, 2)
 
         self.plugin_delete_btn = QPushButton("Delete")
         self.plugin_delete_btn.setObjectName("pluginDangerButton")
         self.plugin_delete_btn.clicked.connect(self._on_delete_plugin)
-        header_row.addWidget(self.plugin_delete_btn)
-        right_layout.addLayout(header_row)
+        header_row.addWidget(self.plugin_delete_btn, 0, 3)
+        right_layout.addWidget(header_widget)
 
         self.plugin_status_label = self._help_label("")
         self.plugin_status_label.setStyleSheet(f"color: {self._t()['subtext']}; font-size: 11px;")
@@ -4342,9 +4019,6 @@ class ConfigDialog(QDialog):
         self._set_plugin_editor_enabled(False)
         return w
 
-    def _plugins_dir(self) -> str:
-        return plugin_loader.PLUGINS_DIR
-
     def _refresh_plugin_list(self, select: str = None):
         """Repopulates self.plugin_list from plugins/*.py on disk. `select`
         (a filename) re-selects that item afterward if given - used after
@@ -4352,7 +4026,7 @@ class ConfigDialog(QDialog):
         place."""
         self.plugin_list.blockSignals(True)
         self.plugin_list.clear()
-        plugins_dir = self._plugins_dir()
+        plugins_dir = plugin_loader.PLUGINS_DIR
         if os.path.isdir(plugins_dir):
             for filename in sorted(os.listdir(plugins_dir)):
                 if not filename.endswith(".py"):
@@ -4362,7 +4036,7 @@ class ConfigDialog(QDialog):
                 dot = "🟢" if enabled else "⚪"
                 item = QListWidgetItem(f"{dot}  {display_name}")
                 item.setData(Qt.UserRole, filename)
-                item.setToolTip("Enabled - loaded on startup" if enabled else "Disabled - not loaded")
+                item.setToolTip("Loaded at startup" if enabled else "Not loaded")
                 self.plugin_list.addItem(item)
                 if select and filename == select:
                     self.plugin_list.setCurrentItem(item)
@@ -4398,7 +4072,7 @@ class ConfigDialog(QDialog):
 
         filename = current.data(Qt.UserRole)
         self._current_plugin_file = filename
-        path = os.path.join(self._plugins_dir(), filename)
+        path = os.path.join(plugin_loader.PLUGINS_DIR, filename)
         try:
             with open(path, "r", encoding="utf-8") as f:
                 content = f.read()
@@ -4433,7 +4107,7 @@ class ConfigDialog(QDialog):
         if new_name == old_name:
             return
 
-        plugins_dir = self._plugins_dir()
+        plugins_dir = plugin_loader.PLUGINS_DIR
         old_path = os.path.join(plugins_dir, old_name)
         new_path = os.path.join(plugins_dir, new_name)
         try:
@@ -4460,7 +4134,7 @@ class ConfigDialog(QDialog):
     def _save_plugin_file(self, filename: str, reload_after: bool = True, quiet: bool = False) -> bool:
         if not filename:
             return False
-        path = os.path.join(self._plugins_dir(), filename)
+        path = os.path.join(plugin_loader.PLUGINS_DIR, filename)
         try:
             with open(path, "w", encoding="utf-8") as f:
                 f.write(self.plugin_editor.toPlainText())
@@ -4514,7 +4188,7 @@ class ConfigDialog(QDialog):
         if not safe:
             return
         filename = f"{safe}.py"
-        path = os.path.join(self._plugins_dir(), filename)
+        path = os.path.join(plugin_loader.PLUGINS_DIR, filename)
         if os.path.exists(path):
             QMessageBox.warning(self, "Already exists", f"'{filename}' already exists in plugins/.")
             return
@@ -4551,7 +4225,7 @@ TOOLS = [
 ]
 '''
         try:
-            os.makedirs(self._plugins_dir(), exist_ok=True)
+            os.makedirs(plugin_loader.PLUGINS_DIR, exist_ok=True)
             with open(path, "w", encoding="utf-8") as f:
                 f.write(template)
         except OSError as e:
@@ -4574,7 +4248,7 @@ TOOLS = [
         )
         if confirm != QMessageBox.Yes:
             return
-        path = os.path.join(self._plugins_dir(), filename)
+        path = os.path.join(plugin_loader.PLUGINS_DIR, filename)
         try:
             os.remove(path)
         except OSError as e:
@@ -4596,7 +4270,7 @@ TOOLS = [
         if changed:
             self.companion.apply_companion_settings(changed)
 
-    def _gather_assistant_updates(self) -> dict:
+    def _gather_assistant_values(self) -> dict:
         custom_base_url = self.custom_base_url_edit.text().strip()
         if not _is_http_url(custom_base_url):
             self.custom_base_url_edit.setStyleSheet(f"border: 2px solid {self._t()['danger']};")
@@ -4605,76 +4279,78 @@ TOOLS = [
             custom_base_url = config.CUSTOM_BASE_URL
         else:
             self.custom_base_url_edit.setStyleSheet("")
-        updates = {
-            "ASSISTANT_NAME": repr(self.name_edit.text().strip() or config.ASSISTANT_NAME),
-            "LLM_PROVIDER": repr(self.provider_combo.currentText()),
-            "OLLAMA_MODEL": repr(self.ollama_model_edit.text().strip() or config.OLLAMA_MODEL),
-            "GEMINI_MODEL": repr(self.gemini_model_edit.currentText().strip() or config.GEMINI_MODEL),
-            "OPENAI_MODEL": repr(self.openai_model_edit.currentText().strip() or getattr(config, "OPENAI_MODEL", "")),
-            "ANTHROPIC_MODEL": repr(self.anthropic_model_edit.currentText().strip() or getattr(config, "ANTHROPIC_MODEL", "")),
-            "CUSTOM_BASE_URL": repr(custom_base_url),
-            "CUSTOM_MODEL": repr(self.custom_model_edit.currentText().strip()),
-            "TTS_PROVIDER": repr(self.tts_provider_combo.currentText()),
-            "EDGE_TTS_VOICE": repr(self.voice_combo.currentText().strip() or config.EDGE_TTS_VOICE),
-            "EDGE_TTS_VOLUME": repr(_percent_to_volume_str(self.volume_slider.value())),
-            "ELEVENLABS_VOICE_ID": repr(_extract_elevenlabs_voice_id(self.elevenlabs_voice_combo.currentText())),
-            "ELEVENLABS_MODEL": repr(
+        return {
+            "ASSISTANT_NAME": self.name_edit.text().strip() or config.ASSISTANT_NAME,
+            "LLM_PROVIDER": self.provider_combo.currentText(),
+            "OLLAMA_MODEL": self.ollama_model_edit.text().strip() or config.OLLAMA_MODEL,
+            "GEMINI_MODEL": self.gemini_model_edit.currentText().strip() or config.GEMINI_MODEL,
+            "OPENAI_MODEL": self.openai_model_edit.currentText().strip() or getattr(config, "OPENAI_MODEL", ""),
+            "ANTHROPIC_MODEL": self.anthropic_model_edit.currentText().strip() or getattr(config, "ANTHROPIC_MODEL", ""),
+            "CUSTOM_BASE_URL": custom_base_url,
+            "CUSTOM_MODEL": self.custom_model_edit.currentText().strip(),
+            "TTS_PROVIDER": self.tts_provider_combo.currentText(),
+            "EDGE_TTS_VOICE": self.voice_combo.currentText().strip() or config.EDGE_TTS_VOICE,
+            "EDGE_TTS_VOLUME": _percent_to_volume_str(self.volume_slider.value()),
+            "ELEVENLABS_VOICE_ID": _extract_elevenlabs_voice_id(self.elevenlabs_voice_combo.currentText()),
+            "ELEVENLABS_MODEL": (
                 self.elevenlabs_model_combo.currentText().strip() or getattr(config, "ELEVENLABS_MODEL", "eleven_multilingual_v2")
             ),
-            "SPEAK_RESPONSES": str(self.speak_check.isChecked()),
-            "CAVEMAN_MODE": repr(self.caveman_combo.currentData()),
-            "CONFIRM_BEFORE_ACTIONS": str(self.confirm_check.isChecked()),
-            "HIDE_CONSOLE_WINDOW": str(not self.show_console_check.isChecked()),
-            "WHISPER_MODEL_SIZE": repr(self.whisper_model_combo.currentText().strip() or config.WHISPER_MODEL_SIZE),
-            "WHISPER_DEVICE": repr(
-                self._whisper_device_display_to_value.get(self.whisper_device_combo.currentText(), "auto")
-            ),
-            "WHISPER_COMPUTE_TYPE": repr(self.whisper_compute_combo.currentText().strip() or "auto"),
-            "CONVERSATION_MEMORY_TURNS": str(self.conversation_turns_spin.value()),
-            "CONVERSATION_TIMEOUT_SECONDS": str(self.conversation_timeout_spin.value()),
-            "MAX_SAVED_MEMORIES": str(self.max_saved_memories_spin.value()),
-            "MAX_MEMORY_FACT_CHARACTERS": str(self.max_memory_chars_spin.value()),
-            "MAX_MEMORIES_IN_PROMPT": str(self.max_memories_in_prompt_spin.value()),
-            "AUTO_DETECT_LOCATION": str(self.auto_detect_location_check.isChecked()),
-            "WEATHER_DEFAULT_LOCATION": repr(self.weather_default_location_edit.text().strip()),
-            "WEATHER_UNITS": repr(self.weather_units_combo.currentData() or "imperial"),
+            "SPEAK_RESPONSES": self.speak_check.isChecked(),
+            "CAVEMAN_MODE": self.caveman_combo.currentData(),
+            "CONFIRM_BEFORE_ACTIONS": self.confirm_check.isChecked(),
+            "HIDE_CONSOLE_WINDOW": not self.show_console_check.isChecked(),
+            "WHISPER_MODEL_SIZE": self.whisper_model_combo.currentText().strip() or config.WHISPER_MODEL_SIZE,
+            "WHISPER_DEVICE": self._whisper_device_display_to_value.get(self.whisper_device_combo.currentText(), "auto"),
+            "WHISPER_COMPUTE_TYPE": self.whisper_compute_combo.currentText().strip() or "auto",
+            "CONVERSATION_MEMORY_TURNS": self.conversation_turns_spin.value(),
+            "CONVERSATION_TIMEOUT_SECONDS": self.conversation_timeout_spin.value(),
+            "MAX_SAVED_MEMORIES": self.max_saved_memories_spin.value(),
+            "MAX_MEMORY_FACT_CHARACTERS": self.max_memory_chars_spin.value(),
+            "MAX_MEMORIES_IN_PROMPT": self.max_memories_in_prompt_spin.value(),
+            "AUTO_DETECT_LOCATION": self.auto_detect_location_check.isChecked(),
+            "WEATHER_DEFAULT_LOCATION": self.weather_default_location_edit.text().strip(),
+            "WEATHER_UNITS": self.weather_units_combo.currentData() or "imperial",
+            "GEMINI_API_KEY": self.gemini_key_edit.text().strip(),
+            "OPENAI_API_KEY": self.openai_key_edit.text().strip(),
+            "ANTHROPIC_API_KEY": self.anthropic_key_edit.text().strip(),
+            "CUSTOM_API_KEY": self.custom_key_edit.text().strip(),
+            "ELEVENLABS_API_KEY": self.elevenlabs_key_edit.text().strip(),
+            "SPOTIFY_CLIENT_ID": self.spotify_client_id_edit.text().strip(),
+            "SPOTIFY_CLIENT_SECRET": self.spotify_client_secret_edit.text().strip(),
+            "YOUTUBE_API_KEY": self.youtube_key_edit.text().strip(),
         }
-        # Only rewrite each *_API_KEY line in config.py if it actually
-        # changed - avoids needlessly touching lines the user hasn't
-        # touched, same as the original Gemini-only behavior.
-        new_gemini_key = self.gemini_key_edit.text().strip()
-        if new_gemini_key != self._original_gemini_key:
-            updates["GEMINI_API_KEY"] = repr(new_gemini_key)
-        new_openai_key = self.openai_key_edit.text().strip()
-        if new_openai_key != self._original_openai_key:
-            updates["OPENAI_API_KEY"] = repr(new_openai_key)
-        new_anthropic_key = self.anthropic_key_edit.text().strip()
-        if new_anthropic_key != self._original_anthropic_key:
-            updates["ANTHROPIC_API_KEY"] = repr(new_anthropic_key)
-        new_custom_key = self.custom_key_edit.text().strip()
-        if new_custom_key != self._original_custom_key:
-            updates["CUSTOM_API_KEY"] = repr(new_custom_key)
-        new_elevenlabs_key = self.elevenlabs_key_edit.text().strip()
-        if new_elevenlabs_key != self._original_elevenlabs_key:
-            updates["ELEVENLABS_API_KEY"] = repr(new_elevenlabs_key)
-        new_spotify_client_id = self.spotify_client_id_edit.text().strip()
-        if new_spotify_client_id != self._original_spotify_client_id:
-            updates["SPOTIFY_CLIENT_ID"] = repr(new_spotify_client_id)
-        new_spotify_client_secret = self.spotify_client_secret_edit.text().strip()
-        if new_spotify_client_secret != self._original_spotify_client_secret:
-            updates["SPOTIFY_CLIENT_SECRET"] = repr(new_spotify_client_secret)
-        new_youtube_key = self.youtube_key_edit.text().strip()
-        if new_youtube_key != self._original_youtube_key:
-            updates["YOUTUBE_API_KEY"] = repr(new_youtube_key)
-        return updates
+
+    def _gather_assistant_updates(self, values=None) -> dict:
+        values = values or self._gather_assistant_values()
+        originals = {
+            "GEMINI_API_KEY": self._original_gemini_key,
+            "OPENAI_API_KEY": self._original_openai_key,
+            "ANTHROPIC_API_KEY": self._original_anthropic_key,
+            "CUSTOM_API_KEY": self._original_custom_key,
+            "ELEVENLABS_API_KEY": self._original_elevenlabs_key,
+            "SPOTIFY_CLIENT_ID": self._original_spotify_client_id,
+            "SPOTIFY_CLIENT_SECRET": self._original_spotify_client_secret,
+            "YOUTUBE_API_KEY": self._original_youtube_key,
+        }
+        return {
+            key: repr(value) for key, value in values.items()
+            if key not in originals or value != originals[key]
+        }
 
     def _queue_assistant_apply(self, *args):
         self._assistant_apply_timer.start()
 
+    def _apply_edge_volume_live(self, value: int):
+        # Synthesis and active playback both read this value directly; only
+        # the config.py write remains debounced while the slider is dragged.
+        config.EDGE_TTS_VOLUME = _percent_to_volume_str(value)
+        self._queue_assistant_apply()
+
     def _apply_assistant_live(self):
         # Patch config.py on disk + this session's already-imported config
         # module, so changes take effect immediately without a restart.
-        updates = self._gather_assistant_updates()
+        values = self._gather_assistant_values()
+        updates = self._gather_assistant_updates(values)
         try:
             config_path = os.path.join(_BASE_DIR, "config.py")
             with open(config_path, "r", encoding="utf-8") as f:
@@ -4686,54 +4362,17 @@ TOOLS = [
             QMessageBox.warning(self, "Settings", f"Couldn't write changes to config.py: {e}")
             return
 
-        # Apply in-memory too, so it's live this session even though the
-        # file write above is what makes it stick after a restart.
-        config.ASSISTANT_NAME = self.name_edit.text().strip() or config.ASSISTANT_NAME
-        config.LLM_PROVIDER = self.provider_combo.currentText()
-        config.OLLAMA_MODEL = self.ollama_model_edit.text().strip() or config.OLLAMA_MODEL
-        config.GEMINI_MODEL = self.gemini_model_edit.currentText().strip() or config.GEMINI_MODEL
-        config.OPENAI_MODEL = self.openai_model_edit.currentText().strip() or getattr(config, "OPENAI_MODEL", "")
-        config.ANTHROPIC_MODEL = self.anthropic_model_edit.currentText().strip() or getattr(config, "ANTHROPIC_MODEL", "")
-        custom_base_url = self.custom_base_url_edit.text().strip()
-        if _is_http_url(custom_base_url):
-            config.CUSTOM_BASE_URL = custom_base_url
-        config.CUSTOM_MODEL = self.custom_model_edit.currentText().strip()
-        config.TTS_PROVIDER = self.tts_provider_combo.currentText()
-        config.EDGE_TTS_VOICE = self.voice_combo.currentText().strip() or config.EDGE_TTS_VOICE
-        config.EDGE_TTS_VOLUME = _percent_to_volume_str(self.volume_slider.value())
-        config.ELEVENLABS_VOICE_ID = _extract_elevenlabs_voice_id(self.elevenlabs_voice_combo.currentText())
-        config.ELEVENLABS_MODEL = (
-            self.elevenlabs_model_combo.currentText().strip() or getattr(config, "ELEVENLABS_MODEL", "eleven_multilingual_v2")
-        )
-        config.SPEAK_RESPONSES = self.speak_check.isChecked()
-        config.CAVEMAN_MODE = self.caveman_combo.currentData()
-        config.CONFIRM_BEFORE_ACTIONS = self.confirm_check.isChecked()
-        hide_console = not self.show_console_check.isChecked()
-        console_visibility_changed = config.HIDE_CONSOLE_WINDOW != hide_console
-        config.HIDE_CONSOLE_WINDOW = hide_console
-        if console_visibility_changed:
+        old_hide = config.HIDE_CONSOLE_WINDOW
+        old_whisper = (config.WHISPER_MODEL_SIZE, config.WHISPER_DEVICE, config.WHISPER_COMPUTE_TYPE)
+        old_spotify = (config.SPOTIFY_CLIENT_ID, config.SPOTIFY_CLIENT_SECRET)
+        for key, value in values.items():
+            setattr(config, key, value)
+
+        if old_hide != config.HIDE_CONSOLE_WINDOW:
             _set_console_visible(not config.HIDE_CONSOLE_WINDOW)
-        config.CONVERSATION_MEMORY_TURNS = self.conversation_turns_spin.value()
-        config.CONVERSATION_TIMEOUT_SECONDS = self.conversation_timeout_spin.value()
-        config.MAX_SAVED_MEMORIES = self.max_saved_memories_spin.value()
-        config.MAX_MEMORY_FACT_CHARACTERS = self.max_memory_chars_spin.value()
-        config.MAX_MEMORIES_IN_PROMPT = self.max_memories_in_prompt_spin.value()
-        config.AUTO_DETECT_LOCATION = self.auto_detect_location_check.isChecked()
-        config.WEATHER_DEFAULT_LOCATION = self.weather_default_location_edit.text().strip()
-        config.WEATHER_UNITS = self.weather_units_combo.currentData() or "imperial"
-        new_whisper_model_size = self.whisper_model_combo.currentText().strip() or config.WHISPER_MODEL_SIZE
-        new_whisper_device = self._whisper_device_display_to_value.get(
-            self.whisper_device_combo.currentText(), "auto"
+        whisper_settings_changed = old_whisper != (
+            config.WHISPER_MODEL_SIZE, config.WHISPER_DEVICE, config.WHISPER_COMPUTE_TYPE
         )
-        new_whisper_compute_type = self.whisper_compute_combo.currentText().strip() or "auto"
-        whisper_settings_changed = (
-            config.WHISPER_MODEL_SIZE != new_whisper_model_size
-            or config.WHISPER_DEVICE != new_whisper_device
-            or config.WHISPER_COMPUTE_TYPE != new_whisper_compute_type
-        )
-        config.WHISPER_MODEL_SIZE = new_whisper_model_size
-        config.WHISPER_DEVICE = new_whisper_device
-        config.WHISPER_COMPUTE_TYPE = new_whisper_compute_type
         if whisper_settings_changed:
             # transcribe.py caches the loaded Whisper model for the process
             # lifetime - without this, changing model/device/compute type
@@ -4751,21 +4390,7 @@ TOOLS = [
                     self._poll_engine_status_after_change()
             except ImportError:
                 pass
-        config.GEMINI_API_KEY = self.gemini_key_edit.text().strip()
-        config.OPENAI_API_KEY = self.openai_key_edit.text().strip()
-        config.ANTHROPIC_API_KEY = self.anthropic_key_edit.text().strip()
-        config.CUSTOM_API_KEY = self.custom_key_edit.text().strip()
-        config.ELEVENLABS_API_KEY = self.elevenlabs_key_edit.text().strip()
-        new_spotify_client_id = self.spotify_client_id_edit.text().strip()
-        new_spotify_client_secret = self.spotify_client_secret_edit.text().strip()
-        spotify_creds_changed = (
-            new_spotify_client_id != config.SPOTIFY_CLIENT_ID
-            or new_spotify_client_secret != config.SPOTIFY_CLIENT_SECRET
-        )
-        config.SPOTIFY_CLIENT_ID = new_spotify_client_id
-        config.SPOTIFY_CLIENT_SECRET = new_spotify_client_secret
-        config.YOUTUBE_API_KEY = self.youtube_key_edit.text().strip()
-        if spotify_creds_changed:
+        if old_spotify != (config.SPOTIFY_CLIENT_ID, config.SPOTIFY_CLIENT_SECRET):
             # actions.py caches a Spotify access token in-process (valid
             # ~1hr) - without this, changing Client ID/Secret wouldn't
             # take effect until that cached token expired on its own.
@@ -4784,8 +4409,6 @@ TOOLS = [
             starter()
 
         self.setWindowTitle(f"{config.ASSISTANT_NAME} - Settings")
-        if hasattr(self, "_header_title_label"):
-            self._header_title_label.setText(config.ASSISTANT_NAME)
 
     def _flush_pending_applies(self, *args):
         # Flush any pending debounced writes immediately instead of losing
@@ -4889,6 +4512,9 @@ def _build_tray_icon(window: CompanionWindow, app: QApplication) -> QSystemTrayI
 # --------------------------------------------------------------------------
 # Entry point used by main.py
 # --------------------------------------------------------------------------
+_console_window_handle = None
+
+
 def _set_console_visible(visible: bool):
     """On Windows, shows or hides the console window this process is
     attached to - the cmd.exe window opened by start_alyssa.bat (or
@@ -4907,11 +4533,37 @@ def _set_console_visible(visible: bool):
         return
     try:
         import ctypes
-        hwnd = ctypes.windll.kernel32.GetConsoleWindow()
+        from ctypes import wintypes
+
+        global _console_window_handle
+        kernel32 = ctypes.windll.kernel32
+        user32 = ctypes.windll.user32
+        kernel32.GetConsoleWindow.restype = wintypes.HWND
+        user32.GetForegroundWindow.restype = wintypes.HWND
+        user32.IsWindow.argtypes = [wintypes.HWND]
+        user32.IsWindowVisible.argtypes = [wintypes.HWND]
+        user32.GetClassNameW.argtypes = [wintypes.HWND, wintypes.LPWSTR, ctypes.c_int]
+        user32.ShowWindowAsync.argtypes = [wintypes.HWND, ctypes.c_int]
+
+        console_hwnd = kernel32.GetConsoleWindow()
+        if not console_hwnd:
+            return
+
+        if _console_window_handle and not user32.IsWindow(_console_window_handle):
+            _console_window_handle = None
+        if _console_window_handle is None:
+            if user32.IsWindowVisible(console_hwnd):
+                _console_window_handle = console_hwnd
+            else:
+                foreground = user32.GetForegroundWindow()
+                class_name = ctypes.create_unicode_buffer(64)
+                user32.GetClassNameW(foreground, class_name, len(class_name))
+                if class_name.value in {"ConsoleWindowClass", "CASCADIA_HOSTING_WINDOW_CLASS"}:
+                    _console_window_handle = foreground
+
+        hwnd = _console_window_handle or console_hwnd
         if hwnd:
-            SW_HIDE = 0
-            SW_RESTORE = 9
-            ctypes.windll.user32.ShowWindow(hwnd, SW_RESTORE if visible else SW_HIDE)
+            user32.ShowWindowAsync(hwnd, 9 if visible else 0)  # SW_RESTORE / SW_HIDE
     except Exception:
         pass  # best-effort - never let this stop Alyssa from starting
 

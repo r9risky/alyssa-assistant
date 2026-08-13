@@ -1,4 +1,11 @@
 @echo off
+REM Relaunch with administrator rights when needed.
+powershell -NoProfile -Command "exit -not ([Security.Principal.WindowsPrincipal] [Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)"
+if errorlevel 1 (
+    powershell -NoProfile -Command "Start-Process -FilePath '%~f0' -Verb RunAs"
+    exit /b
+)
+
 REM Double-click this file to start Alyssa - a true "one click" launcher.
 REM First run: creates a private virtual environment (.venv) next to this
 REM file and installs everything in requirements.txt into it - no need to

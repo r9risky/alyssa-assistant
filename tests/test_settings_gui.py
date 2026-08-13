@@ -7,9 +7,10 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QFormLayout
 
 import overlay
+import config
 
 
 class SettingsGuiTests(unittest.TestCase):
@@ -93,12 +94,22 @@ class SettingsGuiTests(unittest.TestCase):
         self.assertEqual(self.dialog._preview_layout.spacing(), 2)
 
     def test_show_command_prompt_applies_and_persists_immediately(self):
-        with patch.object(overlay, "_set_console_visible") as set_visible:
-            self.dialog.show_console_check.setChecked(
-                not self.dialog.show_console_check.isChecked()
+        original = overlay.config.HIDE_CONSOLE_WINDOW
+        show = not self.dialog.show_console_check.isChecked()
+        try:
+            with (
+                patch.object(overlay, "_atomic_write_text") as write_text,
+                patch.object(overlay, "_set_console_visible") as set_visible,
+            ):
+                self.dialog.show_console_check.setChecked(show)
+
+            self.assertIn(
+                f"HIDE_CONSOLE_WINDOW = {not show}", write_text.call_args.args[1]
             )
-            set_visible.assert_not_called()
-            self.dialog._apply_assistant_live.assert_called_once_with()
+            self.assertEqual(overlay.config.HIDE_CONSOLE_WINDOW, not show)
+            set_visible.assert_called_once_with(show)
+        finally:
+            overlay.config.HIDE_CONSOLE_WINDOW = original
 
     def test_failed_settings_write_does_not_change_runtime_state(self):
         original = overlay.config.HIDE_CONSOLE_WINDOW
@@ -121,6 +132,49 @@ class SettingsGuiTests(unittest.TestCase):
         updates = self.dialog._gather_assistant_updates()
         self.assertEqual(updates["CUSTOM_BASE_URL"], repr(original))
         self.assertIn("valid http", self.dialog.custom_models_status_label.text())
+
+    def test_edge_volume_slider_updates_runtime_immediately(self):
+        original = config.EDGE_TTS_VOLUME
+        try:
+            self.dialog.volume_slider.setValue(-25)
+            self.assertEqual(config.EDGE_TTS_VOLUME, "-25%")
+        finally:
+            config.EDGE_TTS_VOLUME = original
+
+    def test_settings_layout_reflows_at_narrow_and_wide_sizes(self):
+        self.dialog.show()
+        self.dialog.resize(560, 480)
+        self.app.processEvents()
+
+        self.assertEqual(self.dialog.width(), 560)
+        self.assertLess(self.dialog.tabs.navigation.width(), 190)
+        self.assertGreater(self.dialog.tabs.pages.width(), 300)
+        self.assertEqual(
+            self.dialog._assistant_form.rowWrapPolicy(), QFormLayout.WrapAllRows
+        )
+        self.assertEqual(self.dialog._plugin_splitter.orientation(), Qt.Vertical)
+        for tab_index in range(3):
+            self.dialog.tabs.setCurrentIndex(tab_index)
+            self.app.processEvents()
+            page = self.dialog.tabs.pages.currentWidget()
+            self.assertEqual(page.horizontalScrollBar().maximum(), 0)
+            self.assertEqual(page.widget().width(), page.viewport().width())
+        preview_position = self.dialog._companion_grid.getItemPosition(
+            self.dialog._companion_grid.indexOf(self.dialog._preview_panel)
+        )
+        form_position = self.dialog._companion_grid.getItemPosition(
+            self.dialog._companion_grid.indexOf(self.dialog._companion_form_panel)
+        )
+        self.assertEqual(preview_position, (0, 0, 1, 2))
+        self.assertEqual(form_position, (1, 0, 1, 2))
+
+        self.dialog.resize(900, 700)
+        self.app.processEvents()
+        self.assertEqual(self.dialog.tabs.navigation.width(), 190)
+        self.assertEqual(
+            self.dialog._assistant_form.rowWrapPolicy(), QFormLayout.WrapLongRows
+        )
+        self.assertEqual(self.dialog._plugin_splitter.orientation(), Qt.Horizontal)
 
 
 if __name__ == "__main__":

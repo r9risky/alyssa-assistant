@@ -88,6 +88,34 @@ class VoiceLifecycleTests(unittest.TestCase):
 
         self.assertEqual(calls[-2:], ["stop", "unload"])
 
+    def test_playback_tracks_live_edge_volume_changes(self):
+        volumes = []
+
+        class Music:
+            def load(self, path): pass
+            def set_volume(self, value): volumes.append(value)
+            def play(self): pass
+            def get_busy(self):
+                if len(volumes) == 1:
+                    config.EDGE_TTS_VOLUME = "-50%"
+                    return True
+                return False
+            def stop(self): pass
+            def unload(self): pass
+
+        original = config.EDGE_TTS_VOLUME
+        try:
+            config.EDGE_TTS_VOLUME = "+0%"
+            with (
+                patch.object(voice, "_ensure_mixer"),
+                patch.object(voice.pygame.mixer, "music", Music()),
+            ):
+                voice._play("speech.mp3")
+        finally:
+            config.EDGE_TTS_VOLUME = original
+
+        self.assertEqual(volumes, [1.0, 0.0])
+
     def test_speak_never_waits_forever_for_barge_in_listener(self):
         join_calls = []
 

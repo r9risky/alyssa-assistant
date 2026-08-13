@@ -50,7 +50,7 @@ OLLAMA_VISION_MODEL = "llava"
 SCREEN_VISION_MAX_DIMENSION = 768
 
 # --- Speech-to-Text (Whisper) ---
-WHISPER_MODEL_SIZE = 'base.en'
+WHISPER_MODEL_SIZE = 'small.en'
 WHISPER_DEVICE = 'auto'
 WHISPER_COMPUTE_TYPE = 'auto'
 WHISPER_CPU_THREADS = 0
@@ -82,12 +82,12 @@ FAST_TOOL_RESPONSES = True
 
 # --- Text-to-Speech (TTS) ---
 SPEAK_RESPONSES = True
-TTS_PROVIDER = 'edge'  # "edge" or "elevenlabs"
+TTS_PROVIDER = 'elevenlabs'  # "edge" or "elevenlabs"
 
 # Edge TTS Options
 EDGE_TTS_VOICE = 'ja-JP-NanamiNeural'
 EDGE_TTS_RATE = "+0%"
-EDGE_TTS_VOLUME = '+0%'
+EDGE_TTS_VOLUME = '-3%'
 EDGE_TTS_PITCH = "+0Hz"
 
 # ElevenLabs Options
