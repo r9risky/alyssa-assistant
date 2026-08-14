@@ -11,6 +11,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 import main
 import overlay
+from overlay import credential_checks
 import actions
 import brain
 from brain import dialogue
@@ -38,9 +39,9 @@ class AtomicConfigWriteTests(unittest.TestCase):
             with open(path, "w", encoding="utf-8") as f:
                 f.write("VALUE = 'original'\n")
 
-            with patch.object(overlay.os, "replace", side_effect=OSError("disk error")):
+            with patch.object(credential_checks.os, "replace", side_effect=OSError("disk error")):
                 with self.assertRaises(OSError):
-                    overlay._atomic_write_text(path, "VALUE = 'new'\n")
+                    credential_checks._atomic_write_text(path, "VALUE = 'new'\n")
 
             with open(path, "r", encoding="utf-8") as f:
                 self.assertEqual(f.read(), "VALUE = 'original'\n")
