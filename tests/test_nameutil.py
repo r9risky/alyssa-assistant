@@ -33,6 +33,21 @@ class TestContainsName(unittest.TestCase):
         self.assertFalse(nameutil.contains_name(None))
 
 
+class TestStopRequest(unittest.TestCase):
+    def test_accepts_name_then_stop(self):
+        self.assertTrue(nameutil.is_stop_request("Alyssa, stop"))
+
+    def test_accepts_stop_then_name(self):
+        self.assertTrue(nameutil.is_stop_request("stop Alyssa"))
+
+    def test_requires_both_words(self):
+        self.assertFalse(nameutil.is_stop_request("Alyssa, keep going"))
+        self.assertFalse(nameutil.is_stop_request("please stop"))
+
+    def test_stop_must_be_a_whole_word(self):
+        self.assertFalse(nameutil.is_stop_request("Alyssa, unstoppable"))
+
+
 class TestStripNameAtSpan(unittest.TestCase):
     def test_strips_leading_name(self):
         text = "Alyssa, open notepad"

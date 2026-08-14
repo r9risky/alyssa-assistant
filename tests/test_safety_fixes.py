@@ -8,19 +8,20 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 import actions
 import brain
+from brain import dialogue
 from plugins import process_manager, web_summarizer
 
 
 class ConfirmationSafetyTests(unittest.TestCase):
     def tearDown(self):
-        brain._pending_confirmation = None
-        brain._pending_confirmation_time = None
+        dialogue._pending_confirmation = None
+        dialogue._pending_confirmation_time = None
         brain.clear_conversation_history()
 
     def test_ambiguous_or_negated_reply_does_not_approve(self):
-        brain._request_voice_confirmation("unused", "test action", {})
+        dialogue._request_voice_confirmation("unused", "test action", {})
         self.assertEqual(
-            brain._handle_pending_power_confirmation("I'm not sure"),
+            dialogue._handle_pending_power_confirmation("I'm not sure"),
             "Okay, I cancelled it.",
         )
         self.assertFalse(brain.has_pending_power_confirmation())
@@ -44,14 +45,14 @@ class ConfirmationSafetyTests(unittest.TestCase):
         }
         with (
             patch.dict(actions.FUNCTIONS, {"ordinary_action": ordinary_action}),
-            patch.object(brain, "_call_model_with_error_handling", return_value=(model_result, None)),
-            patch.object(brain.config, "CONFIRM_BEFORE_ACTIONS", True),
+            patch.object(dialogue, "_call_model_with_error_handling", return_value=(model_result, None)),
+            patch.object(dialogue.config, "CONFIRM_BEFORE_ACTIONS", True),
             patch("builtins.input", side_effect=AssertionError("stdin must not be used")),
         ):
             reply = brain.handle_command("do the ordinary action")
-            self.assertIn("approve", reply.lower())
+            self.assertIn("approval", reply.lower())
             self.assertEqual(calls, [])
-            brain._handle_pending_power_confirmation("yes")
+            dialogue._handle_pending_power_confirmation("yes")
             self.assertEqual(calls, [True])
 
     def test_confirmation_returns_a_pipelined_prompt_without_a_second_model_call(self):
@@ -68,8 +69,8 @@ class ConfirmationSafetyTests(unittest.TestCase):
         }
         with (
             patch.dict(actions.FUNCTIONS, {"ordinary_action": ordinary_action}),
-            patch.object(brain, "_call_model_with_error_handling", return_value=(model_result, None)) as call_model,
-            patch.object(brain.config, "CONFIRM_BEFORE_ACTIONS", True),
+            patch.object(dialogue, "_call_model_with_error_handling", return_value=(model_result, None)) as call_model,
+            patch.object(dialogue.config, "CONFIRM_BEFORE_ACTIONS", True),
         ):
             reply = brain.handle_command("do the ordinary action")
 
@@ -213,7 +214,7 @@ class WebBoundaryTests(unittest.TestCase):
         }
         with (
             patch.dict(actions.FUNCTIONS, functions),
-            patch.object(brain, "_call_model_with_error_handling", side_effect=[(first, None), (second, None)]),
+            patch.object(dialogue, "_call_model_with_error_handling", side_effect=[(first, None), (second, None)]),
         ):
             reply = brain.handle_command("search for test")
         self.assertEqual(action_calls, [])
@@ -246,9 +247,9 @@ class WebBoundaryTests(unittest.TestCase):
         }
         with (
             patch.dict(actions.FUNCTIONS, functions),
-            patch.object(brain.config, "FAST_TOOL_RESPONSES", False),
+            patch.object(dialogue.config, "FAST_TOOL_RESPONSES", False),
             patch.object(
-                brain,
+                dialogue,
                 "_call_model_with_error_handling",
                 side_effect=[(first, None), (second, None), (third, None)],
             ),

@@ -12,12 +12,13 @@ from unittest.mock import patch
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 import brain  # noqa: E402
+from brain import dialogue  # noqa: E402
 
 
 class TestSanitizeToolArguments(unittest.TestCase):
     def test_strips_confirmed_key(self):
         arguments = {"command": "del important_file.txt", "confirmed": True}
-        sanitized = brain._sanitize_tool_arguments(arguments)
+        sanitized = dialogue._sanitize_tool_arguments(arguments)
         self.assertNotIn("confirmed", sanitized)
         self.assertEqual(sanitized["command"], "del important_file.txt")
 
@@ -25,12 +26,12 @@ class TestSanitizeToolArguments(unittest.TestCase):
         # Even an explicit confirmed: false should not leak through - the
         # key itself is never legitimate model-supplied input.
         arguments = {"path": "C:\\file.txt", "confirmed": False}
-        sanitized = brain._sanitize_tool_arguments(arguments)
+        sanitized = dialogue._sanitize_tool_arguments(arguments)
         self.assertNotIn("confirmed", sanitized)
 
     def test_leaves_arguments_without_confirmed_untouched(self):
         arguments = {"path": "C:\\file.txt"}
-        sanitized = brain._sanitize_tool_arguments(arguments)
+        sanitized = dialogue._sanitize_tool_arguments(arguments)
         self.assertEqual(sanitized, {"path": "C:\\file.txt"})
 
     def test_does_not_mutate_the_original_dict(self):
@@ -39,14 +40,14 @@ class TestSanitizeToolArguments(unittest.TestCase):
         # caller kept a reference to the pre-sanitized version - the helper
         # must not mutate its input in place.
         arguments = {"command": "dir", "confirmed": True}
-        brain._sanitize_tool_arguments(arguments)
+        dialogue._sanitize_tool_arguments(arguments)
         self.assertIn("confirmed", arguments)
 
 
 class TestProtectedActionConfirmation(unittest.TestCase):
     def tearDown(self):
-        brain._pending_confirmation = None
-        brain._pending_confirmation_time = None
+        dialogue._pending_confirmation = None
+        dialogue._pending_confirmation_time = None
 
     def test_common_yes_variants_execute_pending_action(self):
         calls = []
@@ -56,25 +57,25 @@ class TestProtectedActionConfirmation(unittest.TestCase):
             return "done"
 
         with (
-            patch.dict(brain.actions.FUNCTIONS, {"approved_action": approved_action}),
-            patch.object(brain, "_natural_fast_reply", return_value="Approved."),
+            patch.dict(dialogue.actions.FUNCTIONS, {"approved_action": approved_action}),
+            patch.object(dialogue, "_natural_fast_reply", return_value="Approved."),
         ):
             for spoken_reply in (
                 "yes, proceed", "Yes Alyssa.", "Yes. Yes.", "confirm",
                 "sure", "sure, do it", "sure, go ahead",
             ):
                 with self.subTest(spoken_reply=spoken_reply):
-                    brain._request_voice_confirmation("approved_action", "test action", {})
-                    reply = brain._handle_pending_power_confirmation(spoken_reply)
+                    dialogue._request_voice_confirmation("approved_action", "test action", {})
+                    reply = dialogue._handle_pending_power_confirmation(spoken_reply)
                     self.assertEqual(reply, "Approved.")
                     self.assertFalse(brain.has_pending_power_confirmation())
 
         self.assertEqual(calls, [True] * 7)
 
     def test_no_cancels_pending_action(self):
-        brain._request_voice_confirmation("unused", "test action", {})
+        dialogue._request_voice_confirmation("unused", "test action", {})
 
-        reply = brain._handle_pending_power_confirmation("no, cancel")
+        reply = dialogue._handle_pending_power_confirmation("no, cancel")
 
         self.assertEqual(reply, "Okay, I cancelled it.")
         self.assertFalse(brain.has_pending_power_confirmation())

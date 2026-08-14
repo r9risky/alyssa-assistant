@@ -28,7 +28,7 @@ PySide6
 #
 # GPU acceleration for Whisper (nvidia-cublas-cu12, nvidia-cudnn-cu12,
 # nvidia-cuda-runtime-cu12) lives in requirements-gpu.txt, not here -
-# start_alyssa.bat only installs that file when config.py's
+# scripts\start_alyssa.bat only installs that file when config.py's
 # WHISPER_DEVICE is "auto" or "cuda", skipping several GB entirely on a
 # WHISPER_DEVICE = "cpu" setup like the default in this config.py.
 

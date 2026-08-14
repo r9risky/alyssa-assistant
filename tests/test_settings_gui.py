@@ -1,5 +1,7 @@
 import os
+import runpy
 import sys
+import tempfile
 import unittest
 from unittest.mock import patch
 
@@ -10,6 +12,7 @@ from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QApplication, QFormLayout
 
 import overlay
+from overlay import settings_dialog, widgets
 import config
 import updater
 
@@ -21,7 +24,7 @@ class SettingsGuiTests(unittest.TestCase):
 
     def setUp(self):
         self.real_assistant_apply = overlay.ConfigDialog._apply_assistant_live
-        self.save_patch = patch.object(overlay, "save_overlay_settings")
+        self.save_patch = patch.object(widgets, "save_overlay_settings")
         self.save_patch.start()
         self.assistant_apply_patch = patch.object(
             overlay.ConfigDialog, "_apply_assistant_live"
@@ -95,40 +98,40 @@ class SettingsGuiTests(unittest.TestCase):
         self.assertEqual(self.dialog._preview_layout.spacing(), 2)
 
     def test_show_command_prompt_applies_and_persists_immediately(self):
-        original = overlay.config.HIDE_CONSOLE_WINDOW
+        original = settings_dialog.config.HIDE_CONSOLE_WINDOW
         show = not self.dialog.show_console_check.isChecked()
         try:
             with (
-                patch.object(overlay, "_atomic_write_text") as write_text,
-                patch.object(overlay, "_set_console_visible") as set_visible,
+                patch.object(settings_dialog, "_atomic_write_text") as write_text,
+                patch.object(settings_dialog, "_set_console_visible") as set_visible,
             ):
                 self.dialog.show_console_check.setChecked(show)
 
             self.assertIn(
                 f"HIDE_CONSOLE_WINDOW = {not show}", write_text.call_args.args[1]
             )
-            self.assertEqual(overlay.config.HIDE_CONSOLE_WINDOW, not show)
+            self.assertEqual(settings_dialog.config.HIDE_CONSOLE_WINDOW, not show)
             set_visible.assert_called_once_with(show)
         finally:
-            overlay.config.HIDE_CONSOLE_WINDOW = original
+            settings_dialog.config.HIDE_CONSOLE_WINDOW = original
 
     def test_failed_settings_write_does_not_change_runtime_state(self):
-        original = overlay.config.HIDE_CONSOLE_WINDOW
+        original = settings_dialog.config.HIDE_CONSOLE_WINDOW
         self.dialog.show_console_check.blockSignals(True)
         self.dialog.show_console_check.setChecked(original)
         self.dialog.show_console_check.blockSignals(False)
         with (
-            patch.object(overlay, "_atomic_write_text", side_effect=OSError("disk full")),
-            patch.object(overlay.QMessageBox, "warning"),
-            patch.object(overlay, "_set_console_visible") as set_visible,
+            patch.object(settings_dialog, "_atomic_write_text", side_effect=OSError("disk full")),
+            patch.object(settings_dialog.QMessageBox, "warning"),
+            patch.object(settings_dialog, "_set_console_visible") as set_visible,
         ):
             self.real_assistant_apply(self.dialog)
 
-        self.assertEqual(overlay.config.HIDE_CONSOLE_WINDOW, original)
+        self.assertEqual(settings_dialog.config.HIDE_CONSOLE_WINDOW, original)
         set_visible.assert_not_called()
 
     def test_invalid_custom_url_is_not_saved(self):
-        original = overlay.config.CUSTOM_BASE_URL
+        original = settings_dialog.config.CUSTOM_BASE_URL
         self.dialog.custom_base_url_edit.setText("not a URL")
         updates = self.dialog._gather_assistant_updates()
         self.assertEqual(updates["CUSTOM_BASE_URL"], repr(original))
@@ -190,12 +193,27 @@ class SettingsGuiTests(unittest.TestCase):
     def test_restart_button_flushes_settings_and_relaunches(self):
         with (
             patch.object(self.dialog, "_flush_pending_applies") as flush,
-            patch.object(overlay.actions, "relaunch_alyssa") as relaunch,
+            patch.object(settings_dialog.actions, "relaunch_alyssa") as relaunch,
         ):
             self.dialog.restart_alyssa_btn.click()
 
         flush.assert_called_once_with()
         relaunch.assert_called_once_with()
+
+    def test_new_plugin_template_generates_importable_function(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            with (
+                patch.object(settings_dialog.plugin_loader, "PLUGINS_DIR", temp_dir),
+                patch.object(settings_dialog.QInputDialog, "getText", return_value=("Weather Tool", True)),
+                patch.object(self.dialog, "_reload_plugins_backend"),
+                patch.object(self.dialog, "_refresh_plugin_list"),
+            ):
+                self.dialog._on_new_plugin()
+
+            namespace = runpy.run_path(os.path.join(temp_dir, "weather_tool.py"))
+
+        function = namespace["FUNCTIONS"]["weather_tool_example"]
+        self.assertEqual(function("hello"), "hello, from the weather_tool plugin!")
 
     def test_update_check_reports_when_current_version_is_latest(self):
         release = {
@@ -223,8 +241,8 @@ class SettingsGuiTests(unittest.TestCase):
         }
 
         with (
-            patch.object(overlay.QMessageBox, "exec", return_value=overlay.QMessageBox.No),
-            patch.object(overlay.QMessageBox, "setInformativeText") as set_notes,
+            patch.object(settings_dialog.QMessageBox, "exec", return_value=settings_dialog.QMessageBox.No),
+            patch.object(settings_dialog.QMessageBox, "setInformativeText") as set_notes,
         ):
             self.dialog._on_update_checked(True, release)
 

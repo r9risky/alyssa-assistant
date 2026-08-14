@@ -1,16 +1,17 @@
 @echo off
 REM Removes the "AlyssaAssistant" scheduled task created by
-REM install_startup.bat, so Alyssa stops starting automatically at login.
+REM scripts\install_startup.bat, so Alyssa stops starting automatically at login.
 
 setlocal
-cd /d "%~dp0"
+for %%I in ("%~dp0..") do set "PROJECT_DIR=%%~fI"
+cd /d "%PROJECT_DIR%"
 set "TASK_NAME=AlyssaAssistant"
 
 REM --- Self-elevate if this window isn't already running as admin ---
 net session >nul 2>&1
 if not "%errorlevel%"=="0" (
     echo Requesting administrator privileges...
-    powershell -NoProfile -Command "Start-Process -FilePath '%~f0' -WorkingDirectory '%~dp0' -Verb RunAs"
+    powershell -NoProfile -Command "Start-Process -FilePath '%~f0' -WorkingDirectory '%PROJECT_DIR%' -Verb RunAs"
     exit /b
 )
 

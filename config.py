@@ -97,7 +97,7 @@ TTS_PROVIDER = 'edge'  # "edge" or "elevenlabs"
 # Edge TTS Options
 EDGE_TTS_VOICE = 'ja-JP-NanamiNeural'
 EDGE_TTS_RATE = "+0%"
-EDGE_TTS_VOLUME = '-3%'
+EDGE_TTS_VOLUME = '+0%'
 EDGE_TTS_PITCH = "+0Hz"
 
 # ElevenLabs Options
@@ -113,12 +113,12 @@ TTS_CLAUSE_MIN_CHARACTERS = 28
 
 # --- Interruption / Barge-in ---
 ALLOW_INTERRUPTIONS = True
-BARGE_IN_REQUIRE_NAME = False
+BARGE_IN_REQUIRE_NAME = True
 BARGE_IN_MIN_SPEECH_MS = 150
 BARGE_IN_VAD_AGGRESSIVENESS = 3
 
 # --- Memory & Context ---
-CONVERSATION_MEMORY_TURNS = 4
+CONVERSATION_MEMORY_TURNS = 11
 CONVERSATION_MEMORY_CHARACTERS = 4000
 MAX_SAVED_MEMORIES = 75
 MAX_MEMORY_FACT_CHARACTERS = 400
@@ -139,7 +139,7 @@ REMINDER_UPCOMING_WINDOW_HOURS = 24
 
 # --- Desktop Companion GUI ---
 ENABLE_COMPANION_GUI = True
-HIDE_CONSOLE_WINDOW = False  # "Show command prompt" defaults to off
+HIDE_CONSOLE_WINDOW = True  # "Show command prompt" defaults to off
 
 # --- Caveman Mode (runtime-toggled via plugins/caveman_mode.py) ---
 # None = off. Otherwise "lite" / "full" / "ultra" - shrinks Alyssa's own

@@ -29,21 +29,71 @@ PRESERVED_DIRS = {".git", ".venv", "__pycache__", "build", "dist"}
 MANIFEST_FILE = ".alyssa-manifest.json"
 
 
-class LocalChangesError(RuntimeError):
-    """Raised before an update could overwrite locally edited app code."""
+def _manifest_paths(install_root: Path) -> set[str]:
+    try:
+        manifest = json.loads((install_root / MANIFEST_FILE).read_text(encoding="utf-8"))
+    except (OSError, ValueError, TypeError):
+        return set()
+    if not isinstance(manifest, dict):
+        return set()
+
+    paths = set()
+    for name in manifest:
+        if not isinstance(name, str) or "\\" in name:
+            continue
+        path = PurePosixPath(name)
+        if path.is_absolute() or not path.parts or ".." in path.parts:
+            continue
+        paths.add(path.as_posix())
+    return paths
 
 
-def _is_managed(relative: Path, destination: Path) -> bool:
+def _previously_managed_paths(install_root: Path) -> set[str]:
+    manifest = install_root / MANIFEST_FILE
+    if manifest.is_file():
+        return _manifest_paths(install_root)
+    if not (install_root / ".git").is_dir():
+        return set()
+    try:
+        result = subprocess.run(
+            ["git", "ls-files", "-z"],
+            cwd=install_root,
+            capture_output=True,
+            check=True,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return set()
+
+    paths = set()
+    for raw_name in result.stdout.split(b"\0"):
+        name = raw_name.decode("utf-8", errors="replace")
+        path = PurePosixPath(name)
+        if name and "\\" not in name and not path.is_absolute() and ".." not in path.parts:
+            paths.add(path.as_posix())
+    return paths
+
+
+def _is_managed(
+    relative: Path, destination: Path, previously_managed: set[str] = frozenset()
+) -> bool:
     parts_lower = tuple(part.lower() for part in relative.parts)
+    relative_lower = relative.as_posix().lower()
     return not (
         parts_lower[0] in PRESERVED_DIRS
-        or relative.as_posix().lower() in PRESERVED_FILES
-        or relative.as_posix().lower() == "config.py"
-        or (parts_lower[0] == "plugins" and destination.exists())
+        or relative_lower in PRESERVED_FILES
+        or relative_lower == "config.py"
+        or (
+            parts_lower[0] == "plugins"
+            and destination.exists()
+            and relative_lower not in previously_managed
+        )
     )
 
 
 def _managed_paths(source_root: Path, install_root: Path) -> set[str]:
+    previously_managed = {
+        relative.lower() for relative in _previously_managed_paths(install_root)
+    }
     return {
         source.relative_to(source_root).as_posix()
         for source in source_root.rglob("*")
@@ -51,6 +101,7 @@ def _managed_paths(source_root: Path, install_root: Path) -> set[str]:
         and _is_managed(
             source.relative_to(source_root),
             install_root / source.relative_to(source_root),
+            previously_managed,
         )
     }
 
@@ -63,49 +114,13 @@ def _file_hash(path: Path) -> str:
     return digest.hexdigest()
 
 
-def _local_changes(source_root: Path, install_root: Path) -> list[str]:
-    """Find edited files that the incoming release would replace."""
-    managed = _managed_paths(source_root, install_root)
-    changed = set()
-    manifest_path = install_root / MANIFEST_FILE
-    if manifest_path.is_file():
-        try:
-            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-            changed.update(
-                relative for relative in managed
-                if relative in manifest
-                and (
-                    not (install_root / relative).is_file()
-                    or _file_hash(install_root / relative) != manifest[relative]
-                )
-            )
-        except (OSError, ValueError, TypeError):
-            pass
-
-    if not (install_root / ".git").is_dir():
-        return sorted(changed)
-    try:
-        commands = (
-            ["git", "diff", "--name-only", "-z", "HEAD"],
-            ["git", "ls-files", "--others", "--exclude-standard", "-z"],
-        )
-        for command in commands:
-            result = subprocess.run(
-                command, cwd=install_root, capture_output=True, check=True
-            )
-            changed.update(
-                name.decode("utf-8", errors="replace").replace("\\", "/")
-                for name in result.stdout.split(b"\0") if name
-            )
-        return sorted(managed & changed)
-    except (OSError, subprocess.SubprocessError):
-        return sorted(changed)
-
-
-def _write_manifest(source_root: Path, install_root: Path) -> None:
+def _write_manifest(
+    source_root: Path, install_root: Path, managed: set[str] | None = None
+) -> None:
+    managed = managed if managed is not None else _managed_paths(source_root, install_root)
     manifest = {
         relative: _file_hash(install_root / relative)
-        for relative in sorted(_managed_paths(source_root, install_root))
+        for relative in sorted(managed)
         if (install_root / relative).is_file()
     }
     path = install_root / MANIFEST_FILE
@@ -205,9 +220,25 @@ def _atomic_copy(source: Path, destination: Path) -> None:
     os.replace(temporary, destination)
 
 
-def _apply_release(source_root: Path, install_root: Path) -> None:
+def _apply_release(
+    source_root: Path, install_root: Path, managed: set[str] | None = None
+) -> None:
     """Apply release files and restore the previous install on failure."""
     install_root = install_root.resolve()
+    managed = managed if managed is not None else _managed_paths(source_root, install_root)
+    previous = _previously_managed_paths(install_root)
+    previous_lower = {relative.lower() for relative in previous}
+    managed_lower = {relative.lower() for relative in managed}
+    obsolete = {
+        name
+        for name in previous
+        if name.lower() not in managed_lower
+        and _is_managed(
+            Path(*PurePosixPath(name).parts),
+            install_root / Path(*PurePosixPath(name).parts),
+            previous_lower,
+        )
+    }
     with tempfile.TemporaryDirectory(prefix="alyssa-backup-") as backup_name:
         backup_root = Path(backup_name)
         changed = []
@@ -217,7 +248,7 @@ def _apply_release(source_root: Path, install_root: Path) -> None:
                     continue
                 relative = source.relative_to(source_root)
                 destination = install_root / relative
-                if not _is_managed(relative, destination) and relative.as_posix().lower() != "config.py":
+                if relative.as_posix() not in managed and relative.as_posix().lower() != "config.py":
                     continue
 
                 backup = backup_root / relative
@@ -237,6 +268,19 @@ def _apply_release(source_root: Path, install_root: Path) -> None:
                 else:
                     _atomic_copy(source, destination)
                 changed.append((destination, backup if existed else None))
+
+            for name in sorted(obsolete):
+                relative = Path(*PurePosixPath(name).parts)
+                destination = install_root / relative
+                if not destination.is_file():
+                    continue
+                if os.path.commonpath((install_root, destination.resolve())) != str(install_root):
+                    continue
+                backup = backup_root / relative
+                backup.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(destination, backup)
+                changed.append((destination, backup))
+                destination.unlink()
         except Exception:
             for destination, backup in reversed(changed):
                 if backup is None:
@@ -301,19 +345,9 @@ def install_release(install_root: str | os.PathLike, release: dict) -> str:
             raise RuntimeError(f"Couldn't download the latest release: {error}") from error
 
         source_root = _safe_extract(archive_path, temporary / "source")
-        changed = _local_changes(source_root, install_root)
-        if changed:
-            shown = ", ".join(changed[:8])
-            if len(changed) > 8:
-                shown += f", and {len(changed) - 8} more"
-            raise LocalChangesError(
-                "Update stopped to protect your work. Alyssa found locally edited "
-                f"application files that the update would replace: {shown}. "
-                "Your settings and personal data were not changed. Back up or commit "
-                "those code changes, then update them manually."
-            )
-        _apply_release(source_root, install_root)
-        _write_manifest(source_root, install_root)
+        managed = _managed_paths(source_root, install_root)
+        _apply_release(source_root, install_root, managed)
+        _write_manifest(source_root, install_root, managed)
 
     temporary_marker = marker.with_name(marker.name + ".update-tmp")
     temporary_marker.write_text(tag + "\n", encoding="utf-8")

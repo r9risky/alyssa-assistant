@@ -68,7 +68,7 @@ ollama pull qwen2.5:3b
    companion's Settings window.
 3. If you do not want NVIDIA CUDA packages installed, set
    `WHISPER_DEVICE = "cpu"` before the first launch.
-4. Double-click `start_alyssa.bat`.
+4. Double-click `scripts\start_alyssa.bat`.
 
 The launcher creates `.venv`, installs the required packages, and starts
 Alyssa. Later launches reuse the environment unless a requirements file
@@ -123,8 +123,8 @@ Alyssa, summarize https://example.com/article
 Alyssa, what am I looking at?
 ```
 
-You can speak over a reply to interrupt it. Typed messages in the desktop
-companion do not require the assistant's name.
+You can say "Alyssa, stop" or "stop, Alyssa" over a reply to interrupt it.
+Typed messages in the desktop companion do not require the assistant's name.
 
 ## Configuration
 
@@ -143,6 +143,8 @@ The most useful settings are in `config.py`:
 | `CONFIRM_BEFORE_ACTIONS` | Confirm ordinary actions before running them |
 | `POWER_CONFIRMATION_TIMEOUT_SECONDS` | How long a protected-action approval remains pending |
 | `ALLOW_INTERRUPTIONS` | Permit speech to interrupt replies |
+| `BARGE_IN_REQUIRE_NAME` | Require both the assistant's name and `stop` for spoken interruptions |
+| `CONVERSATION_MEMORY_TURNS` | Number of recent conversation turns kept in context |
 | `PLUGINS_ENABLED` | Load tools from `plugins/` |
 | `ENABLE_BACKGROUND_WATCHER` | Run proactive plugin checks |
 | `ENABLE_COMPANION_GUI` | Show the desktop companion |
@@ -150,14 +152,16 @@ The most useful settings are in `config.py`:
 The Settings window exposes the common provider, voice, assistant, and
 companion options without requiring manual edits. Its Updates tab installs
 the latest published GitHub release while preserving local settings and data.
-It stops before replacing locally edited application code and lists the files
-that need attention, so custom GUI changes are not silently overwritten.
+Application files are replaced with the published versions, including local
+edits, so commit or back up code changes before updating.
 
 ### Low-latency voice pipeline
 
-The default endpointing window is 300 ms and adapts between 240–360 ms from
+The default endpointing window is 300 ms and adapts between 240–420 ms from
 the observed speaking rate. Speech starts after 120 ms of sustained voice;
-barge-in starts after 150 ms. Conversation context keeps four turns and slides
+barge-in detection starts after 150 ms. With name-gated interruptions enabled,
+playback stops only after the captured phrase contains both the assistant's
+name and the whole word `stop`. Conversation context keeps 11 turns and slides
 again at 4,000 characters.
 
 With an ElevenLabs key, `STT_PROVIDER = "auto"` uses Scribe realtime over one
@@ -169,7 +173,8 @@ each clause's encoded audio before that clause can play.
 
 LLM text streams for Gemini, Ollama, OpenAI-compatible, and Anthropic providers.
 Generation, TTS, playback, and interruption listening overlap; new speech
-cancels the active model response and clears streaming audio immediately.
+is transcribed and checked before a name-gated spoken interruption cancels the
+active response. A typed message still interrupts immediately.
 
 ## Included plugins
 
@@ -234,16 +239,26 @@ A plugin may also expose `check_watch() -> str | None` and an optional
 Saved memories are plain JSON and use lightweight keyword matching. Session
 conversation history stays in memory and expires after the configured timeout.
 
+## Run the tests
+
+Install the development requirements after setting up the environment, then
+run the tests:
+
+```powershell
+.venv\Scripts\python -m pip install -r requirements-dev.txt
+.venv\Scripts\python -m pytest
+```
+
 ## Build an executable
 
-After running `start_alyssa.bat` at least once, double-click
+After running `scripts\start_alyssa.bat` at least once, double-click
 `build_alyssa.bat`. PyInstaller writes the result to `dist\Alyssa.exe`.
 Keep `config.py` beside the executable because it is intentionally not bundled.
 
 ## Start with Windows
 
-Run `install_startup.bat` to register Alyssa with Windows Task Scheduler. Run
-`uninstall_startup.bat` to remove the task. Inspect the script first and only
+Run `scripts\install_startup.bat` to register Alyssa with Windows Task Scheduler. Run
+`scripts\uninstall_startup.bat` to remove the task. Inspect the script first and only
 enable startup after you are comfortable with Alyssa's permissions.
 
 ## Troubleshooting
@@ -251,12 +266,13 @@ enable startup after you are comfortable with Alyssa's permissions.
 - **Python is not found:** reinstall from python.org and enable **Add Python to
   PATH** during setup.
 - **Dependency setup is stuck or inconsistent:** delete only the local `.venv`
-  folder and run `start_alyssa.bat` again.
+  folder and run `scripts\start_alyssa.bat` again.
 - **Ollama cannot be reached:** open Ollama and confirm the configured model is
   present with `ollama list`.
 - **No cloud response:** verify the selected provider's key and model in
   Settings.
-- **False interruptions:** keep `BARGE_IN_REQUIRE_NAME = True` or use a headset
-  microphone.
+- **False interruptions:** keep `BARGE_IN_REQUIRE_NAME = True`; spoken
+  interruptions then require both "Alyssa" and "stop". A headset microphone
+  can further reduce false speech detection.
 - **Plugin failed to load:** check the startup console; plugin import errors are
   reported and the remaining plugins continue loading.

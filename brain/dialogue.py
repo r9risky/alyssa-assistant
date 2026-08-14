@@ -1,11 +1,4 @@
-"""
-LLM integration and tool dispatch logic for Alyssa.
-"""
-
-import base64
 import inspect
-import io
-import json
 import random
 import re
 import time
@@ -19,34 +12,22 @@ import nameutil
 import telemetry
 import transcribe
 
-_HTTP_SESSION = requests.Session()
-
-
-class GenerationCancelled(Exception):
-    pass
-
-
-def _iter_sse_json(response, cancel_event=None):
-    for line in response.iter_lines(decode_unicode=True):
-        if cancel_event is not None and cancel_event.is_set():
-            response.close()
-            raise GenerationCancelled()
-        if not line or not line.startswith("data:"):
-            continue
-        payload = line[5:].strip()
-        if not payload or payload == "[DONE]":
-            continue
-        yield json.loads(payload)
-
+from .common import GenerationCancelled, _HTTP_SESSION
+from .text_utils import _is_degenerate_reply, _looks_like_lazy_dodge, _strip_fake_tool_call
 
 _pending_confirmation = None
+
+
 _pending_confirmation_time = None
+
 
 _CONFIRM_NEGATIVE_RE = re.compile(
     r"\b(?:no|nope|cancel|stop|don't|do not|not|never|unsure|uncertain|decline|deny)\b"
     r"|\bwithout permission\b",
     re.IGNORECASE,
 )
+
+
 _CONFIRM_POSITIVE_PHRASES = {
     "yes", "yes please", "yes proceed", "yes do it", "yes go ahead",
     "yeah", "yep", "yup", "confirm", "confirmed", "approve", "approved",
@@ -140,13 +121,7 @@ def _handle_pending_power_confirmation(user_text: str):
 actions.set_power_confirmation_callback(_request_voice_confirmation)
 actions.set_critical_confirmation_callback(_request_voice_confirmation)
 
-# Ollama's tool format (OpenAI-style function schema). Also reused for
-# Gemini by converting it to Gemini's functionDeclarations shape at call
-# time - see _tools_to_gemini_declarations().
-# Split into _BASE_TOOLS (everything below) + actions.PLUGIN_TOOLS rather
-# than one flat literal, so reload_plugin_tools() can rebuild TOOLS after
-# the Settings > Plugins editor changes a plugin, without needing to
-# retype/re-run this whole built-in list.
+
 _BASE_TOOLS = [
     {
         "type": "function",
@@ -672,16 +647,9 @@ _BASE_TOOLS = [
         },
     },
 ]
-TOOLS = _BASE_TOOLS + actions.PLUGIN_TOOLS
 
-# ponytail: TOOLS only changes when reload_plugin_tools() runs (Settings >
-# Plugins editor), but _tools_to_gemini_declarations()/_tools_to_anthropic()
-# were rebuilding the same list of dicts from scratch on every model round
-# trip - up to 6x per single voice command (handle_command's max_turns).
-# Cache the converted shape per provider, invalidated only when the tool
-# list actually changes.
-_gemini_tools_cache = None
-_anthropic_tools_cache = None
+
+TOOLS = _BASE_TOOLS + actions.PLUGIN_TOOLS
 
 
 def reload_plugin_tools():
@@ -690,210 +658,11 @@ def reload_plugin_tools():
     reflects whatever the Settings > Plugins editor just changed. Mutates
     TOOLS in place (rather than rebinding the name) so anything that
     imported TOOLS by reference still sees the update."""
-    global _gemini_tools_cache, _anthropic_tools_cache
+    from .providers import anthropic, gemini
+
     TOOLS[:] = _BASE_TOOLS + actions.PLUGIN_TOOLS
-    _gemini_tools_cache = None
-    _anthropic_tools_cache = None
-
-
-def _base_system_prompt() -> str:
-    name = config.ASSISTANT_NAME
-    creator = getattr(config, "CREATOR_NAME", "")
-    creator_line = (
-        f"If asked who made you, who created/built you, or who made "
-        f"{name}, say plainly that {creator} made you - a short, natural "
-        f"sentence like '{creator} made me.', not a longer explanation "
-        "unless they ask for more. "
-        if creator else ""
-    )
-    return (
-        f"You are {name}, a personal secretary running a Windows PC on "
-        "your boss's behalf. Speak the way a genuinely excellent, "
-        "old-school secretary actually talks in person - warm, courteous, "
-        "and unfailingly professional, with a calm, attentive quality, "
-        "like someone who takes real pride in quietly keeping everything "
-        "running smoothly. Use normal contractions ('I've', 'it's', "
-        "'that's', 'done') the way an actual person does; spelling "
-        "everything out in full reads as stiff and robotic, not polished. "
-        "Vary your phrasing turn to turn - do not open every single reply "
-        "with the same stock word ('Certainly.', 'Right away.'); most "
-        "replies should just state what happened in a natural sentence, "
-        "the way a person would say it out loud ('Chrome's open.', "
-        "'Done - YouTube's up too.', 'That one's paused now.'). An "
-        "occasional courteous touch ('Of course.', 'Happy to.', 'Right "
-        "away.') is welcome when it genuinely fits, but it must never "
-        "harden into a fixed formula you repeat every time - hearing the "
-        "same opener on every single reply is exactly what makes an "
-        "assistant sound like a machine instead of a person. A good "
-        "secretary is warm without being chatty, and deferential without "
-        "being timid - poised, capable, a little dry wit is fine when it "
-        "genuinely fits, but no slang or over-familiarity. Keep replies "
-        "brief and composed, like a real spoken sentence or two, not a "
-        "paragraph - efficient, not chatty, but brief still means it "
-        "actually says what happened, not just an acknowledgment word "
-        "standing alone. "
-        f"{creator_line}"
-        "Be decisive and use the tools provided to actually get things done. "
-        "IMPORTANT: Never ask the user a clarifying question, and never "
-        "reply with a description of what you're about to do instead of "
-        "doing it. This is a hands-free voice assistant with no way for the "
-        "user to reply in the moment, so asking or narrating wastes their "
-        "time and accomplishes nothing. Speech-to-text is often imperfect, "
-        "so if a command sounds garbled or slightly off, do not ask the "
-        "user to repeat it or confirm - interpret it as the closest "
-        "sensible real command and act on it immediately with a tool call. "
-        "For example, if you hear 'open up wind hunts', that almost "
-        "certainly means 'open Windows Explorer' - call open_app with that "
-        "guess rather than asking what they meant. Always make your single "
-        "best guess and act using the tools available - including for "
-        "deleting files or running commands, since those tools already have "
-        "their own built-in confirmation step before anything irreversible "
-        "happens, so you do not need to ask first. "
-        "Commands are frequently non-specific too, not just mis-transcribed "
-        "- the user often describes a goal, feeling, or symptom rather than "
-        "naming a tool or app outright. Before picking a tool, briefly ask "
-        "yourself: what is this person actually trying to accomplish right "
-        "now, given everything you know about them and this conversation? "
-        "Then pick the single tool that gets them there fastest - the same "
-        "way a sharp human assistant listens past the literal words to the "
-        "real need. Some example categories, beyond the ones listed on "
-        "individual tools above: "
-        "ENVIRONMENT/SENSATION ('it's too quiet' -> volume_up, 'this is "
-        "too bright to read' -> no tool fits, say so briefly); "
-        "TASK GOALS STATED AS NEEDS ('I need to jot something down' -> "
-        "notepad, 'I need to send this off' -> pull up email/browser, 'I "
-        "need to look something up' -> open_url with a search); "
-        "COMPLAINTS THAT IMPLY AN ACTION ('this window's in my way' -> "
-        "minimize_window, 'I can't find that invoice anywhere' -> "
-        "search_files, 'I can't hear this at all' -> volume_up); "
-        "CONTINUITY REFERENCES ('do that again', 'same thing but for the "
-        "other file', 'undo that') - resolve using the recent actions and "
-        "conversation history below, the same way a person tracks what "
-        "'that' or 'it' refers to from context. "
-        "Every tool's own description above also lists example phrasings "
-        "for this - lean on those first when they cover the request. "
-        "When a vague request is also personal (which app counts as 'my "
-        "music', where 'the office folder' is, etc.), check the remembered "
-        "facts and recent actions below first. Learn stable, useful "
-        "preferences such as app choices, names, folders, routines, and "
-        "custom phrases by calling remember_fact after the user clearly "
-        "states or confirms them. Do not save one-off requests, private "
-        "secrets, or guesses as memories. This is how you get better at "
-        "understanding this particular user's way of speaking over time. "
-        "There are two narrow exceptions where you should skip acting and "
-        "briefly explain instead: (1) something genuinely risky with NO "
-        "tool available for it at all (e.g. sending a message or making a "
-        "purchase on the user's behalf), or (2) a destructive/hard-to-undo "
-        "command (delete_file, run_command, system_power_action) that is so "
-        "ambiguous you would be guessing blindly even with the conversation "
-        "history below - e.g. 'delete it' with nothing anywhere indicating "
-        "what 'it' is. In that second case, ask one short question - if you "
-        "have 2-3 likely candidates (recent files, open windows, names from "
-        "the conversation), name them instead of asking open-ended, e.g. "
-        "'the invoice PDF or the old_photos folder?' The user can just say "
-        "your name again to answer, since you are always listening. For "
-        "everything else - including ordinary ambiguity you can make a "
-        "reasonable guess about - guess and act without previewing the "
-        "guess first. "
-        "One more exception, in the other direction: if the user's message "
-        "is pure small talk with no actual request in it at all - a bare "
-        "greeting ('hi', 'hey there'), thanks, a compliment, or idle chit-"
-        "chat - just reply in kind, briefly and naturally, and do NOT call "
-        "a tool. Calling get_datetime or any other tool 'just to have "
-        "something to report' when nothing was actually asked for is wrong "
-        "- a tool call means the user's words implied a real request, not "
-        "that you needed an excuse to use one. "
-        "A related exception: an ordinary factual or trivia question - "
-        "'who is Spider-Man', 'what's the capital of France', 'how many "
-        "cups in a gallon', 'when did WWII end' - is answered directly, "
-        "in your own words, from what you already know, with NO tool "
-        "call. Do not open a browser or search the web for these just "
-        "because open_url exists; opening a window steals focus from "
-        "whatever the user is doing (often a game) and is far slower "
-        "than just answering. Only reach for open_url on a factual topic "
-        "if the user explicitly asked to look it up/search/google it, or "
-        "if it's about something genuinely beyond what you could know "
-        "(e.g. today's specific news or a live score) - plain general-"
-        "knowledge questions never need it. "
-        "This same 'just answer, no tool' handling extends well beyond "
-        "narrow trivia: if the user asks for advice, an opinion, a "
-        "recommendation, an explanation of how or why something works, "
-        "help thinking through a decision, brainstorming, or just wants "
-        "to talk something through out loud, engage with it directly and "
-        "substantively, the way a sharp, well-read person would in "
-        "conversation - not a search-and-report tool that only knows "
-        "commands and factoids. It's fine to have a real point of view, "
-        "ask a brief follow-up when it genuinely helps the conversation "
-        "along, or hold a longer back-and-forth on one topic across "
-        "several turns. Keep the same voice - warm, natural, composed - "
-        "and keep individual replies to a sentence or two apiece so nothing "
-        "turns into an essay read out loud, but do not artificially cut a "
-        "conversation short or redirect back to task-mode just because no "
-        "tool applies; 'no tool fits' and 'nothing to say' are not the "
-        "same thing. "
-        "Another exception: if the user directly asks you to say, repeat, "
-        "spell out, or echo specific word(s) or a phrase - 'can you say "
-        "pineapple', 'say that again', 'repeat after me: ...', 'spell "
-        "banana' - just say exactly that content back, plainly, with NO "
-        "tool call and no extra commentary, acknowledgment, or preamble "
-        "around it. If they said 'say pineapple', the entire reply should "
-        "be 'Pineapple.' - not 'Sure, pineapple!' or 'Pineapple, got it.' "
-        "This is the one case where being terse and literal is exactly "
-        "right, since the point of the request is hearing those specific "
-        "words said out loud. If they ask you to say something multiple "
-        "times or in a particular way (e.g. 'say it three times', 'say it "
-        "really slowly'), follow that instruction as literally as a voice "
-        "reply reasonably allows. "
-        "You may see earlier turns from this same session above the user's "
-        "latest message - use them as context for follow-ups (e.g. if the "
-        "user just said 'open notepad' and now says 'now type hello', act "
-        "on notepad). If the user asks you to start fresh or forget the "
-        "current conversation, call reset_conversation. "
-        "A single spoken command can require opening an app AND then doing "
-        "something inside it, e.g. 'type hello in Discord' or 'open "
-        "notepad and write this down'. Don't try to do both in the same "
-        "tool call - a freshly-launched app isn't loaded or focused yet, "
-        "so typing into it immediately would go to the wrong window or "
-        "nowhere at all. Call open_app first by itself; once its result "
-        "comes back you will get another turn, and that is when you "
-        "should call type_text/press_keys/etc. with whatever the user "
-        "wanted done in that app. Always finish the second half once you "
-        "get that turn - a command like this isn't complete until the "
-        "typing/interaction actually happened, not just the app opening. "
-        "CRITICAL: To use a tool, you must use the actual tool-calling "
-        "mechanism provided to you - never write out a tool call as JSON or "
-        "text in your reply. Your spoken reply should only ever be plain, "
-        "natural sentences a person would say out loud, never code or "
-        "structured data of any kind. "
-        "CRITICAL: After a tool runs, its result is reported back to you - "
-        "read it before replying. If it describes success, confirm that "
-        "success in your own words, naming what was actually done - "
-        "including the specific thing you resolved a vague request to, if "
-        "it was one (e.g. 'Opened Spotify and queued up Bohemian "
-        "Rhapsody.', not just 'Done.') since that reply is the user's only "
-        "chance to catch a wrong guess. A bare acknowledgment word or "
-        "phrase with nothing else "
-        "is never a complete reply once a tool has run - always report the "
-        "actual outcome, not just an acknowledgment of the request. If it "
-        "describes a failure or error (anything starting with or "
-        "containing 'Couldn't', 'Error', 'Cancelled', or similar), you "
-        "must say so plainly - tell the user it didn't work and briefly "
-        "why, in plain language. Never tell the user something succeeded, "
-        "was done, or was captured/saved/opened when the tool result says "
-        "otherwise - that is actively misleading and erodes their trust "
-        "in you. "
-        "SEARCH_WEB REPLIES: once search_web's results come back, never "
-        "read the raw title/snippet/URL list out loud - turn it into a "
-        "short, natural spoken summary of what you found instead, citing a "
-        "source by name where it fits ('According to Reuters, ...'). Then "
-        "end that same reply with one brief, genuinely related follow-up "
-        "question on the topic - something a curious, attentive assistant "
-        "would naturally wonder next, not a generic 'anything else?'. For "
-        "example, after searching a film's release date: 'It's out March "
-        "12th, according to Variety - want me to check if tickets are on "
-        "sale yet?'. Keep the summary-plus-question to one or two spoken "
-        "sentences total, same as any other reply."
-    )
+    gemini._gemini_tools_cache = None
+    anthropic._anthropic_tools_cache = None
 
 
 def _compact_system_prompt() -> str:
@@ -974,9 +743,6 @@ def _build_system_prompt(user_text: str = "") -> str:
     )
 
 
-# A compact record of what Alyssa just did helps follow-ups such as "now type
-# hello" or "close it" without retaining raw dictated text or other details
-# that are not useful after the action completes.
 _recent_action_context = []
 
 
@@ -1131,26 +897,18 @@ def _natural_fast_reply(name: str, arguments: dict, output: str, user_text: str)
     return random.choice(["Done.", "That's handled.", "All set."])
 
 
-# Tools that can end up returning VOICE_CONFIRMATION_REQUIRED (see actions.py)
-# instead of actually running - announcing "Deleting that file..." up front
-# would be actively wrong if what actually happens next is a spoken yes/no
-# question instead. These are always executed first, exactly as before,
-# with nothing said until the real outcome (or the confirmation question)
-# is known.
 _CONFIRMATION_GATED_TOOLS = {
     "delete_file", "run_command", "system_power_action", "click_screen_element",
     "kill_process", "clean_temp_files", "empty_recycle_bin",
 }
 
-# Once remote text has entered the conversation, it may inform the answer but
-# cannot initiate computer actions. The user can request such an action in a
-# fresh turn, where its intent and confirmation come from the user instead.
+
 _UNTRUSTED_WEB_TOOLS = {"search_web", "summarize_webpage"}
+
+
 _SAFE_AFTER_UNTRUSTED_WEB_TOOLS = _UNTRUSTED_WEB_TOOLS
 
-# Tools whose result IS the reply and returns near-instantly - splitting
-# these into "Checking the time..." + "It's 3:45." reads as stilted rather
-# than natural, so they keep the single-reply-after behavior instead.
+
 _SKIP_ANNOUNCE_TOOLS = {"get_datetime", "read_clipboard", "run_diagnostics", "reset_conversation"}
 
 
@@ -1231,103 +989,11 @@ def _natural_announce_reply(name: str, arguments: dict):
     return None
 
 
-def _call_ollama(messages, on_text_delta=None, cancel_event=None):
-    response = _HTTP_SESSION.post(
-        config.OLLAMA_URL,
-        json={
-            "model": config.OLLAMA_MODEL,
-            "messages": messages,
-            "tools": TOOLS,
-            "stream": True,
-            # Low temperature = more consistent rule-following (act, don't
-            # ask/narrate) and more reliable tool-call formatting, at some
-            # cost to reply variety - a good tradeoff for a small local model.
-            "options": {
-                "temperature": 0.2,
-                "num_predict": getattr(config, "LLM_MAX_OUTPUT_TOKENS", 256),
-            },
-            # How long Ollama keeps this model loaded after this request -
-            # see OLLAMA_KEEP_ALIVE in config.py. Sent on every request
-            # (not just the warm-up ping below) since Ollama resets the
-            # countdown from whatever value it's most recently told.
-            "keep_alive": getattr(config, "OLLAMA_KEEP_ALIVE", "10m"),
-        },
-        timeout=(10, 120),
-        stream=True,
-    )
-    response.raise_for_status()
-    text_chunks = []
-    tool_calls = []
-    first_token_at = None
-    started_at = time.time()
-    try:
-        for line in response.iter_lines(decode_unicode=True):
-            if cancel_event is not None and cancel_event.is_set():
-                raise GenerationCancelled()
-            if not line:
-                continue
-            event = json.loads(line)
-            message = event.get("message") or {}
-            delta = message.get("content") or ""
-            if delta:
-                if first_token_at is None:
-                    first_token_at = time.time()
-                    telemetry.log(f"[timing] LLM time-to-first-token: {first_token_at - started_at:.2f}s")
-                text_chunks.append(delta)
-                if on_text_delta is not None:
-                    on_text_delta(delta)
-            for call in message.get("tool_calls") or []:
-                if call not in tool_calls:
-                    tool_calls.append(call)
-    finally:
-        response.close()
-    return {
-        "message": {
-            "role": "assistant",
-            "content": "".join(text_chunks),
-            "tool_calls": tool_calls,
-        }
-    }
-
-
-def warm_up_ollama():
-    """Best-effort: asks Ollama to load OLLAMA_MODEL into memory right now,
-    rather than waiting for your first real command to trigger that load.
-    A cold model load is the single slowest thing that can happen in this
-    whole pipeline - noticeably slower than any individual reply once it's
-    warm - so doing it in the background at startup means it's already
-    absorbed by the time you actually say something, instead of landing on
-    your first command every single time Alyssa starts.
-
-    A no-op for every other LLM_PROVIDER, since only a local Ollama model
-    needs to be loaded into memory in the first place. Safe to call on a
-    background thread; any failure here is swallowed silently, since
-    run_preflight_checks() already confirmed Ollama is reachable and the
-    model is pulled - the normal request path surfaces any real problem."""
-    if config.LLM_PROVIDER != "ollama":
-        return
-    try:
-        _HTTP_SESSION.post(
-            config.OLLAMA_URL,
-            json={
-                "model": config.OLLAMA_MODEL,
-                "messages": [{"role": "user", "content": "hi"}],
-                "stream": False,
-                # Cuts the warm-up reply as short as the model will allow -
-                # the point is only to force the load, never to actually
-                # use whatever it says here.
-                "options": {"temperature": 0.2, "num_predict": 1},
-                "keep_alive": getattr(config, "OLLAMA_KEEP_ALIVE", "10m"),
-            },
-            timeout=120,
-        )
-    except requests.exceptions.RequestException:
-        pass
-
-
 def warm_up_connections():
     """Pre-open the configured provider's pooled TCP/TLS connection."""
     if config.LLM_PROVIDER == "ollama":
+        from .providers.ollama import warm_up_ollama
+
         warm_up_ollama()
         return
     urls = {
@@ -1345,1000 +1011,9 @@ def warm_up_connections():
         pass
 
 
-_GEMINI_URL_TEMPLATE = "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
-_GEMINI_STREAM_URL_TEMPLATE = "https://generativelanguage.googleapis.com/v1beta/models/{model}:streamGenerateContent"
-
-
-def _tools_to_gemini_declarations():
-    """Converts our OpenAI-style TOOLS list into Gemini's functionDeclarations
-    format. The parameters schema itself (JSON Schema) is compatible as-is.
-    Cached - see _gemini_tools_cache above."""
-    global _gemini_tools_cache
-    if _gemini_tools_cache is None:
-        _gemini_tools_cache = [
-            {
-                "name": t["function"]["name"],
-                "description": t["function"].get("description", ""),
-                "parameters": t["function"].get(
-                    "parameters", {"type": "object", "properties": {}}
-                ),
-            }
-            for t in TOOLS
-        ]
-    return _gemini_tools_cache
-
-
-def _messages_to_gemini(messages):
-    """Converts our internal OpenAI-style message list into Gemini's
-    (systemInstruction, contents) shape."""
-    system_text = None
-    contents = []
-
-    for m in messages:
-        role = m.get("role")
-
-        if role == "system":
-            piece = m.get("content") or ""
-            system_text = f"{system_text}\n{piece}" if system_text else piece
-
-        elif role == "user":
-            contents.append({"role": "user", "parts": [{"text": m.get("content") or ""}]})
-
-        elif role in ("assistant", "model"):
-            parts = []
-            text = (m.get("content") or "").strip()
-            if text:
-                parts.append({"text": text})
-            for call in m.get("tool_calls") or []:
-                fn = call["function"]
-                function_call = {"name": fn["name"], "args": fn.get("arguments") or {}}
-                if call.get("id"):
-                    function_call["id"] = call["id"]
-                part = {"functionCall": function_call}
-                if call.get("thought_signature"):
-                    part["thoughtSignature"] = call["thought_signature"]
-                parts.append(part)
-            contents.append({"role": "model", "parts": parts or [{"text": ""}]})
-
-        elif role == "tool":
-            function_response = {
-                "name": m.get("name", "unknown_function"),
-                "response": {"result": m.get("content", "")},
-            }
-            if m.get("id"):
-                # Field name Gemini expects here is "id" (matching the
-                # functionCall part above), not "call_id" - the API 400s
-                # ("Unknown name \"call_id\"") if it's wrong.
-                function_response["id"] = m["id"]
-            contents.append(
-                {
-                    "role": "user",
-                    "parts": [{"functionResponse": function_response}],
-                }
-            )
-
-    return system_text, contents
-
-
-def _call_gemini(messages, force_tools: bool = False, on_text_delta=None, cancel_event=None):
-    if not config.GEMINI_API_KEY:
-        raise RuntimeError(
-            "GEMINI_API_KEY isn't set. Set it as an environment variable "
-            "(or paste it directly into config.py) - see the comments in "
-            "config.py for exact steps."
-        )
-
-    system_text, contents = _messages_to_gemini(messages)
-    body = {
-        "contents": contents,
-        "tools": [{"functionDeclarations": _tools_to_gemini_declarations()}],
-        # Gemini 3.x models prefer thinkingLevel ("minimal"/"low"/"medium"/
-        # "high") over the older numeric thinkingBudget, which Google's docs
-        # call unpredictable on 3.x. "minimal" keeps this fixed-vocabulary
-        # "pick a tool + args" task fast and cheap - fires on every voice
-        # command, up to handle_command()'s max_turns=6 times per command.
-        "generationConfig": {
-            "thinkingConfig": {"thinkingLevel": "minimal"},
-            "maxOutputTokens": getattr(config, "LLM_MAX_OUTPUT_TOKENS", 256),
-        },
-        # temperature/top_p/top_k are deprecated for gemini-3.6-flash+ and
-        # 400 if present - don't add them back.
-    }
-
-    # Gemini's function calling defaults to AUTO (model decides whether to
-    # call a tool), left alone so small talk/trivia get a plain text reply
-    # with no tool call. The catch: smaller/faster models sometimes take
-    # the lazy path even on a real command ("Certainly." with no tool
-    # call). Rather than forcing every first turn into a tool call (which
-    # broke plain questions and "say X"), the caller retries just this one
-    # turn with force_tools=True only if AUTO came back with no tool call
-    # and a reply that looks like that exact dodge (see _is_degenerate_reply).
-    if force_tools:
-        body["toolConfig"] = {"functionCallingConfig": {"mode": "ANY"}}
-
-    if system_text:
-        body["systemInstruction"] = {"parts": [{"text": system_text}]}
-
-    url = _GEMINI_STREAM_URL_TEMPLATE.format(model=config.GEMINI_MODEL)
-    response = _HTTP_SESSION.post(
-        url,
-        params={"key": config.GEMINI_API_KEY, "alt": "sse"},
-        json=body,
-        timeout=(10, 60),
-        stream=True,
-    )
-    response.raise_for_status()
-    text_chunks = []
-    tool_calls = []
-    block_reason = None
-    safety_blocked = False
-    first_token_at = None
-    started_at = time.time()
-    try:
-        for data in _iter_sse_json(response, cancel_event):
-            block_reason = block_reason or data.get("promptFeedback", {}).get("blockReason")
-            candidates = data.get("candidates") or []
-            if not candidates:
-                continue
-            safety_blocked = safety_blocked or candidates[0].get("finishReason") == "SAFETY"
-            for part in candidates[0].get("content", {}).get("parts", []):
-                delta = part.get("text")
-                if delta:
-                    if first_token_at is None:
-                        first_token_at = time.time()
-                        telemetry.log(f"[timing] LLM time-to-first-token: {first_token_at - started_at:.2f}s")
-                    text_chunks.append(delta)
-                    if on_text_delta is not None:
-                        on_text_delta(delta)
-                elif "functionCall" in part:
-                    fc = part["functionCall"]
-                    call = {"function": {"name": fc.get("name"), "arguments": fc.get("args") or {}}}
-                    if fc.get("id"):
-                        call["id"] = fc["id"]
-                    if part.get("thoughtSignature"):
-                        call["thought_signature"] = part["thoughtSignature"]
-                    if call not in tool_calls:
-                        tool_calls.append(call)
-    finally:
-        response.close()
-
-    if block_reason:
-        text_chunks = [f"Gemini blocked that request ({block_reason})."]
-        tool_calls = []
-    elif safety_blocked:
-        text_chunks = ["Gemini's safety filters blocked that response."]
-        tool_calls = []
-
-    return {
-        "message": {
-            "role": "assistant",
-            "content": "".join(text_chunks),
-            "tool_calls": tool_calls,
-        }
-    }
-
-
-def _messages_to_openai(messages):
-    """Converts our internal OpenAI-style message list into the exact wire
-    format the OpenAI chat-completions endpoint (and anything that mimics
-    it - Groq, OpenRouter, Together, etc.) expects. Our internal shape is
-    already very close to this (it's modeled on it), the only real
-    differences being: tool_calls need string-encoded JSON arguments (not
-    a dict), and tool results are addressed by "tool_call_id" rather than
-    the "id"/"name" pair Ollama/Gemini use."""
-    out = []
-    for m in messages:
-        role = m.get("role")
-        if role in ("system", "user"):
-            out.append({"role": role, "content": m.get("content") or ""})
-        elif role in ("assistant", "model"):
-            entry = {"role": "assistant", "content": (m.get("content") or "").strip() or None}
-            tool_calls = m.get("tool_calls") or []
-            if tool_calls:
-                entry["tool_calls"] = [
-                    {
-                        "id": call.get("id") or f"call_{i}",
-                        "type": "function",
-                        "function": {
-                            "name": call["function"]["name"],
-                            "arguments": json.dumps(call["function"].get("arguments") or {}),
-                        },
-                    }
-                    for i, call in enumerate(tool_calls)
-                ]
-            out.append(entry)
-        elif role == "tool":
-            out.append(
-                {
-                    "role": "tool",
-                    "tool_call_id": m.get("id") or "",
-                    "content": str(m.get("content", "")),
-                }
-            )
-    return out
-
-
-def _call_openai_compatible(
-    messages,
-    base_url,
-    api_key,
-    model,
-    provider_label,
-    on_text_delta=None,
-    cancel_event=None,
-):
-    """Shared implementation for any provider that speaks the OpenAI
-    chat-completions format - used directly for "openai" and
-    "custom_openai", since they're wire-compatible aside from the base URL/
-    key/model. api_key may be blank (e.g. a local LM Studio server that
-    doesn't check one)."""
-    headers = {"Content-Type": "application/json"}
-    if api_key:
-        headers["Authorization"] = f"Bearer {api_key}"
-
-    body = {
-        "model": model,
-        "messages": _messages_to_openai(messages),
-        "tools": TOOLS,
-        "tool_choice": "auto",
-        "stream": True,
-    }
-    if provider_label != "OpenAI":
-        body["temperature"] = 0.2
-    token_field = "max_completion_tokens" if provider_label == "OpenAI" else "max_tokens"
-    body[token_field] = getattr(config, "LLM_MAX_OUTPUT_TOKENS", 256)
-
-    url = base_url.rstrip("/") + "/chat/completions"
-    response = _HTTP_SESSION.post(
-        url, headers=headers, json=body, timeout=(10, 60), stream=True
-    )
-    if response.status_code in (401, 403):
-        raise RuntimeError(
-            f"{provider_label} rejected the API key - double check it in config.py."
-        )
-    response.raise_for_status()
-    text_chunks = []
-    streamed_calls = {}
-    first_token_at = None
-    started_at = time.time()
-    try:
-        for event in _iter_sse_json(response, cancel_event):
-            choices = event.get("choices") or []
-            if not choices:
-                continue
-            delta = choices[0].get("delta") or {}
-            text = delta.get("content") or ""
-            if text:
-                if first_token_at is None:
-                    first_token_at = time.time()
-                    telemetry.log(f"[timing] LLM time-to-first-token: {first_token_at - started_at:.2f}s")
-                text_chunks.append(text)
-                if on_text_delta is not None:
-                    on_text_delta(text)
-            for call in delta.get("tool_calls") or []:
-                index = call.get("index", 0)
-                current = streamed_calls.setdefault(
-                    index, {"id": None, "name": None, "arguments": []}
-                )
-                current["id"] = call.get("id") or current["id"]
-                function = call.get("function") or {}
-                current["name"] = function.get("name") or current["name"]
-                if function.get("arguments"):
-                    current["arguments"].append(function["arguments"])
-    finally:
-        response.close()
-
-    tool_calls = []
-    for current in streamed_calls.values():
-        try:
-            args = json.loads("".join(current["arguments"]) or "{}")
-        except (ValueError, TypeError):
-            args = {}
-        tool_calls.append(
-            {
-                "id": current["id"],
-                "function": {"name": current["name"], "arguments": args},
-            }
-        )
-
-    return {
-        "message": {
-            "role": "assistant",
-            "content": "".join(text_chunks),
-            "tool_calls": tool_calls,
-        }
-    }
-
-
-def _call_openai(messages, on_text_delta=None, cancel_event=None):
-    if not config.OPENAI_API_KEY:
-        raise RuntimeError(
-            "OPENAI_API_KEY isn't set. Set it as an environment variable "
-            "(or paste it directly into config.py) - see the comments in "
-            "config.py for exact steps."
-        )
-    return _call_openai_compatible(
-        messages,
-        getattr(config, "OPENAI_BASE_URL", "https://api.openai.com/v1"),
-        config.OPENAI_API_KEY,
-        config.OPENAI_MODEL,
-        "OpenAI",
-        on_text_delta,
-        cancel_event,
-    )
-
-
-def _call_custom_openai(messages, on_text_delta=None, cancel_event=None):
-    return _call_openai_compatible(
-        messages,
-        getattr(config, "CUSTOM_BASE_URL", ""),
-        getattr(config, "CUSTOM_API_KEY", ""),
-        getattr(config, "CUSTOM_MODEL", ""),
-        "Your custom provider",
-        on_text_delta,
-        cancel_event,
-    )
-
-
-_ANTHROPIC_URL = "https://api.anthropic.com/v1/messages"
-_ANTHROPIC_VERSION = "2023-06-01"
-
-
-def _tools_to_anthropic():
-    """Converts our OpenAI-style TOOLS list into Anthropic's tool schema -
-    same JSON Schema `parameters`, just renamed to `input_schema` and
-    flattened (no nested "function" wrapper). Cached - see
-    _anthropic_tools_cache above."""
-    global _anthropic_tools_cache
-    if _anthropic_tools_cache is None:
-        _anthropic_tools_cache = [
-            {
-                "name": t["function"]["name"],
-                "description": t["function"].get("description", ""),
-                "input_schema": t["function"].get(
-                    "parameters", {"type": "object", "properties": {}}
-                ),
-            }
-            for t in TOOLS
-        ]
-    return _anthropic_tools_cache
-
-
-def _messages_to_anthropic(messages):
-    """Converts our internal message list into Anthropic's (system,
-    messages) shape, where tool calls/results are content blocks rather
-    than separate message roles."""
-    system_text = None
-    out = []
-
-    for m in messages:
-        role = m.get("role")
-
-        if role == "system":
-            piece = m.get("content") or ""
-            system_text = f"{system_text}\n{piece}" if system_text else piece
-
-        elif role == "user":
-            out.append({"role": "user", "content": m.get("content") or ""})
-
-        elif role in ("assistant", "model"):
-            blocks = []
-            text = (m.get("content") or "").strip()
-            if text:
-                blocks.append({"type": "text", "text": text})
-            for call in m.get("tool_calls") or []:
-                fn = call["function"]
-                blocks.append(
-                    {
-                        "type": "tool_use",
-                        "id": call.get("id") or f"call_{len(blocks)}",
-                        "name": fn["name"],
-                        "input": fn.get("arguments") or {},
-                    }
-                )
-            out.append({"role": "assistant", "content": blocks or [{"type": "text", "text": ""}]})
-
-        elif role == "tool":
-            out.append(
-                {
-                    "role": "user",
-                    "content": [
-                        {
-                            "type": "tool_result",
-                            "tool_use_id": m.get("id") or "",
-                            "content": str(m.get("content", "")),
-                        }
-                    ],
-                }
-            )
-
-    return system_text, out
-
-
-def _call_anthropic(messages, on_text_delta=None, cancel_event=None):
-    if not config.ANTHROPIC_API_KEY:
-        raise RuntimeError(
-            "ANTHROPIC_API_KEY isn't set. Set it as an environment variable "
-            "(or paste it directly into config.py) - see the comments in "
-            "config.py for exact steps."
-        )
-
-    system_text, anthropic_messages = _messages_to_anthropic(messages)
-    body = {
-        "model": config.ANTHROPIC_MODEL,
-        "max_tokens": getattr(config, "LLM_MAX_OUTPUT_TOKENS", 256),
-        "messages": anthropic_messages,
-        "tools": _tools_to_anthropic(),
-        "temperature": 0.2,
-        "stream": True,
-    }
-    if system_text:
-        body["system"] = system_text
-
-    headers = {
-        "x-api-key": config.ANTHROPIC_API_KEY,
-        "anthropic-version": _ANTHROPIC_VERSION,
-        "content-type": "application/json",
-    }
-    response = _HTTP_SESSION.post(
-        _ANTHROPIC_URL, headers=headers, json=body, timeout=(10, 60), stream=True
-    )
-    if response.status_code in (401, 403):
-        raise RuntimeError("Anthropic rejected the API key - double check ANTHROPIC_API_KEY in config.py.")
-    response.raise_for_status()
-    text_chunks = []
-    streamed_calls = {}
-    first_token_at = None
-    started_at = time.time()
-    try:
-        for event in _iter_sse_json(response, cancel_event):
-            kind = event.get("type")
-            index = event.get("index", 0)
-            if kind == "content_block_start":
-                block = event.get("content_block") or {}
-                if block.get("type") == "tool_use":
-                    streamed_calls[index] = {
-                        "id": block.get("id"),
-                        "name": block.get("name"),
-                        "arguments": [],
-                    }
-            elif kind == "content_block_delta":
-                delta = event.get("delta") or {}
-                if delta.get("type") == "text_delta":
-                    text = delta.get("text") or ""
-                    if text:
-                        if first_token_at is None:
-                            first_token_at = time.time()
-                            telemetry.log(f"[timing] LLM time-to-first-token: {first_token_at - started_at:.2f}s")
-                        text_chunks.append(text)
-                        if on_text_delta is not None:
-                            on_text_delta(text)
-                elif delta.get("type") == "input_json_delta":
-                    current = streamed_calls.setdefault(
-                        index, {"id": None, "name": None, "arguments": []}
-                    )
-                    current["arguments"].append(delta.get("partial_json") or "")
-    finally:
-        response.close()
-
-    tool_calls = []
-    for current in streamed_calls.values():
-        try:
-            arguments = json.loads("".join(current["arguments"]) or "{}")
-        except (ValueError, TypeError):
-            arguments = {}
-        tool_calls.append(
-            {
-                "id": current["id"],
-                "function": {"name": current["name"], "arguments": arguments},
-            }
-        )
-
-    return {
-        "message": {
-            "role": "assistant",
-            "content": "".join(text_chunks),
-            "tool_calls": tool_calls,
-        }
-    }
-
-
-def _call_model(messages, force_tools: bool = False, on_text_delta=None, cancel_event=None):
-    """Dispatches to whichever LLM provider config.py is set to, always
-    returning the same normalized {"message": {"content", "tool_calls"}}
-    shape so the rest of this module doesn't need to know which one it is.
-
-    `force_tools` only affects Gemini - see _call_gemini for why. Other
-    providers don't currently need it: this codebase hasn't observed the
-    same "replies with plain text instead of calling a tool" laziness from
-    them, so they're left on their normal default tool-calling behavior."""
-    provider = config.LLM_PROVIDER
-    if provider == "gemini":
-        return _call_gemini(messages, force_tools, on_text_delta, cancel_event)
-    if provider == "openai":
-        return _call_openai(messages, on_text_delta, cancel_event)
-    if provider == "anthropic":
-        return _call_anthropic(messages, on_text_delta, cancel_event)
-    if provider == "custom_openai":
-        return _call_custom_openai(messages, on_text_delta, cancel_event)
-    return _call_ollama(messages, on_text_delta, cancel_event)
-
-
-# --- Screen vision ("Alyssa, what am I seeing?") -----------------------------
-# Separate from the tool-calling loop above: grabs a screenshot, sends it
-# plus a prompt to a vision-capable model, and returns the plain-text
-# answer as the tool's output, which flows back through handle_command()
-# like any other tool result. Called from actions.describe_screen().
-
-_SCREEN_VISION_BASE_PROMPT = (
-    "Screenshot of the user's screen, just taken. In 1-2 spoken sentences, "
-    "say what's on it - the app/site in focus and what's happening. Skip "
-    "UI chrome (menus, scrollbars) unless asked. If you recognize a "
-    "specific character, show, game, person, or brand, only name it if "
-    "you're genuinely confident - a small/cropped/low-res image of a "
-    "niche source is easy to misidentify. Otherwise describe it "
-    "generically (e.g. 'an anime character with dark hair drinking from "
-    "a mug') instead of guessing a specific name; a vague-but-correct "
-    "description is more useful than a confident wrong one."
-)
-
-
-def describe_screen_with_vision(question: str = "") -> str:
-    """Takes a screenshot (in memory only - nothing saved to disk) and asks
-    the configured LLM provider's vision-capable model to describe it, or
-    answer a specific question about it. Returns the plain-text answer, or
-    a plain-language error string starting with "Couldn't"/"I can't" if
-    something went wrong - handle_command()'s caller-facing tool-result
-    convention, same as every function in actions.py."""
-    try:
-        from PIL import ImageGrab
-    except ImportError:
-        return "Couldn't look at the screen: Pillow isn't installed (pip install Pillow)."
-
-    try:
-        image = ImageGrab.grab()
-    except Exception as e:
-        return f"Couldn't capture the screen: {e}"
-
-    max_dim = getattr(config, "SCREEN_VISION_MAX_DIMENSION", 1568)
-    if image.width > max_dim or image.height > max_dim:
-        image.thumbnail((max_dim, max_dim))
-
-    buffer = io.BytesIO()
-    image.convert("RGB").save(buffer, format="JPEG", quality=85)
-    image_bytes = buffer.getvalue()
-
-    prompt = _SCREEN_VISION_BASE_PROMPT
-    question = (question or "").strip()
-    if question:
-        prompt += f' They asked: "{question}" - answer that directly.'
-
-    provider = config.LLM_PROVIDER
-    if provider == "gemini":
-        return _describe_image_gemini(image_bytes, "image/jpeg", prompt)
-    if provider == "openai":
-        return _describe_image_openai_compatible(
-            image_bytes, "image/jpeg", prompt,
-            getattr(config, "OPENAI_BASE_URL", "https://api.openai.com/v1"),
-            config.OPENAI_API_KEY, config.OPENAI_MODEL, "OpenAI",
-        )
-    if provider == "anthropic":
-        return _describe_image_anthropic(image_bytes, "image/jpeg", prompt)
-    if provider == "custom_openai":
-        return _describe_image_openai_compatible(
-            image_bytes, "image/jpeg", prompt,
-            getattr(config, "CUSTOM_BASE_URL", ""),
-            getattr(config, "CUSTOM_API_KEY", ""),
-            getattr(config, "CUSTOM_MODEL", ""), "Your custom provider",
-        )
-    return _describe_image_ollama(image_bytes, prompt)
-
-
-_LOCATE_ELEMENT_PROMPT_TEMPLATE = (
-    "Screenshot of the user's screen, just taken. Find this UI element: "
-    '"{description}". Respond with ONLY two numbers separated by a comma: '
-    "the element's center point as a percentage of image width and height, "
-    "0-100 each, e.g. \"42,87\" for a point 42% across and 87% down. No "
-    "words, no explanation, no percent signs, no extra formatting - just "
-    "the two numbers. If you can't find it, respond with exactly: NOT_FOUND"
-)
-
-
-def locate_screen_element_with_vision(description: str) -> tuple[float, float] | None:
-    """Takes a screenshot and asks the vision model to point at a
-    described UI element as (x_percent, y_percent) of the screen, 0-100
-    each. Returns None if the model reported it couldn't find the element
-    or its reply didn't parse as coordinates. Used by
-    actions.click_screen_element() to let Alyssa act on what she sees,
-    not just narrate it - the vision-to-click pipeline is inherently
-    approximate (a language model estimating pixel coordinates from a
-    downscaled screenshot), so this is best used for reasonably large,
-    distinct on-screen targets (a labeled button, an icon, a visible
-    text field) rather than tiny or ambiguous ones."""
-    try:
-        from PIL import ImageGrab
-    except ImportError:
-        return None
-
-    try:
-        image = ImageGrab.grab()
-    except Exception:
-        return None
-
-    max_dim = getattr(config, "SCREEN_VISION_MAX_DIMENSION", 1568)
-    if image.width > max_dim or image.height > max_dim:
-        image.thumbnail((max_dim, max_dim))
-
-    buffer = io.BytesIO()
-    image.convert("RGB").save(buffer, format="JPEG", quality=85)
-    image_bytes = buffer.getvalue()
-
-    prompt = _LOCATE_ELEMENT_PROMPT_TEMPLATE.format(description=description.strip())
-
-    provider = config.LLM_PROVIDER
-    if provider == "gemini":
-        raw = _describe_image_gemini(image_bytes, "image/jpeg", prompt)
-    elif provider == "openai":
-        raw = _describe_image_openai_compatible(
-            image_bytes, "image/jpeg", prompt,
-            getattr(config, "OPENAI_BASE_URL", "https://api.openai.com/v1"),
-            config.OPENAI_API_KEY, config.OPENAI_MODEL, "OpenAI",
-        )
-    elif provider == "anthropic":
-        raw = _describe_image_anthropic(image_bytes, "image/jpeg", prompt)
-    elif provider == "custom_openai":
-        raw = _describe_image_openai_compatible(
-            image_bytes, "image/jpeg", prompt,
-            getattr(config, "CUSTOM_BASE_URL", ""),
-            getattr(config, "CUSTOM_API_KEY", ""),
-            getattr(config, "CUSTOM_MODEL", ""), "Your custom provider",
-        )
-    else:
-        raw = _describe_image_ollama(image_bytes, prompt)
-
-    match = re.search(r"(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)", raw or "")
-    if not match:
-        return None
-    x_pct, y_pct = float(match.group(1)), float(match.group(2))
-    if not (0 <= x_pct <= 100 and 0 <= y_pct <= 100):
-        return None
-    return x_pct, y_pct
-
-
-def _describe_image_gemini(image_bytes: bytes, mime_type: str, prompt: str) -> str:
-    if not config.GEMINI_API_KEY:
-        return (
-            "I can't look at the screen - GEMINI_API_KEY isn't set. See "
-            "the comments in config.py, or switch LLM_PROVIDER to "
-            "\"ollama\" with a local vision model instead."
-        )
-
-    b64 = base64.b64encode(image_bytes).decode("ascii")
-    body = {
-        "contents": [
-            {
-                "role": "user",
-                "parts": [
-                    {"text": prompt},
-                    {"inlineData": {"mimeType": mime_type, "data": b64}},
-                ],
-            }
-        ],
-        # Keep this cheap: it's a plain "describe what you see" call, not a
-        # reasoning task, so no reason to spend thinking tokens (billed as
-        # output tokens). maxOutputTokens caps the reply to 1-2 sentences,
-        # since handle_command() re-phrases this into the final spoken reply.
-        # thinkingLevel "minimal" (not the older numeric thinkingBudget,
-        # which 400s here on Gemini 3.x) is the documented, reliable choice.
-        "generationConfig": {
-            "maxOutputTokens": 200,
-            "thinkingConfig": {"thinkingLevel": "minimal"},
-        },
-    }
-
-    url = _GEMINI_URL_TEMPLATE.format(model=config.GEMINI_MODEL)
-    try:
-        for attempt in range(3):
-            response = _HTTP_SESSION.post(
-                url, params={"key": config.GEMINI_API_KEY}, json=body, timeout=60
-            )
-            if response.status_code != 503 or attempt == 2:
-                response.raise_for_status()
-                break
-            print(f"[Gemini vision unavailable] Retrying in {attempt + 1}s...")
-            time.sleep(attempt + 1)
-    except requests.exceptions.Timeout:
-        return "Looking at the screen timed out - try again in a moment."
-    except requests.exceptions.ConnectionError:
-        return "I can't reach the Gemini API to look at the screen - check your internet connection."
-    except requests.exceptions.HTTPError as e:
-        status = e.response.status_code if e.response is not None else "?"
-        if e.response is not None:
-            print(f"[Gemini vision error {status}] {e.response.text}")
-        if status in (401, 403):
-            return "Gemini rejected my API key - double check GEMINI_API_KEY in config.py."
-        if status == 429:
-            return _describe_gemini_429(e.response)
-        if status == 503:
-            return "Gemini is busy right now, even after retrying - try again in a moment."
-        return f"Gemini API returned an error ({status}) while looking at the screen."
-
-    data = response.json()
-    candidates = data.get("candidates") or []
-    if not candidates:
-        block_reason = data.get("promptFeedback", {}).get("blockReason")
-        if block_reason:
-            return f"Gemini declined to look at that screenshot ({block_reason})."
-        return "I looked, but didn't get a usable description back."
-
-    finish_reason = candidates[0].get("finishReason")
-    if finish_reason == "SAFETY":
-        return "Gemini's safety filters blocked a description of that screenshot."
-
-    parts = candidates[0].get("content", {}).get("parts", [])
-    text = "".join(p.get("text", "") for p in parts).strip()
-    return text or "I looked, but didn't get a usable description back."
-
-
-def _describe_image_openai_compatible(
-    image_bytes: bytes, mime_type: str, prompt: str, base_url: str, api_key: str, model: str, provider_label: str
-) -> str:
-    if not api_key and provider_label != "Your custom provider":
-        return (
-            f"I can't look at the screen - the {provider_label} API key isn't "
-            "set. See the comments in config.py."
-        )
-    if not model:
-        return "I can't look at the screen - no model is configured for this provider in config.py."
-
-    b64 = base64.b64encode(image_bytes).decode("ascii")
-    headers = {"Content-Type": "application/json"}
-    if api_key:
-        headers["Authorization"] = f"Bearer {api_key}"
-
-    body = {
-        "model": model,
-        "messages": [
-            {
-                "role": "user",
-                "content": [
-                    {"type": "text", "text": prompt},
-                    {"type": "image_url", "image_url": {"url": f"data:{mime_type};base64,{b64}"}},
-                ],
-            }
-        ],
-        "max_tokens": 200,
-        "temperature": 0.2,
-    }
-
-    url = base_url.rstrip("/") + "/chat/completions"
-    try:
-        response = _HTTP_SESSION.post(url, headers=headers, json=body, timeout=60)
-        response.raise_for_status()
-    except requests.exceptions.Timeout:
-        return "Looking at the screen timed out - try again in a moment."
-    except requests.exceptions.ConnectionError:
-        return f"I can't reach {provider_label} to look at the screen - check your internet connection."
-    except requests.exceptions.HTTPError as e:
-        status = e.response.status_code if e.response is not None else "?"
-        if e.response is not None:
-            print(f"[{provider_label} vision error {status}] {e.response.text}")
-        if status in (401, 403):
-            return f"{provider_label} rejected my API key - double check it in config.py."
-        if status == 429:
-            return f"I'm being rate-limited by {provider_label} right now - give it a moment."
-        return f"{provider_label} returned an error ({status}) while looking at the screen."
-
-    data = response.json()
-    choices = data.get("choices") or []
-    if not choices:
-        return "I looked, but didn't get a usable description back."
-    text = ((choices[0].get("message") or {}).get("content") or "").strip()
-    return text or "I looked, but didn't get a usable description back."
-
-
-def _describe_image_anthropic(image_bytes: bytes, mime_type: str, prompt: str) -> str:
-    if not config.ANTHROPIC_API_KEY:
-        return (
-            "I can't look at the screen - ANTHROPIC_API_KEY isn't set. See "
-            "the comments in config.py."
-        )
-
-    b64 = base64.b64encode(image_bytes).decode("ascii")
-    body = {
-        "model": config.ANTHROPIC_MODEL,
-        "max_tokens": 200,
-        "temperature": 0.2,
-        "messages": [
-            {
-                "role": "user",
-                "content": [
-                    {"type": "text", "text": prompt},
-                    {
-                        "type": "image",
-                        "source": {"type": "base64", "media_type": mime_type, "data": b64},
-                    },
-                ],
-            }
-        ],
-    }
-    headers = {
-        "x-api-key": config.ANTHROPIC_API_KEY,
-        "anthropic-version": _ANTHROPIC_VERSION,
-        "content-type": "application/json",
-    }
-    try:
-        response = _HTTP_SESSION.post(_ANTHROPIC_URL, headers=headers, json=body, timeout=60)
-        response.raise_for_status()
-    except requests.exceptions.Timeout:
-        return "Looking at the screen timed out - try again in a moment."
-    except requests.exceptions.ConnectionError:
-        return "I can't reach the Anthropic API to look at the screen - check your internet connection."
-    except requests.exceptions.HTTPError as e:
-        status = e.response.status_code if e.response is not None else "?"
-        if e.response is not None:
-            print(f"[Anthropic vision error {status}] {e.response.text}")
-        if status in (401, 403):
-            return "Anthropic rejected my API key - double check ANTHROPIC_API_KEY in config.py."
-        if status == 429:
-            return "I'm being rate-limited by Anthropic right now - give it a moment."
-        return f"Anthropic returned an error ({status}) while looking at the screen."
-
-    data = response.json()
-    text = "".join(b.get("text", "") for b in data.get("content") or [] if b.get("type") == "text").strip()
-    return text or "I looked, but didn't get a usable description back."
-
-
-def _describe_image_ollama(image_bytes: bytes, prompt: str) -> str:
-    model = getattr(config, "OLLAMA_VISION_MODEL", "") or config.OLLAMA_MODEL
-    b64 = base64.b64encode(image_bytes).decode("ascii")
-    try:
-        response = _HTTP_SESSION.post(
-            config.OLLAMA_URL,
-            json={
-                "model": model,
-                "messages": [{"role": "user", "content": prompt, "images": [b64]}],
-                "stream": False,
-                "options": {"temperature": 0.2, "num_predict": 200},
-            },
-            timeout=120,
-        )
-        response.raise_for_status()
-    except requests.exceptions.Timeout:
-        return "Looking at the screen timed out - try again in a moment."
-    except requests.exceptions.ConnectionError:
-        return (
-            "I can't reach Ollama to look at the screen. Make sure it's "
-            "installed and running (open the Ollama app, or run 'ollama "
-            "serve' in a terminal)."
-        )
-    except requests.exceptions.HTTPError as e:
-        status = e.response.status_code if e.response is not None else "?"
-        if e.response is not None:
-            print(f"[Ollama vision error {status}] {e.response.text}")
-            if status == 404:
-                return (
-                    f"I can't look at the screen - the model '{model}' "
-                    "isn't pulled yet. Run 'ollama pull "
-                    f"{model}' in a terminal, or change "
-                    "OLLAMA_VISION_MODEL in config.py to a vision model "
-                    "you do have."
-                )
-        return f"Ollama returned an error ({status}) while looking at the screen."
-
-    data = response.json()
-    text = ((data.get("message") or {}).get("content") or "").strip()
-    return text or "I looked, but didn't get a usable description back."
-
-
-def _strip_fake_tool_call(text: str) -> str:
-    """Removes any stray JSON-looking tool-call text the model wrote out as
-    plain text instead of actually calling the tool. Small local models
-    occasionally do this, and it should never reach speech.
-
-    Uses brace-counting rather than a simple regex so it correctly handles
-    nested JSON, e.g. {"name": "x", "parameters": {"command": "y"}}.
-    """
-    result = []
-    i = 0
-    while i < len(text):
-        if text[i] == "{":
-            # Try to find the matching closing brace for this block
-            depth = 0
-            j = i
-            while j < len(text):
-                if text[j] == "{":
-                    depth += 1
-                elif text[j] == "}":
-                    depth -= 1
-                    if depth == 0:
-                        break
-                j += 1
-
-            candidate = text[i : j + 1]
-            if depth == 0 and '"name"' in candidate:
-                # This block looks like a fake tool call - skip over it entirely
-                i = j + 1
-                continue
-
-        result.append(text[i])
-        i += 1
-
-    return "".join(result).strip()
-
-
-def _is_degenerate_reply(text: str) -> bool:
-    """True if text is empty, or contains nothing but brackets/braces/quotes/
-    punctuation/whitespace - i.e. the model tried to write a tool call (or an
-    empty one, like '[]') as plain text instead of actually calling a tool,
-    and there's no real sentence left to say out loud."""
-    stripped = text.strip()
-    if not stripped:
-        return True
-    return re.fullmatch(r"[\[\]\{\}\(\)\"'`,:;.\s]*", stripped) is not None
-
-
-# A short, stock acknowledgment ("Sure.", "Certainly.", "On it.") with
-# nothing else said is the other shape a lazy dodge takes - a real
-# sentence, so it isn't caught by _is_degenerate_reply above, but still a
-# sign the model agreed to a request instead of calling the tool for it.
-# A genuine short answer ("Paris.", "It's Tuesday.") never matches this
-# fixed acknowledgment list, so it's safe as a retry trigger.
-_LAZY_ACK_RE = re.compile(
-    r"^(?:sure|okay|ok|certainly|of course|alright|done|will do|"
-    r"right away|on it|got it|no problem|no worries|absolutely|"
-    r"you got it|consider it done|happy to)[.!,]*$",
-    re.IGNORECASE,
-)
-
-
-def _looks_like_lazy_dodge(text: str) -> bool:
-    """True if `text` is nothing but a stock acknowledgment word/phrase -
-    see _LAZY_ACK_RE above."""
-    return bool(_LAZY_ACK_RE.match((text or "").strip()))
-
-
-def _describe_gemini_429(response) -> str:
-    """Gemini returns HTTP 429 for two different situations needing
-    different advice: a short-lived rate limit (clears on its own) vs. a
-    fully exhausted daily quota (doesn't clear until midnight Pacific, so
-    "wait a moment" is misleading). Google's error body includes a quotaId
-    like 'GenerateRequestsPerDayPerProjectPerModel-FreeTier' for the daily
-    case - the one reliable signal, since retryDelay can't be trusted alone."""
-    is_daily_quota = False
-    try:
-        body = response.json()
-        for detail in body.get("error", {}).get("details", []):
-            for violation in detail.get("violations", []):
-                if "PerDay" in (violation.get("quotaId") or ""):
-                    is_daily_quota = True
-    except Exception:
-        pass
-
-    if is_daily_quota:
-        print(
-            f"NOTE: That's Gemini's free-tier DAILY quota for "
-            f"'{config.GEMINI_MODEL}' being fully used up - it resets at "
-            "midnight Pacific time, so waiting a few seconds/minutes won't "
-            "help. Either switch GEMINI_MODEL in config.py to a model with "
-            "a higher free daily quota (e.g. gemini-3.5-flash-lite), or "
-            "switch LLM_PROVIDER to \"ollama\" for unlimited free local use."
-        )
-        return (
-            "I've used up today's free Gemini quota for this model - it "
-            "won't come back until midnight Pacific time. You can switch "
-            "me to a lighter Gemini model, or to the free local Ollama "
-            "option, in config.py."
-        )
-    return "I'm being rate-limited by Gemini right now - give it a moment."
-
-
-# --- Short-term conversation memory ----------------------------------------
-# RAM only (never written to disk, unlike memory.py's permanent list) so
-# follow-ups like "now save it" right after "open notepad" have context.
-# Cleared after a stretch of silence (CONVERSATION_TIMEOUT_SECONDS) so an
-# old exchange can't bleed into a new one, or on request via reset_conversation.
 _conversation_history = []  # list of {"role": "user"/"assistant", "content": str}
+
+
 _last_command_time = None
 
 
@@ -2376,12 +1051,6 @@ def _remember_turn(user_text: str, assistant_text: str):
         del _conversation_history[:2]
 
 
-# --- "Who made you" ---------------------------------------------------------
-# Answered locally, without the model - a plain question like this has no
-# matching tool, and on Gemini the first turn of a real command forces a
-# tool call (see _call_gemini's mode=ANY handling), which could otherwise
-# swallow this into an irrelevant tool call. Intercepting it here is
-# instant, free, and always correct.
 _CREATOR_QUESTION_RE = re.compile(
     r"who\s+(?:made|make|created|create|built|build|developed|develop|"
     r"programmed|program|coded|code|designed|design)\s+(?:you|"
@@ -2400,11 +1069,6 @@ def _handle_creator_question(user_text: str):
     return f"{creator} made me."
 
 
-# --- "What model do you use" ------------------------------------------------
-# Answered locally too, same reasoning as above - and matters more here,
-# since the model is an unreliable narrator about its own identity (a small
-# local Ollama model may not know what it is; a cloud model can just make
-# something up). Answered straight from config.py's provider/model settings.
 _MODEL_QUESTION_RE = re.compile(
     r"\bwhat\s+(?:ai\s+)?(?:model|llm)\s+(?:are\s+you(?:\s+(?:running|using))?|"
     r"do\s+you\s+(?:run\s+on|use)|is\s+(?:this|that)|you'?re\s+(?:running|using))\b"
@@ -2443,10 +1107,6 @@ def _handle_model_question(user_text: str):
     return _current_model_description()
 
 
-# --- "What engine are you using for speech recognition" --------------------
-# Same reasoning as above: answered locally from transcribe.py's tracked
-# state, since the LLM has no way to know whether Whisper actually landed
-# on GPU or fell back to CPU.
 _ENGINE_QUESTION_RE = re.compile(
     r"\bwhat\s+(?:whisper\s+)?engine\s+(?:are\s+you(?:\s+(?:running|using))?|"
     r"do\s+you\s+(?:run\s+on|use)|is\s+(?:this|that|whisper))\b"
@@ -2467,12 +1127,6 @@ def _handle_engine_question(user_text: str):
     return transcribe.get_engine_status()
 
 
-# --- "Can you say/repeat/spell X" -------------------------------------------
-# Answered locally too. The system prompt tells the model to echo these
-# back with no tool call, but on Gemini a bare "say pineapple" used to get
-# forced into an unrelated tool call before that forcing was removed (see
-# _call_gemini/handle_command). Handled locally regardless, for speed and
-# to guarantee correctness.
 _STRIP_FILLER_PATTERNS_CACHE = {}
 
 
@@ -2509,7 +1163,6 @@ def _strip_leading_filler(text: str) -> str:
     return result.strip()
 
 
-# Requests to repeat the *previous* reply, rather than say new content.
 _SAY_AGAIN_RE = re.compile(
     r"^(?:say|repeat)\s+that(?:\s+again)?\.?$"
     r"|^say\s+(?:it\s+)?again\.?$"
@@ -2517,18 +1170,15 @@ _SAY_AGAIN_RE = re.compile(
     re.IGNORECASE,
 )
 
-# "spell <word>" - a single word/short token, not a whole sentence.
+
 _SPELL_RE = re.compile(r"^spell(?:\s+out)?[:,]?\s+(.+?)\.?$", re.IGNORECASE)
 
-# "say/repeat/echo <phrase>" - literal content to speak back.
+
 _SAY_PHRASE_RE = re.compile(
     r"^(?:say|repeat(?:\s+after\s+me)?|echo)[:,]?\s+(.+)$", re.IGNORECASE
 )
 
-# If the captured phrase contains one of these, it's more likely a compound
-# command ("say bye and close the app") or an instruction about *how* to
-# say it ("say it three times", "say it slowly") than a plain literal echo -
-# leave those for the full model, which already has instructions for both.
+
 _SAY_PHRASE_EXCLUSIONS_RE = re.compile(
     r"\b(?:times|twice|slowly|quickly|loudly|softly|backwards|again|"
     r"open|close|launch|play|pause|type|press|search|volume|mute)\b",
@@ -2593,6 +1243,8 @@ def _call_model_with_error_handling(
     duplicated for every attempt within a single turn."""
     try:
         _t0 = time.time()
+        from .providers import _call_model
+
         result = _call_model(
             messages,
             force_tools=force_tools,
@@ -2636,6 +1288,8 @@ def _call_model_with_error_handling(
             return None, f"{provider_label} rejected my API key - double check it in config.py."
         if status == 429:
             if config.LLM_PROVIDER == "gemini":
+                from .providers.gemini import _describe_gemini_429
+
                 return None, _describe_gemini_429(e.response)
             return None, f"I'm being rate-limited by {provider_label} right now - give it a moment."
         return None, f"{provider_label} API returned an error ({status}). Try again in a moment."

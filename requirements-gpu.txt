@@ -1,4 +1,4 @@
-# Optional - only installed automatically by start_alyssa.bat when
+# Optional - only installed automatically by scripts\start_alyssa.bat when
 # config.py's WHISPER_DEVICE is "auto" or "cuda". Skipped entirely on
 # WHISPER_DEVICE = "cpu", since none of this is touched on CPU-only
 # transcription and the three packages together are several GB.

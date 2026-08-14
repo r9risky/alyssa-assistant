@@ -347,24 +347,22 @@ def listen_for_barge_in(
                         _last_speech_frames = total_speech_frames
                     return audio
 
-                # Name-gated: transcribe what you said and only actually
-                # interrupt her if she was named. This means she keeps
-                # talking a little longer than the old instant-cutoff
-                # behavior (through the transcription round trip), which is
-                # the necessary trade-off - there's no way to know your name
-                # wasn't said without transcribing first.
+                # Phrase-gated: transcribe what you said and only actually
+                # interrupt her if both her name and "stop" were said. This
+                # means she keeps talking through the transcription round trip;
+                # the phrase cannot be checked before it is transcribed.
                 heard = transcribe.transcribe(audio)
-                if nameutil.contains_name(heard):
+                if nameutil.is_stop_request(heard):
                     stop_speaking_event.set()
-                    print(f"(Interrupted - heard {config.ASSISTANT_NAME!r} - listening...)")
+                    print(f"(Interrupted - heard stop request for {config.ASSISTANT_NAME!r})")
                     with _rate_lock:
                         _last_speech_frames = total_speech_frames
                     return audio
 
-                print(f"(Heard {heard!r} while talking - not {config.ASSISTANT_NAME}, not stopping)")
+                print(f"(Heard {heard!r} while talking - not a stop request, continuing)")
                 # Loop back and keep watching, as long as she's still talking.
 
-            return None  # she finished talking during/after phase 2, never named
+            return None  # she finished talking without a stop request
     except Exception as e:
         print(f"(barge-in listener failed, continuing without it: {e})")
         return None

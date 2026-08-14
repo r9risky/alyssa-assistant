@@ -11,8 +11,13 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 import main
 import overlay
+from overlay import credential_checks
 import actions
+from actions import apps_and_files, system as system_actions
 import brain
+from brain import dialogue
+from brain import providers
+from brain.providers import gemini
 import nameutil
 import recorder
 import transcribe
@@ -35,9 +40,9 @@ class AtomicConfigWriteTests(unittest.TestCase):
             with open(path, "w", encoding="utf-8") as f:
                 f.write("VALUE = 'original'\n")
 
-            with patch.object(overlay.os, "replace", side_effect=OSError("disk error")):
+            with patch.object(credential_checks.os, "replace", side_effect=OSError("disk error")):
                 with self.assertRaises(OSError):
-                    overlay._atomic_write_text(path, "VALUE = 'new'\n")
+                    credential_checks._atomic_write_text(path, "VALUE = 'new'\n")
 
             with open(path, "r", encoding="utf-8") as f:
                 self.assertEqual(f.read(), "VALUE = 'original'\n")
@@ -54,7 +59,7 @@ class GeminiVisionRetryTests(unittest.TestCase):
 
             def raise_for_status(self):
                 if self.status_code >= 400:
-                    raise brain.requests.exceptions.HTTPError(response=self)
+                    raise gemini.requests.exceptions.HTTPError(response=self)
 
             def json(self):
                 return self._body
@@ -66,10 +71,10 @@ class GeminiVisionRetryTests(unittest.TestCase):
 
         with (
             patch.object(config, "GEMINI_API_KEY", "test-key"),
-            patch.object(brain._HTTP_SESSION, "post", side_effect=[unavailable, success]) as post,
-            patch.object(brain.time, "sleep") as sleep,
+            patch.object(gemini._HTTP_SESSION, "post", side_effect=[unavailable, success]) as post,
+            patch.object(gemini.time, "sleep") as sleep,
         ):
-            result = brain._describe_image_gemini(b"image", "image/jpeg", "describe")
+            result = gemini._describe_image_gemini(b"image", "image/jpeg", "describe")
 
         self.assertEqual(result, "I can see your desktop.")
         self.assertEqual(post.call_count, 2)
@@ -207,20 +212,20 @@ class MicrophoneSelectionTests(unittest.TestCase):
 
 class FollowupAuditFixTests(unittest.TestCase):
     def test_missing_app_stays_a_failure_through_fast_reply(self):
-        brain._recent_action_context.clear()
+        dialogue._recent_action_context.clear()
         with (
-            patch.object(actions.config, "CONFIRM_BEFORE_ACTIONS", False),
-            patch.object(actions, "_resolve_app_path", return_value=None),
+            patch.object(apps_and_files.config, "CONFIRM_BEFORE_ACTIONS", False),
+            patch.object(apps_and_files, "_resolve_app_path", return_value=None),
         ):
             output = actions.open_app("DefinitelyMissing")
 
         self.assertIn("couldn't", output)
         self.assertEqual(
-            brain._natural_fast_reply("open_app", {"app_name": "DefinitelyMissing"}, output, "open it"),
+            dialogue._natural_fast_reply("open_app", {"app_name": "DefinitelyMissing"}, output, "open it"),
             output,
         )
-        brain._record_recent_action("open_app", {"app_name": "DefinitelyMissing"}, output)
-        self.assertEqual(brain._recent_action_context, [])
+        dialogue._record_recent_action("open_app", {"app_name": "DefinitelyMissing"}, output)
+        self.assertEqual(dialogue._recent_action_context, [])
 
     def test_name_match_cache_tracks_live_config_changes(self):
         original_name = nameutil.config.ASSISTANT_NAME
@@ -295,7 +300,7 @@ class FollowupAuditFixTests(unittest.TestCase):
 
     def test_malformed_provider_response_returns_spoken_error(self):
         brain.clear_conversation_history()
-        with patch.object(brain, "_call_model", return_value={"unexpected": True}):
+        with patch.object(providers, "_call_model", return_value={"unexpected": True}):
             reply = brain.handle_command("answer this provider response test")
         self.assertIn("malformed response", reply)
 
@@ -311,9 +316,9 @@ class FinalAuditFixTests(unittest.TestCase):
 
     def test_relaunch_alyssa_reuses_the_current_python_command(self):
         with (
-            patch.object(actions.sys, "executable", r"C:\Python\python.exe"),
-            patch.object(actions.sys, "argv", ["main.py", "--demo"]),
-            patch.object(actions.os, "execv") as execv,
+            patch.object(apps_and_files.sys, "executable", r"C:\Python\python.exe"),
+            patch.object(apps_and_files.sys, "argv", ["main.py", "--demo"]),
+            patch.object(apps_and_files.os, "execv") as execv,
         ):
             actions.relaunch_alyssa()
 
@@ -323,7 +328,7 @@ class FinalAuditFixTests(unittest.TestCase):
         )
 
     def test_restart_alyssa_voice_command_does_not_restart_pc(self):
-        with patch.object(brain, "_call_model") as call_model:
+        with patch.object(providers, "_call_model") as call_model:
             self.assertEqual(brain.handle_command("restart"), "Restarting Alyssa.")
         call_model.assert_not_called()
 
@@ -352,15 +357,15 @@ class FinalAuditFixTests(unittest.TestCase):
     def test_user_environment_paths_return_expanded(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             with patch.dict(os.environ, {"ALYSSA_TEST_PATH": temp_dir}):
-                resolved = actions._resolve_placeholder_user_path(
+                resolved = apps_and_files._resolve_placeholder_user_path(
                     r"%ALYSSA_TEST_PATH%\document.txt"
                 )
         self.assertNotIn("%ALYSSA_TEST_PATH%", resolved)
         self.assertEqual(resolved, os.path.normpath(os.path.join(temp_dir, "document.txt")))
 
     def test_failed_power_commands_report_failure(self):
-        failure = actions.subprocess.CalledProcessError(1, ["shutdown"])
-        with patch.object(actions.subprocess, "run", side_effect=failure):
+        failure = system_actions.subprocess.CalledProcessError(1, ["shutdown"])
+        with patch.object(system_actions.subprocess, "run", side_effect=failure):
             reply = actions.system_power_action("restart", confirmed=True)
         self.assertIn("Couldn't restart", reply)
 
@@ -373,7 +378,7 @@ class FinalAuditFixTests(unittest.TestCase):
         class Windll:
             user32 = User32()
 
-        with patch.object(actions.ctypes, "windll", Windll()):
+        with patch.object(system_actions.ctypes, "windll", Windll()):
             reply = actions.system_power_action("lock")
         self.assertEqual(reply, "Couldn't lock the PC.")
 
@@ -387,9 +392,9 @@ class FinalAuditFixTests(unittest.TestCase):
                 f.write("needle")
 
             with (
-                patch.object(actions, "_MAX_CONTENT_SEARCH_BYTES", 4),
-                patch.object(actions, "_MAX_CONTENT_FILE_BYTES", 100),
-                patch.object(actions.os, "walk", return_value=[(temp_dir, [], ["a.txt", "b.txt"])]),
+                patch.object(system_actions, "_MAX_CONTENT_SEARCH_BYTES", 4),
+                patch.object(system_actions, "_MAX_CONTENT_FILE_BYTES", 100),
+                patch.object(system_actions.os, "walk", return_value=[(temp_dir, [], ["a.txt", "b.txt"])]),
             ):
                 reply = actions.search_files("needle", temp_dir, search_contents=True)
 
@@ -402,9 +407,9 @@ class FinalAuditFixTests(unittest.TestCase):
                 f.write("xxxxneedle")
 
             with (
-                patch.object(actions, "_MAX_CONTENT_SEARCH_BYTES", 4),
-                patch.object(actions, "_MAX_CONTENT_FILE_BYTES", 100),
-                patch.object(actions.os.path, "getsize", return_value=1),
+                patch.object(system_actions, "_MAX_CONTENT_SEARCH_BYTES", 4),
+                patch.object(system_actions, "_MAX_CONTENT_FILE_BYTES", 100),
+                patch.object(system_actions.os.path, "getsize", return_value=1),
             ):
                 reply = actions.search_files("needle", temp_dir, search_contents=True)
 
