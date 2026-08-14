@@ -13,6 +13,9 @@ import main
 import overlay
 import actions
 import brain
+from brain import dialogue
+from brain import providers
+from brain.providers import gemini
 import nameutil
 import recorder
 import transcribe
@@ -54,7 +57,7 @@ class GeminiVisionRetryTests(unittest.TestCase):
 
             def raise_for_status(self):
                 if self.status_code >= 400:
-                    raise brain.requests.exceptions.HTTPError(response=self)
+                    raise gemini.requests.exceptions.HTTPError(response=self)
 
             def json(self):
                 return self._body
@@ -66,10 +69,10 @@ class GeminiVisionRetryTests(unittest.TestCase):
 
         with (
             patch.object(config, "GEMINI_API_KEY", "test-key"),
-            patch.object(brain._HTTP_SESSION, "post", side_effect=[unavailable, success]) as post,
-            patch.object(brain.time, "sleep") as sleep,
+            patch.object(gemini._HTTP_SESSION, "post", side_effect=[unavailable, success]) as post,
+            patch.object(gemini.time, "sleep") as sleep,
         ):
-            result = brain._describe_image_gemini(b"image", "image/jpeg", "describe")
+            result = gemini._describe_image_gemini(b"image", "image/jpeg", "describe")
 
         self.assertEqual(result, "I can see your desktop.")
         self.assertEqual(post.call_count, 2)
@@ -207,7 +210,7 @@ class MicrophoneSelectionTests(unittest.TestCase):
 
 class FollowupAuditFixTests(unittest.TestCase):
     def test_missing_app_stays_a_failure_through_fast_reply(self):
-        brain._recent_action_context.clear()
+        dialogue._recent_action_context.clear()
         with (
             patch.object(actions.config, "CONFIRM_BEFORE_ACTIONS", False),
             patch.object(actions, "_resolve_app_path", return_value=None),
@@ -216,11 +219,11 @@ class FollowupAuditFixTests(unittest.TestCase):
 
         self.assertIn("couldn't", output)
         self.assertEqual(
-            brain._natural_fast_reply("open_app", {"app_name": "DefinitelyMissing"}, output, "open it"),
+            dialogue._natural_fast_reply("open_app", {"app_name": "DefinitelyMissing"}, output, "open it"),
             output,
         )
-        brain._record_recent_action("open_app", {"app_name": "DefinitelyMissing"}, output)
-        self.assertEqual(brain._recent_action_context, [])
+        dialogue._record_recent_action("open_app", {"app_name": "DefinitelyMissing"}, output)
+        self.assertEqual(dialogue._recent_action_context, [])
 
     def test_name_match_cache_tracks_live_config_changes(self):
         original_name = nameutil.config.ASSISTANT_NAME
@@ -295,7 +298,7 @@ class FollowupAuditFixTests(unittest.TestCase):
 
     def test_malformed_provider_response_returns_spoken_error(self):
         brain.clear_conversation_history()
-        with patch.object(brain, "_call_model", return_value={"unexpected": True}):
+        with patch.object(providers, "_call_model", return_value={"unexpected": True}):
             reply = brain.handle_command("answer this provider response test")
         self.assertIn("malformed response", reply)
 
@@ -323,7 +326,7 @@ class FinalAuditFixTests(unittest.TestCase):
         )
 
     def test_restart_alyssa_voice_command_does_not_restart_pc(self):
-        with patch.object(brain, "_call_model") as call_model:
+        with patch.object(providers, "_call_model") as call_model:
             self.assertEqual(brain.handle_command("restart"), "Restarting Alyssa.")
         call_model.assert_not_called()
 

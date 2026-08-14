@@ -9,6 +9,8 @@ from unittest.mock import patch
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 import brain
+from brain import dialogue
+from brain.providers import openai
 import voice
 
 
@@ -70,8 +72,8 @@ class LatencyPipelineTests(unittest.TestCase):
             ]
         )
         deltas = []
-        with patch.object(brain._HTTP_SESSION, "post", return_value=response):
-            result = brain._call_openai_compatible(
+        with patch.object(openai._HTTP_SESSION, "post", return_value=response):
+            result = openai._call_openai_compatible(
                 [], "https://example.test/v1", "key", "model", "Test", deltas.append
             )
 
@@ -97,14 +99,14 @@ class LatencyPipelineTests(unittest.TestCase):
     def test_history_slides_by_character_budget_in_whole_turns(self):
         brain.clear_conversation_history()
         with (
-            patch.object(brain.config, "CONVERSATION_MEMORY_TURNS", 10),
-            patch.object(brain.config, "CONVERSATION_MEMORY_CHARACTERS", 20),
+            patch.object(dialogue.config, "CONVERSATION_MEMORY_TURNS", 10),
+            patch.object(dialogue.config, "CONVERSATION_MEMORY_CHARACTERS", 20),
         ):
-            brain._remember_turn("first long user", "first long answer")
-            brain._remember_turn("latest", "answer")
+            dialogue._remember_turn("first long user", "first long answer")
+            dialogue._remember_turn("latest", "answer")
 
         self.assertEqual(
-            brain._conversation_history,
+            dialogue._conversation_history,
             [
                 {"role": "user", "content": "latest"},
                 {"role": "assistant", "content": "answer"},
