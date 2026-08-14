@@ -21,7 +21,7 @@ OLLAMA_URL = "http://localhost:11434/api/chat"
 OLLAMA_KEEP_ALIVE = "10m"
 
 # --- Gemini Settings ---
-GEMINI_API_KEY = 'AQ.Ab8RN6LGF8s9Vn3jnWBWosM6qdX4PLm0FFzoWR29wdsn14eHwA'
+GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
 GEMINI_MODEL = 'gemini-3.5-flash-lite'
 
 # --- OpenAI Settings ---
