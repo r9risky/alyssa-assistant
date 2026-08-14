@@ -1,5 +1,7 @@
 import os
+import runpy
 import sys
+import tempfile
 import unittest
 from unittest.mock import patch
 
@@ -196,6 +198,21 @@ class SettingsGuiTests(unittest.TestCase):
 
         flush.assert_called_once_with()
         relaunch.assert_called_once_with()
+
+    def test_new_plugin_template_generates_importable_function(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            with (
+                patch.object(overlay.plugin_loader, "PLUGINS_DIR", temp_dir),
+                patch.object(overlay.QInputDialog, "getText", return_value=("Weather Tool", True)),
+                patch.object(self.dialog, "_reload_plugins_backend"),
+                patch.object(self.dialog, "_refresh_plugin_list"),
+            ):
+                self.dialog._on_new_plugin()
+
+            namespace = runpy.run_path(os.path.join(temp_dir, "weather_tool.py"))
+
+        function = namespace["FUNCTIONS"]["weather_tool_example"]
+        self.assertEqual(function("hello"), "hello, from the weather_tool plugin!")
 
     def test_update_check_reports_when_current_version_is_latest(self):
         release = {
