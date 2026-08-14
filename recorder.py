@@ -146,7 +146,7 @@ def _record_command_blocking(result_q: "queue.Queue", text_queue: "Optional[queu
     checks it every ~30ms and abandons the recording pass early the moment
     a typed message shows up."""
     try:
-        vad = webrtcvad.Vad(2)  # 0-3, higher = more aggressive about filtering non-speech
+        vad = webrtcvad.Vad(getattr(config, "VAD_AGGRESSIVENESS", 2))
         frame_ms = _FRAME_MS
         frame_size = int(config.SAMPLE_RATE * frame_ms / 1000)
 
@@ -155,7 +155,9 @@ def _record_command_blocking(result_q: "queue.Queue", text_queue: "Optional[queu
         max_frames = int(config.MAX_RECORD_SECONDS * 1000 / frame_ms)
         # Require a short sustained run of speech frames (not just one) to
         # filter out stray noise blips (click, cough, chair creak).
-        min_speech_frames = int(0.3 * 1000 / frame_ms)  # ~300ms
+        min_speech_frames = max(
+            1, int(getattr(config, "MIN_SPEECH_MS", 120) / frame_ms)
+        )
 
         if getattr(config, "DEBUG_PRINT_TRANSCRIPTS", True):
             print(f"(Pause-before-done threshold this pass: {silence_seconds:.2f}s)")
@@ -165,6 +167,8 @@ def _record_command_blocking(result_q: "queue.Queue", text_queue: "Optional[queu
         speech_run = 0
         heard_speech = False
         total_speech_frames = 0
+        streaming_stt = transcribe.start_streaming()
+        stt_frames = []
 
         with _open_stream(
             samplerate=config.SAMPLE_RATE,
@@ -183,6 +187,16 @@ def _record_command_blocking(result_q: "queue.Queue", text_queue: "Optional[queu
                 chunk, _ = stream.read(frame_size)
                 chunk = chunk.flatten()
                 frames.append(chunk)
+                if streaming_stt is not None:
+                    stt_frames.append(chunk)
+                    if len(stt_frames) >= 4:  # 120 ms: low latency without tiny WS frames
+                        try:
+                            streaming_stt.send(np.concatenate(stt_frames).tobytes())
+                            stt_frames.clear()
+                        except Exception as e:
+                            print(f"(realtime STT stream failed, using local Whisper: {e})")
+                            streaming_stt.disconnect()
+                            streaming_stt = None
 
                 is_speech = vad.is_speech(chunk.tobytes(), config.SAMPLE_RATE)
 
@@ -200,6 +214,17 @@ def _record_command_blocking(result_q: "queue.Queue", text_queue: "Optional[queu
                     break
 
         print("Done listening.")
+
+        if streaming_stt is not None:
+            try:
+                if stt_frames:
+                    streaming_stt.send(np.concatenate(stt_frames).tobytes())
+                streamed_text = streaming_stt.finish()
+                if heard_speech and streamed_text:
+                    transcribe.cache_streaming_transcript(streamed_text)
+            except Exception as e:
+                print(f"(realtime STT finalization failed, using local Whisper: {e})")
+                streaming_stt.disconnect()
 
         if not heard_speech:
             result_q.put((None, None))
@@ -231,7 +256,9 @@ def listen_for_barge_in(
         vad = webrtcvad.Vad(getattr(config, "BARGE_IN_VAD_AGGRESSIVENESS", 3))
         frame_ms = _FRAME_MS
         frame_size = int(config.SAMPLE_RATE * frame_ms / 1000)
-        min_speech_frames = int(getattr(config, "BARGE_IN_MIN_SPEECH_MS", 250) / frame_ms)
+        min_speech_frames = max(
+            1, int(getattr(config, "BARGE_IN_MIN_SPEECH_MS", 150) / frame_ms)
+        )
         silence_seconds = _current_silence_seconds()
         silence_frames_needed = int(silence_seconds * 1000 / frame_ms)
         max_frames = int(config.MAX_RECORD_SECONDS * 1000 / frame_ms)
@@ -254,6 +281,7 @@ def listen_for_barge_in(
                 triggered = False
                 while not playback_done_event.is_set():
                     if text_queue is not None and not text_queue.empty():
+                        stop_speaking_event.set()
                         return None
                     chunk, _ = stream.read(frame_size)
                     chunk = chunk.flatten()
@@ -278,12 +306,25 @@ def listen_for_barge_in(
 
                 # Phase 2: keep recording the rest of what you're saying, same
                 # shape as _record_command_blocking's own loop, until you pause.
+                streaming_stt = transcribe.start_streaming()
+                if streaming_stt is not None:
+                    try:
+                        streaming_stt.send(np.concatenate(frames).tobytes())
+                    except Exception:
+                        streaming_stt.disconnect()
+                        streaming_stt = None
                 silent_run = 0
                 total_speech_frames = speech_run
                 for _ in range(max_frames):
                     chunk, _ = stream.read(frame_size)
                     chunk = chunk.flatten()
                     frames.append(chunk)
+                    if streaming_stt is not None:
+                        try:
+                            streaming_stt.send(chunk.tobytes())
+                        except Exception:
+                            streaming_stt.disconnect()
+                            streaming_stt = None
                     if vad.is_speech(chunk.tobytes(), config.SAMPLE_RATE):
                         silent_run = 0
                         total_speech_frames += 1
@@ -293,6 +334,13 @@ def listen_for_barge_in(
                         break
 
                 audio = np.concatenate(frames).astype(np.float32) / 32768.0
+                if streaming_stt is not None:
+                    try:
+                        streamed_text = streaming_stt.finish()
+                        if streamed_text:
+                            transcribe.cache_streaming_transcript(streamed_text)
+                    except Exception:
+                        streaming_stt.disconnect()
 
                 if not require_name:
                     with _rate_lock:

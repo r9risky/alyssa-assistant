@@ -32,8 +32,9 @@ it with elevated privileges.
   `go ahead`; it does not authenticate the speaker or provide a security
   boundary against another person near the microphone.
 - Deleted files are normally moved to the Windows Recycle Bin.
-- Speech transcription is local. Prompts and screenshots are sent to the
-  configured LLM provider when a cloud provider is selected.
+- Speech transcription is local unless `STT_PROVIDER` selects ElevenLabs
+  realtime (or `auto` finds an ElevenLabs key). Prompts and screenshots are
+  sent to the configured LLM provider when a cloud provider is selected.
 - Edge TTS sends reply text to Microsoft's online speech service. Networked
   plugins may also contact their documented services.
 - `memory.json`, Google OAuth credentials, and OAuth tokens are ignored by Git.
@@ -135,7 +136,10 @@ The most useful settings are in `config.py`:
 | `LLM_PROVIDER` | Active model provider |
 | `WHISPER_MODEL_SIZE` | Speech recognition model size |
 | `WHISPER_DEVICE` | `cpu`, `cuda`, or `auto` |
+| `STT_PROVIDER` | `auto`, local Whisper, or ElevenLabs realtime WebSocket STT |
+| `SILENCE_SECONDS` | Base pause required to end a spoken turn |
 | `TTS_PROVIDER` | `edge` or `elevenlabs` |
+| `TTS_AUDIO_BUFFER_MS` | PCM prebuffer used by ElevenLabs streaming playback |
 | `CONFIRM_BEFORE_ACTIONS` | Confirm ordinary actions before running them |
 | `POWER_CONFIRMATION_TIMEOUT_SECONDS` | How long a protected-action approval remains pending |
 | `ALLOW_INTERRUPTIONS` | Permit speech to interrupt replies |
@@ -148,6 +152,24 @@ companion options without requiring manual edits. Its Updates tab installs
 the latest published GitHub release while preserving local settings and data.
 It stops before replacing locally edited application code and lists the files
 that need attention, so custom GUI changes are not silently overwritten.
+
+### Low-latency voice pipeline
+
+The default endpointing window is 300 ms and adapts between 240–360 ms from
+the observed speaking rate. Speech starts after 120 ms of sustained voice;
+barge-in starts after 150 ms. Conversation context keeps four turns and slides
+again at 4,000 characters.
+
+With an ElevenLabs key, `STT_PROVIDER = "auto"` uses Scribe realtime over one
+persistent WebSocket and emits partial transcripts while recording. Without a
+key it falls back to the existing local Faster Whisper path. ElevenLabs TTS
+uses the Flash model, clause-level text streaming, raw 24 kHz PCM playback, and
+a 100 ms client prebuffer. Edge TTS retains clause pipelining but must finish
+each clause's encoded audio before that clause can play.
+
+LLM text streams for Gemini, Ollama, OpenAI-compatible, and Anthropic providers.
+Generation, TTS, playback, and interruption listening overlap; new speech
+cancels the active model response and clears streaming audio immediately.
 
 ## Included plugins
 

@@ -14,6 +14,7 @@ edge-tts
 # "import pygame" name and the same mixer.music API voice.py uses, with
 # prebuilt wheels for current Python versions.
 pygame-ce
+websockets
 
 send2trash
 PySide6

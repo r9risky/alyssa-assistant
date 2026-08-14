@@ -40,6 +40,7 @@ import actions
 import voice
 import plugin_loader
 import nameutil
+import telemetry
 
 # Serializes speak() calls between the main listen loop and the background
 # watcher thread (see run_watcher_loop below), so a proactive alert ("your
@@ -103,6 +104,92 @@ def speak(text: str, bridge=None):
             listener_thread.join(timeout=1.0)
 
         return interrupt_result["audio"]
+
+
+def _stream_command_reply(command: str, bridge=None, text_queue=None):
+    """Overlap model generation, clause synthesis, playback, and barge-in."""
+    with _speak_lock:
+        turn_started = time.time()
+        stop_event = threading.Event()
+        response_done_event = threading.Event()
+        interrupt_result = {"audio": None}
+        streamed_parts = []
+        pending_emitted = False
+        last_ui_emit = 0.0
+
+        def listen():
+            interrupt_result["audio"] = recorder.listen_for_barge_in(
+                stop_event, response_done_event, text_queue=text_queue
+            )
+
+        def on_playback_start():
+            telemetry.log(
+                f"[timing] speech-end-to-first-audio: "
+                f"{time.time() - turn_started:.2f}s"
+            )
+            if bridge is not None:
+                bridge.talk_start_signal.emit()
+
+        speaker = voice.StreamingSpeaker(
+            on_playback_start=on_playback_start,
+            on_playback_end=(bridge.talk_end_signal.emit if bridge else None),
+            stop_event=stop_event,
+        )
+        listener_thread = threading.Thread(target=listen, daemon=True)
+        listener_thread.start()
+        speaker_finished = False
+
+        def show_and_feed(delta):
+            nonlocal pending_emitted, last_ui_emit
+            if not delta or stop_event.is_set():
+                return
+            streamed_parts.append(delta)
+            speaker.feed(delta)
+            if bridge is None:
+                return
+            if not pending_emitted:
+                bridge.reply_pending_signal.emit()
+                pending_emitted = True
+            now = time.time()
+            if re.search(r"[.!?,;:]\s*$", delta) or now - last_ui_emit >= 0.1:
+                bridge.speak_signal.emit(_clean_reply_for_speech("".join(streamed_parts)))
+                last_ui_emit = now
+
+        def on_partial_reply(text):
+            text = _clean_reply_for_speech(text)
+            if not text or stop_event.is_set():
+                return
+            show_and_feed(text + " ")
+
+        try:
+            reply = brain.handle_command(
+                command,
+                on_partial_reply=on_partial_reply,
+                on_text_delta=show_and_feed,
+                cancel_event=stop_event,
+            )
+            streamed_text = _clean_reply_for_speech("".join(streamed_parts))
+            clean_reply = _clean_reply_for_speech(reply)
+            if (
+                clean_reply
+                and not streamed_text.rstrip().endswith(clean_reply)
+                and not stop_event.is_set()
+            ):
+                show_and_feed(clean_reply)
+            speaker.finish()
+            speaker_finished = True
+            visible_reply = clean_reply or streamed_text
+            if visible_reply:
+                print(f"{config.ASSISTANT_NAME}: {visible_reply}")
+                if bridge is not None:
+                    bridge.speak_signal.emit(visible_reply)
+            return reply, interrupt_result["audio"]
+        finally:
+            if not speaker_finished:
+                stop_event.set()
+                speaker.finish()
+            response_done_event.set()
+            listener_thread.join(timeout=1.0)
 
 
 def run_watcher_loop(bridge=None):
@@ -339,7 +426,7 @@ def run_assistant_loop(bridge=None):
     # Settings fixing a missing key. Both calls are safe to call more than
     # once, so re-running this after a failed preflight just no-ops here.
     threading.Thread(target=transcribe.preload, daemon=True).start()
-    threading.Thread(target=brain.warm_up_ollama, daemon=True).start()
+    threading.Thread(target=brain.warm_up_connections, daemon=True).start()
     threading.Thread(target=voice.warm_up, daemon=True).start()
 
     if not run_preflight_checks(bridge):
@@ -449,26 +536,14 @@ def run_assistant_loop(bridge=None):
             if bridge is not None:
                 bridge.thinking_signal.emit()
 
-            # brain.py speaks an open_app confirmation early via this
-            # callback the instant the app launches, rather than waiting on
-            # a second follow-up model call - keeps "open <app>" feeling fast.
-            partial_interrupt_audio = []
-
-            def _speak_partial(text):
-                audio = speak(text, bridge)
-                if audio is not None:
-                    partial_interrupt_audio.append(audio)
-
-            reply = brain.handle_command(command, on_partial_reply=_speak_partial)
-            # If you interrupt her (partial or final reply), speak() returns
-            # what you'd started saying, picked up at the top of next pass.
-            final_interrupt_audio = speak(reply, bridge)
+            reply, final_interrupt_audio = _stream_command_reply(
+                command, bridge, text_queue=text_queue
+            )
             if actions.consume_restart_request():
                 actions.relaunch_alyssa()
-            pending_interrupt_audio = final_interrupt_audio or (
-                partial_interrupt_audio[0] if partial_interrupt_audio else None
-            )
-            _arm_or_clear_grace_period(reply)
+            pending_interrupt_audio = final_interrupt_audio
+            if final_interrupt_audio is None:
+                _arm_or_clear_grace_period(reply)
 
         except KeyboardInterrupt:
             print("\nShutting down.")

@@ -3,16 +3,27 @@ Text-to-speech synthesis supporting Edge TTS and ElevenLabs providers.
 """
 
 import asyncio
+import base64
+import json
 import os
+import queue
 import re
 import tempfile
 import threading
 import time
+from urllib.parse import urlencode
 
 import edge_tts
 import requests
+import sounddevice as sd
+
+try:
+    from websockets.sync.client import connect as websocket_connect
+except ImportError:  # Existing installs keep file-based playback until updated.
+    websocket_connect = None
 
 import config
+import telemetry
 
 import pygame
 
@@ -262,6 +273,288 @@ def _run_on_loop(coro):
     return fut.result()
 
 
+class _ElevenRealtimeTTS:
+    """Persistent ElevenLabs text-input WebSocket; one reply is active at a time."""
+
+    def __init__(self):
+        self._connection = None
+        self._lock = threading.Lock()
+        self._active = None
+
+    def _ensure_connected(self):
+        if self._connection is not None:
+            return
+        api_key = getattr(config, "ELEVENLABS_API_KEY", "")
+        voice_id = getattr(config, "ELEVENLABS_VOICE_ID", "")
+        if not api_key or not voice_id or websocket_connect is None:
+            raise RuntimeError("ElevenLabs realtime TTS is not configured")
+        query = urlencode(
+            {
+                "model_id": getattr(config, "ELEVENLABS_MODEL", "eleven_flash_v2_5"),
+                "output_format": "pcm_24000",
+            }
+        )
+        connection = websocket_connect(
+            f"wss://api.elevenlabs.io/v1/text-to-speech/{voice_id}/stream-input?{query}",
+            open_timeout=5,
+            close_timeout=1,
+        )
+        connection.send(
+            json.dumps(
+                {
+                    "text": " ",
+                    "voice_settings": {
+                        "stability": 0.5,
+                        "similarity_boost": 0.8,
+                        "use_speaker_boost": False,
+                    },
+                    "generation_config": {
+                        "chunk_length_schedule": [30, 60, 120, 180]
+                    },
+                    "xi_api_key": api_key,
+                }
+            )
+        )
+        self._connection = connection
+        threading.Thread(target=self._receive, args=(connection,), daemon=True).start()
+
+    def start(self, speaker):
+        with self._lock:
+            self._ensure_connected()
+            self._active = speaker
+
+    def prewarm(self):
+        with self._lock:
+            self._ensure_connected()
+
+    def send(self, text, flush=False):
+        with self._lock:
+            self._ensure_connected()
+            self._connection.send(json.dumps({"text": text, "flush": flush}))
+
+    def _receive(self, connection):
+        try:
+            for raw in connection:
+                event = json.loads(raw)
+                active = self._active
+                if active is None:
+                    continue
+                if event.get("audio"):
+                    active._queue_audio(base64.b64decode(event["audio"]))
+                if event.get("isFinal"):
+                    active._finish_audio()
+        except Exception as exc:
+            active = self._active
+            if active is not None:
+                active._fail_audio(exc)
+        finally:
+            with self._lock:
+                if self._connection is connection:
+                    self._connection = None
+
+    def cancel(self, speaker):
+        with self._lock:
+            if self._active is not speaker:
+                return
+            connection, self._connection, self._active = self._connection, None, None
+        if connection is not None:
+            try:
+                connection.close()
+            except Exception:
+                pass
+
+
+_eleven_realtime_tts = _ElevenRealtimeTTS()
+
+
+class StreamingSpeaker:
+    """Turns LLM deltas into clause-sized TTS work while generation continues."""
+
+    _BOUNDARY_RE = re.compile(r"(?<=[.!?])\s+|(?<=[,;:])\s+")
+
+    def __init__(
+        self,
+        on_playback_start=None,
+        on_playback_end=None,
+        stop_event=None,
+    ):
+        self.on_playback_start = on_playback_start
+        self.on_playback_end = on_playback_end
+        self.stop_event = stop_event or threading.Event()
+        self.text = ""
+        self._pending = ""
+        self._chunks = queue.Queue()
+        self._audio = queue.Queue()
+        self._audio_done = threading.Event()
+        self._audio_error = None
+        self._playback_started = False
+        self._worker = threading.Thread(target=self._run, daemon=True)
+        self._worker.start()
+
+    @property
+    def interrupted(self):
+        return self.stop_event.is_set()
+
+    def feed(self, delta: str):
+        if not delta or self.interrupted:
+            return
+        self.text += delta
+        self._pending += delta
+        minimum = max(1, int(getattr(config, "TTS_CLAUSE_MIN_CHARACTERS", 28)))
+        while True:
+            match = self._BOUNDARY_RE.search(self._pending)
+            if match is None:
+                break
+            end = match.end()
+            if end < minimum and not self._pending[:end].rstrip().endswith(
+                (".", "!", "?")
+            ):
+                next_match = self._BOUNDARY_RE.search(self._pending, end)
+                if next_match is None:
+                    break
+                end = next_match.end()
+            chunk, self._pending = self._pending[:end], self._pending[end:]
+            chunk = _smooth_speech_text(chunk)
+            if chunk:
+                self._chunks.put(chunk)
+
+    def finish(self):
+        tail = _smooth_speech_text(self._pending)
+        self._pending = ""
+        if tail:
+            self._chunks.put(tail)
+        self._chunks.put(None)
+        self._worker.join(timeout=60)
+        if self._worker.is_alive():
+            self.stop_event.set()
+            _eleven_realtime_tts.cancel(self)
+        return self.interrupted
+
+    def _start_playback(self):
+        if self._playback_started:
+            return
+        self._playback_started = True
+        if self.on_playback_start is not None:
+            self.on_playback_start()
+
+    def _run(self):
+        realtime = (
+            getattr(config, "TTS_STREAMING_ENABLED", True)
+            and getattr(config, "TTS_PROVIDER", "edge") == "elevenlabs"
+            and websocket_connect is not None
+        )
+        try:
+            if realtime:
+                self._run_eleven_realtime()
+            else:
+                self._run_file_pipeline()
+        finally:
+            if self.on_playback_end is not None:
+                self.on_playback_end()
+
+    def _run_file_pipeline(self):
+        while not self.interrupted:
+            chunk = self._chunks.get()
+            if chunk is None:
+                return
+            interrupted = _speak_one(
+                chunk,
+                self._start_playback,
+                stop_event=self.stop_event,
+            )
+            if interrupted:
+                self.stop_event.set()
+                return
+
+    def _run_eleven_realtime(self):
+        playback = threading.Thread(target=self._play_pcm, daemon=True)
+        playback.start()
+        try:
+            _eleven_realtime_tts.start(self)
+            while not self.interrupted:
+                chunk = self._chunks.get()
+                if chunk is None:
+                    _eleven_realtime_tts.send(" ", flush=True)
+                    break
+                _eleven_realtime_tts.send(chunk + " ")
+            while not self.interrupted and not self._audio_done.wait(0.02):
+                pass
+            if self.interrupted:
+                self._finish_audio()
+                _eleven_realtime_tts.cancel(self)
+            playback.join(timeout=2)
+            if self._audio_error and not self._playback_started:
+                raise self._audio_error
+        except Exception as exc:
+            if not self.interrupted:
+                print(f"(realtime TTS failed, falling back to file playback: {exc})")
+                _speak_one(
+                    self.text,
+                    self._start_playback,
+                    stop_event=self.stop_event,
+                )
+
+    def _queue_audio(self, chunk):
+        if not self.interrupted:
+            self._audio.put(chunk)
+
+    def _finish_audio(self):
+        self._audio.put(None)
+
+    def _fail_audio(self, exc):
+        self._audio_error = exc
+        self._audio.put(None)
+
+    def _play_pcm(self):
+        buffer_bytes = max(
+            1,
+            int(24000 * 2 * getattr(config, "TTS_AUDIO_BUFFER_MS", 100) / 1000),
+        )
+        buffered = bytearray()
+        stream = None
+        try:
+            while not self.interrupted:
+                chunk = self._audio.get()
+                if chunk is None:
+                    if buffered:
+                        if stream is None:
+                            stream = sd.RawOutputStream(
+                                samplerate=24000,
+                                channels=1,
+                                dtype="int16",
+                                blocksize=buffer_bytes // 2,
+                                latency="low",
+                            )
+                            stream.start()
+                            self._start_playback()
+                        stream.write(bytes(buffered))
+                    return
+                buffered.extend(chunk)
+                if stream is None and len(buffered) >= buffer_bytes:
+                    stream = sd.RawOutputStream(
+                        samplerate=24000,
+                        channels=1,
+                        dtype="int16",
+                        blocksize=buffer_bytes // 2,
+                        latency="low",
+                    )
+                    stream.start()
+                    self._start_playback()
+                if stream is not None and buffered:
+                    stream.write(bytes(buffered))
+                    buffered.clear()
+        except Exception as exc:
+            self._audio_error = exc
+            self._audio_done.set()
+        finally:
+            if stream is not None:
+                try:
+                    stream.abort() if self.interrupted else stream.stop()
+                finally:
+                    stream.close()
+            self._audio_done.set()
+
+
 def warm_up():
     """Fires a throwaway synthesis (and, if pygame is available, initializes
     the mixer) so the first real reply doesn't eat the one-time cost of
@@ -278,6 +571,8 @@ def warm_up():
         _ensure_mixer()
         _get_loop()
         if getattr(config, "TTS_PROVIDER", "edge") == "elevenlabs":
+            if getattr(config, "TTS_STREAMING_ENABLED", True):
+                _eleven_realtime_tts.prewarm()
             return
         path = _synthesize_to_temp_file("Hello")
         os.remove(path)
@@ -467,7 +762,7 @@ def speak(text: str, on_playback_start=None, on_playback_end=None, stop_event=No
     _t_speak_start = time.time()
 
     def _timed_on_playback_start():
-        print(f"[timing] time-to-first-audio: {time.time() - _t_speak_start:.2f}s")
+        telemetry.log(f"[timing] time-to-first-audio: {time.time() - _t_speak_start:.2f}s")
         if on_playback_start is not None:
             on_playback_start()
 

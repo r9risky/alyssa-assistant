@@ -2,16 +2,26 @@
 Speech-to-text module using faster-whisper.
 """
 
+import base64
 import difflib
 import importlib
+import json
 import os
+import queue
 import re
 import threading
 import time
+from urllib.parse import urlencode
 
 from faster_whisper import WhisperModel
 
+try:
+    from websockets.sync.client import connect as websocket_connect
+except ImportError:  # Existing installs keep working until requirements are refreshed.
+    websocket_connect = None
+
 import config
+import telemetry
 
 _model = None
 _model_lock = threading.RLock()
@@ -20,6 +30,145 @@ _model_device = None
 _model_compute_type = None
 _gpu_fallback_reason = None
 _dll_diagnostics = []
+_streamed_transcript = None
+_streamed_transcript_lock = threading.Lock()
+
+
+class _RealtimeSTT:
+    """One persistent ElevenLabs Scribe socket shared across microphone turns."""
+
+    def __init__(self):
+        self._connection = None
+        self._connection_lock = threading.Lock()
+        self._results = queue.Queue()
+        self._partial = ""
+
+    def _connect(self):
+        if self._connection is not None:
+            return self._connection
+        api_key = getattr(config, "ELEVENLABS_API_KEY", "")
+        if not api_key or websocket_connect is None:
+            raise RuntimeError("realtime STT is not configured")
+        params = urlencode(
+            {
+                "model_id": getattr(config, "STT_REALTIME_MODEL", "scribe_v2_realtime"),
+                "audio_format": f"pcm_{config.SAMPLE_RATE}",
+                "language_code": getattr(config, "STT_LANGUAGE", "en"),
+                "commit_strategy": "manual",
+            }
+        )
+        url = f"wss://api.elevenlabs.io/v1/speech-to-text/realtime?{params}"
+        with self._connection_lock:
+            if self._connection is None:
+                self._connection = websocket_connect(
+                    url,
+                    additional_headers={"xi-api-key": api_key},
+                    open_timeout=5,
+                    close_timeout=1,
+                )
+                threading.Thread(target=self._receive, daemon=True).start()
+        return self._connection
+
+    def _receive(self):
+        connection = self._connection
+        try:
+            for raw in connection:
+                event = json.loads(raw)
+                kind = event.get("message_type")
+                if kind == "partial_transcript":
+                    self._partial = event.get("text", "")
+                    if getattr(config, "DEBUG_PRINT_TRANSCRIPTS", True) and self._partial:
+                        print(f"(STT partial: {self._partial!r})")
+                elif kind in ("committed_transcript", "final_transcript"):
+                    self._results.put(event.get("text", ""))
+                elif kind and (kind.endswith("error") or kind in {"error", "rate_limited"}):
+                    self._results.put(RuntimeError(event.get("error") or kind))
+        except Exception as exc:
+            self._results.put(exc)
+        finally:
+            with self._connection_lock:
+                if self._connection is connection:
+                    self._connection = None
+
+    def begin_turn(self):
+        while True:
+            try:
+                self._results.get_nowait()
+            except queue.Empty:
+                break
+        self._partial = ""
+        self._connect()
+
+    def send(self, pcm_bytes: bytes):
+        self._connect().send(
+            json.dumps(
+                {
+                    "message_type": "input_audio_chunk",
+                    "audio_base_64": base64.b64encode(pcm_bytes).decode("ascii"),
+                }
+            )
+        )
+
+    def finish(self) -> str:
+        # Commit with 100 ms of silence so even very short commands finalize.
+        silence = bytes(int(config.SAMPLE_RATE * 0.1) * 2)
+        self._connect().send(
+            json.dumps(
+                {
+                    "message_type": "input_audio_chunk",
+                    "audio_base_64": base64.b64encode(silence).decode("ascii"),
+                    "commit": True,
+                }
+            )
+        )
+        result = self._results.get(
+            timeout=max(0.1, float(getattr(config, "STT_FINAL_TIMEOUT_SECONDS", 2.0)))
+        )
+        if isinstance(result, Exception):
+            raise result
+        return _apply_vocabulary_corrections(result.strip())
+
+    def disconnect(self):
+        with self._connection_lock:
+            connection, self._connection = self._connection, None
+        if connection is not None:
+            try:
+                connection.close()
+            except Exception:
+                pass
+
+
+_realtime_stt = _RealtimeSTT()
+
+
+def start_streaming():
+    """Return the pre-warmed realtime STT stream, or None for local Whisper."""
+    provider = str(getattr(config, "STT_PROVIDER", "local")).lower()
+    enabled = provider == "elevenlabs_realtime" or (
+        provider == "auto" and bool(getattr(config, "ELEVENLABS_API_KEY", ""))
+    )
+    if not enabled or websocket_connect is None:
+        return None
+    try:
+        _realtime_stt.begin_turn()
+        return _realtime_stt
+    except Exception as exc:
+        print(f"(realtime STT unavailable, using local Whisper: {exc})")
+        _realtime_stt.disconnect()
+        return None
+
+
+def cache_streaming_transcript(text: str) -> None:
+    global _streamed_transcript
+    with _streamed_transcript_lock:
+        _streamed_transcript = text or None
+
+
+def _consume_streaming_transcript():
+    global _streamed_transcript
+    with _streamed_transcript_lock:
+        text, _streamed_transcript = _streamed_transcript, None
+    return text
 
 
 def _add_nvidia_dll_dirs():
@@ -215,7 +364,8 @@ def preload():
     """Loads the Whisper model now instead of lazily on first use. Call on
     a background thread at startup (see main.py) so it's already warm by
     your first command. Safe to call more than once - only the first load does anything."""
-    _get_model()
+    if start_streaming() is None:
+        _get_model()
 
 
 def get_engine_status() -> str:
@@ -297,8 +447,10 @@ def _apply_vocabulary_corrections(text: str) -> str:
 
 def transcribe(audio) -> str:
     _t0 = time.time()
-    result_text = _transcribe_impl(audio)
-    print(f"[timing] transcribe: {time.time() - _t0:.2f}s")
+    result_text = _consume_streaming_transcript()
+    if result_text is None:
+        result_text = _transcribe_impl(audio)
+    telemetry.log(f"[timing] transcribe: {time.time() - _t0:.2f}s")
     return result_text
 
 
