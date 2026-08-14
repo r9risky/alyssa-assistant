@@ -136,16 +136,10 @@ def _synthesize_elevenlabs(text: str, out_path: str):
     """Blocking call - only ever run via run_in_executor above, never
     directly on the shared event loop thread.
 
-    Uses ElevenLabs' *streaming* endpoint (`.../stream`) rather than the
-    regular one. The regular endpoint generates the entire mp3 server-side
-    before sending a single byte back, so the whole reply's generation
-    time was being paid up front before playback could even start. The
-    streaming endpoint sends audio chunks as they're generated instead,
-    cutting time-to-first-byte substantially - we still write the chunks
-    out to *out_path* and play the finished file (rather than piping
-    straight to the speakers) since that's what the rest of voice.py's
-    pipelining/barge-in machinery expects, but the file itself is now
-    ready to play much sooner.
+    Uses ElevenLabs' streaming endpoint and writes chunks as they arrive.
+    pygame still requires a completed file before playback, so this is not
+    end-to-end audio streaming; short first sentences are what reduce
+    time-to-first-audio through _speak_pipelined().
     """
     api_key = getattr(config, "ELEVENLABS_API_KEY", "")
     voice_id = getattr(config, "ELEVENLABS_VOICE_ID", "")

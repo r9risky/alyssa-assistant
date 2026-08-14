@@ -77,6 +77,16 @@ class GeminiVisionRetryTests(unittest.TestCase):
 
 
 class VoiceLifecycleTests(unittest.TestCase):
+    def test_short_approval_lead_in_uses_sentence_pipeline(self):
+        with (
+            patch.object(voice, "_speak_pipelined", return_value=False) as pipelined,
+            patch.object(voice, "_speak_one") as one,
+        ):
+            voice.speak("I need your approval. May I open Chrome?")
+
+        pipelined.assert_called_once()
+        one.assert_not_called()
+
     def test_interrupted_pipeline_cleanup_skips_unstarted_jobs(self):
         fd, path = tempfile.mkstemp(suffix=".mp3")
         os.close(fd)

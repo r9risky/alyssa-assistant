@@ -54,6 +54,28 @@ class ConfirmationSafetyTests(unittest.TestCase):
             brain._handle_pending_power_confirmation("yes")
             self.assertEqual(calls, [True])
 
+    def test_confirmation_returns_a_pipelined_prompt_without_a_second_model_call(self):
+        def ordinary_action():
+            actions._confirm("perform the ordinary action")
+
+        model_result = {
+            "message": {
+                "content": "",
+                "tool_calls": [
+                    {"id": "call_1", "function": {"name": "ordinary_action", "arguments": {}}}
+                ],
+            }
+        }
+        with (
+            patch.dict(actions.FUNCTIONS, {"ordinary_action": ordinary_action}),
+            patch.object(brain, "_call_model_with_error_handling", return_value=(model_result, None)) as call_model,
+            patch.object(brain.config, "CONFIRM_BEFORE_ACTIONS", True),
+        ):
+            reply = brain.handle_command("do the ordinary action")
+
+        self.assertEqual(reply, "I need your approval. May I perform the ordinary action?")
+        call_model.assert_called_once()
+
     def test_temp_cleanup_fails_closed_without_confirmation_callback(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             target = os.path.join(temp_dir, "working.tmp")

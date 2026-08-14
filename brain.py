@@ -50,6 +50,11 @@ def _request_voice_confirmation(name: str, description: str, arguments: dict):
     return None
 
 
+def _confirmation_prompt(description: str) -> str:
+    """Keep the approval lead-in short so TTS can start before the detail."""
+    return f"I need your approval. May I {description}?"
+
+
 def has_pending_power_confirmation() -> bool:
     """Whether the listener should accept an approval reply without a name."""
     global _pending_confirmation, _pending_confirmation_time
@@ -2634,7 +2639,10 @@ def handle_command(user_text: str, on_partial_reply=None) -> str:
             # language model to paraphrase it or accidentally take action.
             if tool_output == "VOICE_CONFIRMATION_REQUIRED":
                 description = (_pending_confirmation or {}).get("description", "continue")
-                reply = f"Do you approve that I {description}?"
+                # Two sentences deliberately activate voice.py's existing
+                # one-sentence-lookahead TTS pipeline.  The short lead-in
+                # starts playing while the action-specific question renders.
+                reply = _confirmation_prompt(description)
                 _remember_turn(user_text, reply)
                 return reply
 
