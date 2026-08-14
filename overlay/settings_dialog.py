@@ -1751,17 +1751,17 @@ class ConfigDialog(QDialog):
         )
 
     def _startup_script_path(self, filename: str) -> str:
-        return os.path.join(_BASE_DIR, filename)
+        return os.path.join(_BASE_DIR, "scripts", filename)
 
     def _on_enable_startup(self):
         path = self._startup_script_path("install_startup.bat")
         if not os.path.exists(path):
-            self.startup_status_label.setText("⚠ install_startup.bat wasn't found next to main.py.")
+            self.startup_status_label.setText("⚠ scripts\\install_startup.bat wasn't found.")
             return
         try:
             os.startfile(path)
         except OSError as e:
-            self.startup_status_label.setText(f"⚠ Couldn't launch install_startup.bat: {e}")
+            self.startup_status_label.setText(f"⚠ Couldn't launch scripts\\install_startup.bat: {e}")
             return
         self.startup_status_label.setText(
             "A window opened asking for admin permission - approve it, "
@@ -1771,12 +1771,12 @@ class ConfigDialog(QDialog):
     def _on_disable_startup(self):
         path = self._startup_script_path("uninstall_startup.bat")
         if not os.path.exists(path):
-            self.startup_status_label.setText("⚠ uninstall_startup.bat wasn't found next to main.py.")
+            self.startup_status_label.setText("⚠ scripts\\uninstall_startup.bat wasn't found.")
             return
         try:
             os.startfile(path)
         except OSError as e:
-            self.startup_status_label.setText(f"⚠ Couldn't launch uninstall_startup.bat: {e}")
+            self.startup_status_label.setText(f"⚠ Couldn't launch scripts\\uninstall_startup.bat: {e}")
             return
         self.startup_status_label.setText(
             "A window opened asking for admin permission - approve it, "

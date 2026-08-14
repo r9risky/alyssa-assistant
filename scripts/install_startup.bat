@@ -10,19 +10,19 @@ REM
 REM Run this by double-clicking it. It will ask for admin rights itself
 REM (a UAC prompt) - that's expected and required to register the task.
 REM
-REM Prerequisite: run start_alyssa.bat (or build_alyssa.bat) at least once
+REM Prerequisite: run scripts\start_alyssa.bat (or build_alyssa.bat) at least once
 REM first, so dependencies - or the standalone exe - already exist.
 
 setlocal enabledelayedexpansion
-cd /d "%~dp0"
-set "SCRIPT_DIR=%~dp0"
+for %%I in ("%~dp0..") do set "PROJECT_DIR=%%~fI\"
+cd /d "%PROJECT_DIR%"
 set "TASK_NAME=AlyssaAssistant"
 
 REM --- Self-elevate if this window isn't already running as admin ---
 net session >nul 2>&1
 if not "%errorlevel%"=="0" (
     echo Requesting administrator privileges...
-    powershell -NoProfile -Command "Start-Process -FilePath '%~f0' -WorkingDirectory '%SCRIPT_DIR%' -Verb RunAs"
+    powershell -NoProfile -Command "Start-Process -FilePath '%~f0' -WorkingDirectory '%PROJECT_DIR%' -Verb RunAs"
     exit /b
 )
 
@@ -30,15 +30,15 @@ REM --- Decide what the task should actually launch ---
 REM Prefer the standalone exe from build_alyssa.bat (cleanest - no console
 REM window, no venv path to break if Python changes). Fall back to the
 REM venv's pythonw.exe (windowless) running main.py directly.
-if exist "%SCRIPT_DIR%dist\Alyssa.exe" (
-    set "ACTION_EXE=%SCRIPT_DIR%dist\Alyssa.exe"
+if exist "%PROJECT_DIR%dist\Alyssa.exe" (
+    set "ACTION_EXE=%PROJECT_DIR%dist\Alyssa.exe"
     set "ACTION_ARGS="
-) else if exist "%SCRIPT_DIR%.venv\Scripts\pythonw.exe" (
-    set "ACTION_EXE=%SCRIPT_DIR%.venv\Scripts\pythonw.exe"
+) else if exist "%PROJECT_DIR%.venv\Scripts\pythonw.exe" (
+    set "ACTION_EXE=%PROJECT_DIR%.venv\Scripts\pythonw.exe"
     set "ACTION_ARGS=main.py"
 ) else (
     echo ERROR: Alyssa hasn't been set up yet.
-    echo Run start_alyssa.bat once first ^(to install dependencies^), or
+    echo Run scripts\start_alyssa.bat once first ^(to install dependencies^), or
     echo build_alyssa.bat if you want the standalone exe - then run this
     echo script again.
     echo.
@@ -54,7 +54,7 @@ REM has no equivalent flag), which matters here since Alyssa looks for
 REM config.py/plugins/assets relative to its working directory.
 powershell -NoProfile -ExecutionPolicy Bypass -Command ^
     "$ErrorActionPreference = 'Stop';" ^
-    "$action = New-ScheduledTaskAction -Execute '%ACTION_EXE%' -Argument '%ACTION_ARGS%' -WorkingDirectory '%SCRIPT_DIR%';" ^
+    "$action = New-ScheduledTaskAction -Execute '%ACTION_EXE%' -Argument '%ACTION_ARGS%' -WorkingDirectory '%PROJECT_DIR%';" ^
     "$trigger = New-ScheduledTaskTrigger -AtLogOn -User \"$env:USERDOMAIN\$env:USERNAME\";" ^
     "$principal = New-ScheduledTaskPrincipal -UserId \"$env:USERDOMAIN\$env:USERNAME\" -LogonType Interactive -RunLevel Highest;" ^
     "$settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable;" ^
@@ -73,6 +73,6 @@ echo next time you log in to Windows.
 echo.
 echo To test it right now without logging out: open Task Scheduler,
 echo find "%TASK_NAME%", right-click it, and choose Run.
-echo To undo this later, run uninstall_startup.bat.
+echo To undo this later, run scripts\uninstall_startup.bat.
 echo.
 pause

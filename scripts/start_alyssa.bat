@@ -7,17 +7,15 @@ if errorlevel 1 (
 )
 
 REM Double-click this file to start Alyssa - a true "one click" launcher.
-REM First run: creates a private virtual environment (.venv) next to this
-REM file and installs everything in requirements.txt into it - no need to
+REM First run: creates a private virtual environment (.venv) in the project
+REM folder and installs everything in requirements.txt into it - no need to
 REM run pip install yourself. Every later run reuses that same environment
 REM and starts instantly, unless requirements.txt has changed since the
 REM last install, in which case it re-installs automatically.
 REM
-REM Place this .bat file directly inside the "alyssa" folder, next to
-REM main.py, before using it.
-
 setlocal enabledelayedexpansion
-cd /d "%~dp0"
+for %%I in ("%~dp0..") do set "PROJECT_DIR=%%~fI"
+cd /d "%PROJECT_DIR%"
 
 REM --- Make sure Python is available at all ---
 where python >nul 2>nul
@@ -57,7 +55,7 @@ if not exist ".venv\Scripts\python.exe" (
         echo Fix: uninstall that Python, then install it instead from
         echo https://www.python.org/downloads/ ^(NOT the Microsoft Store
         echo listing^) - make sure "pip" stays checked during setup. Then
-        echo delete the ".venv" folder next to this file and run this
+        echo delete the ".venv" folder in the project and run this
         echo script again.
         echo.
         pause

@@ -68,7 +68,7 @@ ollama pull qwen2.5:3b
    companion's Settings window.
 3. If you do not want NVIDIA CUDA packages installed, set
    `WHISPER_DEVICE = "cpu"` before the first launch.
-4. Double-click `start_alyssa.bat`.
+4. Double-click `scripts\start_alyssa.bat`.
 
 The launcher creates `.venv`, installs the required packages, and starts
 Alyssa. Later launches reuse the environment unless a requirements file
@@ -236,14 +236,14 @@ conversation history stays in memory and expires after the configured timeout.
 
 ## Build an executable
 
-After running `start_alyssa.bat` at least once, double-click
+After running `scripts\start_alyssa.bat` at least once, double-click
 `build_alyssa.bat`. PyInstaller writes the result to `dist\Alyssa.exe`.
 Keep `config.py` beside the executable because it is intentionally not bundled.
 
 ## Start with Windows
 
-Run `install_startup.bat` to register Alyssa with Windows Task Scheduler. Run
-`uninstall_startup.bat` to remove the task. Inspect the script first and only
+Run `scripts\install_startup.bat` to register Alyssa with Windows Task Scheduler. Run
+`scripts\uninstall_startup.bat` to remove the task. Inspect the script first and only
 enable startup after you are comfortable with Alyssa's permissions.
 
 ## Troubleshooting
@@ -251,7 +251,7 @@ enable startup after you are comfortable with Alyssa's permissions.
 - **Python is not found:** reinstall from python.org and enable **Add Python to
   PATH** during setup.
 - **Dependency setup is stuck or inconsistent:** delete only the local `.venv`
-  folder and run `start_alyssa.bat` again.
+  folder and run `scripts\start_alyssa.bat` again.
 - **Ollama cannot be reached:** open Ollama and confirm the configured model is
   present with `ollama list`.
 - **No cloud response:** verify the selected provider's key and model in

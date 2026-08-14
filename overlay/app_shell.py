@@ -119,7 +119,7 @@ _console_window_handle = None
 
 def _set_console_visible(visible: bool):
     """On Windows, shows or hides the console window this process is
-    attached to - the cmd.exe window opened by start_alyssa.bat (or
+    attached to - the cmd.exe window opened by scripts\\start_alyssa.bat (or
     whatever terminal launched it) - controlled by HIDE_CONSOLE_WINDOW in
     config.py (or the matching Settings -> Assistant checkbox).
 
@@ -172,7 +172,7 @@ def _set_console_visible(visible: bool):
 
 def _close_parent_console():
     """On Windows, asks the console window this process is attached to -
-    the cmd.exe window opened by start_alyssa.bat (or whatever terminal
+    the cmd.exe window opened by scripts\\start_alyssa.bat (or whatever terminal
     launched it) - to close itself too.
 
     Quitting Alyssa only ends the Python process; the console window she
