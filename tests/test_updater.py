@@ -125,7 +125,7 @@ class UpdaterTests(unittest.TestCase):
         with zipfile.ZipFile(archive_bytes, "w") as zipped:
             for name, contents in (
                 ("alyssa-release/main.py", "new main\n"),
-                ("alyssa-release/overlay.py", "new overlay\n"),
+                ("alyssa-release/overlay/__init__.py", "new overlay\n"),
                 ("alyssa-release/config.py", "SETTING = 'default'\n"),
             ):
                 zipped.writestr(name, contents)
@@ -144,7 +144,10 @@ class UpdaterTests(unittest.TestCase):
                 self.assertEqual(updater.install_release(install, release), "v1.6.0")
 
             self.assertEqual((install / "main.py").read_text(encoding="utf-8"), "new main\n")
-            self.assertEqual((install / "overlay.py").read_text(encoding="utf-8"), "new overlay\n")
+            self.assertEqual(
+                (install / "overlay" / "__init__.py").read_text(encoding="utf-8"),
+                "new overlay\n",
+            )
             self.assertIn("SETTING = 'mine'", (install / "config.py").read_text(encoding="utf-8"))
             self.assertEqual((install / ".alyssa-version").read_text(encoding="utf-8"), "v1.6.0\n")
 
@@ -189,6 +192,40 @@ class UpdaterTests(unittest.TestCase):
             self.assertFalse((install / "old_module.py").exists())
             self.assertTrue((install / "config.py").exists())
             self.assertTrue((install / "plugins" / "mine.py").exists())
+
+    def test_manifestless_legacy_zip_removes_only_known_files(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            install = root / "install"
+            release = root / "release"
+            (install / "plugins").mkdir(parents=True)
+            (release / "overlay").mkdir(parents=True)
+            (release / "plugins").mkdir()
+            (install / ".alyssa-version").write_text("v1.0.8\n", encoding="utf-8")
+            (install / "overlay.py").write_text("legacy\n", encoding="utf-8")
+            (install / "start_alyssa.bat").write_text("legacy\n", encoding="utf-8")
+            (install / "voice.py").write_text("legacy\n", encoding="utf-8")
+            (install / "personal.py").write_text("mine\n", encoding="utf-8")
+            (install / "plugins" / "mine.py").write_text("mine\n", encoding="utf-8")
+            (install / "plugins" / "weather.py").write_text("legacy\n", encoding="utf-8")
+            (release / "overlay" / "__init__.py").write_text("new\n", encoding="utf-8")
+            (release / "plugins" / "weather.py").write_text("new\n", encoding="utf-8")
+
+            managed = updater._managed_paths(release, install)
+            updater._apply_release(release, install, managed)
+            updater._write_manifest(release, install, managed)
+
+            self.assertFalse((install / "overlay.py").exists())
+            self.assertFalse((install / "start_alyssa.bat").exists())
+            self.assertFalse((install / "voice.py").exists())
+            self.assertTrue((install / "personal.py").exists())
+            self.assertTrue((install / "plugins" / "mine.py").exists())
+            self.assertEqual(
+                (install / "plugins" / "weather.py").read_text(encoding="utf-8"),
+                "new\n",
+            )
+            self.assertTrue((install / "overlay" / "__init__.py").exists())
+            self.assertTrue((install / updater.MANIFEST_FILE).exists())
 
     def test_managed_release_plugin_is_updated_and_removed(self):
         with tempfile.TemporaryDirectory() as temporary:

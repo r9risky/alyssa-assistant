@@ -15,7 +15,7 @@ import zipfile
 import requests
 
 LATEST_RELEASE_URL = "https://api.github.com/repos/r9risky/alyssa-assistant/releases/latest"
-CURRENT_VERSION = "v1.2.0"
+CURRENT_VERSION = "v1.1.0"
 MAX_DOWNLOAD_BYTES = 250 * 1024 * 1024
 PRESERVED_FILES = {
     "color_themes.json",
@@ -27,6 +27,88 @@ PRESERVED_FILES = {
 }
 PRESERVED_DIRS = {".git", ".venv", "__pycache__", "build", "dist"}
 MANIFEST_FILE = ".alyssa-manifest.json"
+LEGACY_MANAGED_PATHS = {
+    "v1.0.8": {
+        ".gitignore",
+        "actions.py",
+        "actions/__init__.py",
+        "actions/apps_and_files.py",
+        "actions/clipboard_and_screen.py",
+        "actions/confirmation.py",
+        "actions/input_sim.py",
+        "actions/media.py",
+        "actions/music.py",
+        "actions/system.py",
+        "actions/windows.py",
+        "assets/nottalk.png",
+        "assets/talkopen.png",
+        "brain.py",
+        "brain/__init__.py",
+        "brain/common.py",
+        "brain/dialogue.py",
+        "brain/providers/__init__.py",
+        "brain/providers/anthropic.py",
+        "brain/providers/gemini.py",
+        "brain/providers/ollama.py",
+        "brain/providers/openai.py",
+        "brain/text_utils.py",
+        "brain/vision.py",
+        "install_startup.bat",
+        "LATENCY_AUDIT.md",
+        "main.py",
+        "memory.py",
+        "nameutil.py",
+        "overlay/__init__.py",
+        "overlay/app_shell.py",
+        "overlay/credential_checks.py",
+        "overlay/rendering.py",
+        "overlay/settings_dialog.py",
+        "overlay/theming.py",
+        "overlay/widgets.py",
+        "overlay.py",
+        "plugin_loader.py",
+        "plugins/calculator_converter.py",
+        "plugins/calendar_gmail.py",
+        "plugins/caveman_mode.py",
+        "plugins/location.py",
+        "plugins/news_digest.py",
+        "plugins/ponytail_mode.py",
+        "plugins/process_manager.py",
+        "plugins/reminders.py",
+        "plugins/security_camera.py",
+        "plugins/system_watch.py",
+        "plugins/timers.py",
+        "plugins/weather.py",
+        "plugins/web_search.py",
+        "plugins/web_summarizer.py",
+        "pytest.ini",
+        "README.md",
+        "recorder.py",
+        "requirements-dev.txt",
+        "requirements-gpu.txt",
+        "requirements.txt",
+        "scripts/install_startup.bat",
+        "scripts/start_alyssa.bat",
+        "scripts/uninstall_startup.bat",
+        "start_alyssa.bat",
+        "telemetry.py",
+        "tests/__init__.py",
+        "tests/test_brain_message_conversion.py",
+        "tests/test_latency_pipeline.py",
+        "tests/test_memory.py",
+        "tests/test_nameutil.py",
+        "tests/test_runtime_fixes.py",
+        "tests/test_safety_fixes.py",
+        "tests/test_settings_gui.py",
+        "tests/test_tool_argument_sanitization.py",
+        "tests/test_updater.py",
+        "tests/test_web_summarizer_bs4_available.py",
+        "transcribe.py",
+        "uninstall_startup.bat",
+        "updater.py",
+        "voice.py",
+    }
+}
 
 
 def _manifest_paths(install_root: Path) -> set[str]:
@@ -53,7 +135,11 @@ def _previously_managed_paths(install_root: Path) -> set[str]:
     if manifest.is_file():
         return _manifest_paths(install_root)
     if not (install_root / ".git").is_dir():
-        return set()
+        if not (install_root / ".alyssa-version").is_file() and not all(
+            (install_root / name).is_file() for name in ("main.py", "updater.py")
+        ):
+            return set()
+        return set(LEGACY_MANAGED_PATHS.get(current_version(install_root), ()))
     try:
         result = subprocess.run(
             ["git", "ls-files", "-z"],
@@ -208,7 +294,9 @@ def _safe_extract(archive_path: Path, destination: Path) -> Path:
     if len(roots) != 1:
         raise RuntimeError("The release archive has an unexpected layout.")
     root = destination / roots.pop()
-    if not all((root / name).is_file() for name in ("main.py", "overlay.py", "config.py")):
+    required_files = ("main.py", "config.py")
+    has_overlay = (root / "overlay.py").is_file() or (root / "overlay" / "__init__.py").is_file()
+    if not all((root / name).is_file() for name in required_files) or not has_overlay:
         raise RuntimeError("The release archive is missing required Alyssa files.")
     return root
 
