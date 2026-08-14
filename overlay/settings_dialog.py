@@ -1,32 +1,20 @@
-import json
-import math
 import os
-import queue
-import random
 import re
 import subprocess
 import sys
 import threading
-from urllib.parse import urlsplit
-
-import requests
 
 from PySide6.QtCore import (
-    Qt, QTimer, QPoint, QSize, Signal, QObject, QRect,
-    QPropertyAnimation, QEasingCurve, QParallelAnimationGroup,
+    Qt, QTimer, QSize, Signal,
 )
-from PySide6.QtGui import (
-    QPixmap, QPainter, QColor, QRegion, QGuiApplication, QMovie,
-    QPainterPath, QLinearGradient, QFont, QFontDatabase, QIcon,
-)
-from PySide6.QtSvg import QSvgRenderer
+from PySide6.QtGui import QGuiApplication, QFontDatabase
 from PySide6.QtWidgets import (
-    QApplication, QWidget, QMenu, QDialog, QFormLayout, QVBoxLayout,
+    QWidget, QDialog, QFormLayout, QVBoxLayout,
     QHBoxLayout, QGridLayout, QLineEdit, QComboBox, QSizePolicy,
     QCheckBox, QSlider, QSpinBox, QPushButton, QLabel, QFileDialog,
-    QMessageBox, QInputDialog, QStackedWidget, QSystemTrayIcon,
+    QMessageBox, QInputDialog, QStackedWidget,
     QScrollArea, QFrame, QSplitter, QListWidget, QListWidgetItem,
-    QPlainTextEdit, QGraphicsDropShadowEffect, QGraphicsOpacityEffect,
+    QPlainTextEdit,
 )
 
 _QW = QWidget
@@ -45,7 +33,7 @@ from .credential_checks import (
     _verify_openai_key, _verify_spotify_credentials, _verify_youtube_key,
     _volume_str_to_percent,
 )
-from .rendering import BASE_W, DEFAULT_OVERLAY_SETTINGS, _BASE_DIR, render_character
+from .rendering import _BASE_DIR, render_character
 from .theming import (
     COLOR_THEMES, TYPE_SCALE, _CODE_EDITOR_COLORS, _DIALOG_RADIUS,
     _HoverPress, _apply_elevation, _rgba, _theme,
@@ -2095,7 +2083,7 @@ class ConfigDialog(QDialog):
         outer.addWidget(self._section_header("Application Updates", "↻", first=True))
         intro = self._help_label(
             "Install the latest Alyssa release. Your settings and personal data stay "
-            "unchanged, and updates stop before overwriting edited app files."
+            "unchanged while application files are replaced with the latest versions."
         )
         intro.setVisible(True)
         outer.addWidget(intro)

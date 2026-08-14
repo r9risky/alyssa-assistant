@@ -1,8 +1,6 @@
 import io
 import re
 
-import requests
-
 import config
 
 from .providers.anthropic import _describe_image_anthropic

@@ -50,7 +50,7 @@ class ConfirmationSafetyTests(unittest.TestCase):
             patch("builtins.input", side_effect=AssertionError("stdin must not be used")),
         ):
             reply = brain.handle_command("do the ordinary action")
-            self.assertIn("approve", reply.lower())
+            self.assertIn("approval", reply.lower())
             self.assertEqual(calls, [])
             dialogue._handle_pending_power_confirmation("yes")
             self.assertEqual(calls, [True])

@@ -1,15 +1,6 @@
-import json
-import math
-import os
 import queue
 import random
-import re
-import subprocess
 import sys
-import threading
-from urllib.parse import urlsplit
-
-import requests
 
 from PySide6.QtCore import (
     Qt, QTimer, QPoint, QSize, Signal, QObject, QRect,
@@ -17,16 +8,11 @@ from PySide6.QtCore import (
 )
 from PySide6.QtGui import (
     QPixmap, QPainter, QColor, QRegion, QGuiApplication, QMovie,
-    QPainterPath, QLinearGradient, QFont, QFontDatabase, QIcon,
+    QPainterPath, QLinearGradient, QFont,
 )
-from PySide6.QtSvg import QSvgRenderer
 from PySide6.QtWidgets import (
-    QApplication, QWidget, QMenu, QDialog, QFormLayout, QVBoxLayout,
-    QHBoxLayout, QGridLayout, QLineEdit, QComboBox, QSizePolicy,
-    QCheckBox, QSlider, QSpinBox, QPushButton, QLabel, QFileDialog,
-    QMessageBox, QInputDialog, QStackedWidget, QSystemTrayIcon,
-    QScrollArea, QFrame, QSplitter, QListWidget, QListWidgetItem,
-    QPlainTextEdit, QGraphicsDropShadowEffect, QGraphicsOpacityEffect,
+    QApplication, QWidget, QMenu, QHBoxLayout, QLineEdit, QLabel,
+    QMessageBox,
 )
 
 _QW = QWidget

@@ -1,19 +1,19 @@
 {
-  "pos_x": 1458,
-  "pos_y": 377,
-  "scale": 0.928,
-  "opacity": 1.0,
+  "pos_x": 1490,
+  "pos_y": 396,
+  "scale": 0.989,
+  "opacity": 0.73,
   "always_on_top": true,
   "character_image": "",
   "character_image_talking": "",
-  "bubble_seconds": 7,
+  "bubble_seconds": 5,
   "talk_mouth_flap_enabled": true,
   "talk_bounce_enabled": true,
   "talk_bounce_height": 5,
-  "dim_when_idle_enabled": false,
-  "dim_when_idle_opacity": 55,
+  "dim_when_idle_enabled": true,
+  "dim_when_idle_opacity": 44,
   "dark_mode": true,
-  "color_theme": "emerald",
+  "color_theme": "sunset",
   "chatbox_enabled": false,
-  "chatbox_position": "right"
+  "chatbox_position": "left"
 }

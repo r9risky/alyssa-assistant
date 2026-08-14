@@ -1,37 +1,6 @@
-import codecs
-import ctypes
-import contextlib
-import datetime
-import os
-import re
-import shutil
-import subprocess
-import sys
-import threading
 import time
-import urllib.parse
-import webbrowser
-from ctypes import wintypes
-from functools import lru_cache
 
 import pyautogui
-import pyperclip
-import requests
-import send2trash
-
-import config
-import memory
-import plugin_loader
-
-try:
-    import winreg
-except ImportError:
-    winreg = None
-
-try:
-    from PIL import ImageGrab
-except ImportError:
-    ImageGrab = None
 
 from .apps_and_files import (
     _SC_MAXIMIZE, _SC_MINIMIZE, _close_foreground_window,

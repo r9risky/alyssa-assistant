@@ -148,60 +148,98 @@ class UpdaterTests(unittest.TestCase):
             self.assertIn("SETTING = 'mine'", (install / "config.py").read_text(encoding="utf-8"))
             self.assertEqual((install / ".alyssa-version").read_text(encoding="utf-8"), "v1.6.0\n")
 
-    def test_manifest_detects_locally_edited_application_file(self):
+    def test_apply_release_replaces_edited_application_file(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             install = root / "install"
-            release = root / "release"
+            old_release = root / "old-release"
+            new_release = root / "new-release"
             install.mkdir()
-            release.mkdir()
+            old_release.mkdir()
+            new_release.mkdir()
             (install / "overlay.py").write_text("official\n", encoding="utf-8")
-            (release / "overlay.py").write_text("next release\n", encoding="utf-8")
-            updater._write_manifest(release, install)
+            (old_release / "overlay.py").write_text("official\n", encoding="utf-8")
+            (new_release / "overlay.py").write_text("next release\n", encoding="utf-8")
+            updater._write_manifest(old_release, install)
 
             (install / "overlay.py").write_text("my custom tab\n", encoding="utf-8")
+            updater._apply_release(new_release, install)
 
             self.assertEqual(
-                updater._local_changes(release, install), ["overlay.py"]
+                (install / "overlay.py").read_text(encoding="utf-8"), "next release\n"
             )
 
-    def test_manifest_ignores_personal_config_and_plugins(self):
+    def test_apply_release_removes_old_managed_files_but_keeps_personal_files(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             install = root / "install"
-            release = root / "release"
+            old_release = root / "old-release"
+            new_release = root / "new-release"
             (install / "plugins").mkdir(parents=True)
-            (release / "plugins").mkdir(parents=True)
-            for path, text in (
-                (install / "config.py", "MY_SETTING = True\n"),
-                (release / "config.py", "MY_SETTING = False\n"),
-                (install / "plugins" / "mine.py", "personal\n"),
-                (release / "plugins" / "mine.py", "official\n"),
-            ):
-                path.write_text(text, encoding="utf-8")
+            old_release.mkdir()
+            new_release.mkdir()
+            (install / "old_module.py").write_text("old\n", encoding="utf-8")
+            (old_release / "old_module.py").write_text("old\n", encoding="utf-8")
+            (install / "config.py").write_text("MY_SETTING = True\n", encoding="utf-8")
+            (install / "plugins" / "mine.py").write_text("personal\n", encoding="utf-8")
+            updater._write_manifest(old_release, install)
 
-            updater._write_manifest(release, install)
+            updater._apply_release(new_release, install)
 
-            self.assertEqual(updater._local_changes(release, install), [])
+            self.assertFalse((install / "old_module.py").exists())
+            self.assertTrue((install / "config.py").exists())
+            self.assertTrue((install / "plugins" / "mine.py").exists())
 
-    def test_git_detects_custom_tab_code_but_ignores_personal_settings(self):
+    def test_managed_release_plugin_is_updated_and_removed(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            install = root / "install"
+            first_release = root / "first-release"
+            second_release = root / "second-release"
+            third_release = root / "third-release"
+            for path in (install, first_release, second_release, third_release):
+                (path / "plugins").mkdir(parents=True)
+            (first_release / "plugins" / "official.py").write_text("v1\n", encoding="utf-8")
+
+            managed = updater._managed_paths(first_release, install)
+            updater._apply_release(first_release, install, managed)
+            updater._write_manifest(first_release, install, managed)
+            (second_release / "plugins" / "official.py").write_text("v2\n", encoding="utf-8")
+
+            managed = updater._managed_paths(second_release, install)
+            updater._apply_release(second_release, install, managed)
+            updater._write_manifest(second_release, install, managed)
+            self.assertEqual(
+                (install / "plugins" / "official.py").read_text(encoding="utf-8"), "v2\n"
+            )
+
+            updater._apply_release(third_release, install)
+            self.assertFalse((install / "plugins" / "official.py").exists())
+
+    def test_git_install_updates_tracked_plugin_and_removes_only_tracked_old_file(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             install = root / "install"
             release = root / "release"
-            (install / ".git").mkdir(parents=True)
-            release.mkdir()
-            (release / "overlay.py").write_text("next release\n", encoding="utf-8")
-            (release / "overlay_config.json").write_text("{}\n", encoding="utf-8")
-            results = (
-                Mock(stdout=b"overlay.py\0overlay_config.json\0"),
-                Mock(stdout=b""),
-            )
+            for path in (install, release):
+                (path / "plugins").mkdir(parents=True)
+            (install / ".git").mkdir()
+            (install / "old.py").write_text("old\n", encoding="utf-8")
+            (install / "personal.py").write_text("mine\n", encoding="utf-8")
+            (install / "config.py").write_text("SETTING = 'mine'\n", encoding="utf-8")
+            (install / "plugins" / "official.py").write_text("v1\n", encoding="utf-8")
+            (release / "plugins" / "official.py").write_text("v2\n", encoding="utf-8")
+            tracked = Mock(stdout=b"old.py\0config.py\0plugins/official.py\0")
 
-            with patch.object(updater.subprocess, "run", side_effect=results):
-                self.assertEqual(
-                    updater._local_changes(release, install), ["overlay.py"]
-                )
+            with patch.object(updater.subprocess, "run", return_value=tracked):
+                updater._apply_release(release, install)
+
+            self.assertFalse((install / "old.py").exists())
+            self.assertTrue((install / "personal.py").exists())
+            self.assertTrue((install / "config.py").exists())
+            self.assertEqual(
+                (install / "plugins" / "official.py").read_text(encoding="utf-8"), "v2\n"
+            )
 
 
 if __name__ == "__main__":

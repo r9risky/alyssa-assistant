@@ -52,3 +52,8 @@ def strip_name_at_span(text: str, span) -> str:
 def contains_name(text: str) -> bool:
     """Returns True if the assistant name or an alias is detected in text."""
     return find_name_span(text or "") is not None
+
+
+def is_stop_request(text: str) -> bool:
+    """Returns True when text contains both the assistant's name and "stop"."""
+    return contains_name(text) and bool(re.search(r"\bstop\b", text or "", re.IGNORECASE))

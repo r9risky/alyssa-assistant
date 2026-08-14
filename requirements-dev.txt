@@ -1,0 +1,4 @@
+-r requirements.txt
+
+# Test runner (pytest.ini configures discovery under tests/).
+pytest

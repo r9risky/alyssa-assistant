@@ -6,7 +6,7 @@ import requests
 import config
 import telemetry
 
-from ..common import GenerationCancelled, _HTTP_SESSION, _iter_sse_json
+from ..common import _HTTP_SESSION, _iter_sse_json
 from ..dialogue import TOOLS
 
 _gemini_tools_cache = None
