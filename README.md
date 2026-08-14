@@ -249,12 +249,6 @@ run the tests:
 .venv\Scripts\python -m pytest
 ```
 
-## Build an executable
-
-After running `scripts\start_alyssa.bat` at least once, double-click
-`build_alyssa.bat`. PyInstaller writes the result to `dist\Alyssa.exe`.
-Keep `config.py` beside the executable because it is intentionally not bundled.
-
 ## Start with Windows
 
 Run `scripts\install_startup.bat` to register Alyssa with Windows Task Scheduler. Run

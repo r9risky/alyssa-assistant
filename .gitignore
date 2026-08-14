@@ -15,16 +15,8 @@ __pycache__/
 *.pyc
 *.pyo
 
-# --- Local development files ---
-build_alyssa.bat
-
 # --- Local virtual environment (created automatically by start_alyssa.bat) ---
 .venv/
 .plans/
 .alyssa-version
 .alyssa-manifest.json
-
-# --- PyInstaller build output (build_alyssa.bat) ---
-build/
-dist/
-*.spec

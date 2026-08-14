@@ -10,8 +10,8 @@ REM
 REM Run this by double-clicking it. It will ask for admin rights itself
 REM (a UAC prompt) - that's expected and required to register the task.
 REM
-REM Prerequisite: run scripts\start_alyssa.bat (or build_alyssa.bat) at least once
-REM first, so dependencies - or the standalone exe - already exist.
+REM Prerequisite: run scripts\start_alyssa.bat at least once first, so the
+REM virtual environment and dependencies already exist.
 
 setlocal enabledelayedexpansion
 for %%I in ("%~dp0..") do set "PROJECT_DIR=%%~fI\"
@@ -27,20 +27,14 @@ if not "%errorlevel%"=="0" (
 )
 
 REM --- Decide what the task should actually launch ---
-REM Prefer the standalone exe from build_alyssa.bat (cleanest - no console
-REM window, no venv path to break if Python changes). Fall back to the
-REM venv's pythonw.exe (windowless) running main.py directly.
-if exist "%PROJECT_DIR%dist\Alyssa.exe" (
-    set "ACTION_EXE=%PROJECT_DIR%dist\Alyssa.exe"
-    set "ACTION_ARGS="
-) else if exist "%PROJECT_DIR%.venv\Scripts\pythonw.exe" (
+REM Use the virtual environment's windowless Python executable.
+if exist "%PROJECT_DIR%.venv\Scripts\pythonw.exe" (
     set "ACTION_EXE=%PROJECT_DIR%.venv\Scripts\pythonw.exe"
     set "ACTION_ARGS=main.py"
 ) else (
     echo ERROR: Alyssa hasn't been set up yet.
-    echo Run scripts\start_alyssa.bat once first ^(to install dependencies^), or
-    echo build_alyssa.bat if you want the standalone exe - then run this
-    echo script again.
+    echo Run scripts\start_alyssa.bat once first to install dependencies,
+    echo then run this script again.
     echo.
     pause
     exit /b 1
