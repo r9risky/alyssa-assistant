@@ -1,51 +1,70 @@
-# Alyssa Assistant
+# Alyssa
 
-Alyssa is a Windows-first voice assistant that can control your PC, answer
-questions, remember useful facts, and load extra abilities from Python plugins.
-Speech is transcribed locally with Faster Whisper, while reasoning can use
-Gemini, Ollama, OpenAI, Anthropic, or another OpenAI-compatible provider.
+Alyssa is a voice assistant I built for my own Windows desktop — she listens
+for her name, transcribes speech locally with Faster Whisper, and hands
+anything that needs actual reasoning off to whichever LLM I've got configured
+(Gemini by default, but Ollama/OpenAI/Anthropic/any OpenAI-compatible endpoint
+all work). She can open apps, click around, manage windows, remember stuff I
+tell her, and pull in extra abilities through a plugin folder.
 
-## Highlights
+This is a personal project, not a product — expect rough edges. I'm putting
+it up because it's been genuinely useful to me and might be to someone else.
 
-- Always-listening voice input gated by the assistant's name
-- Local speech-to-text with Faster Whisper
-- Configurable local or cloud language model
-- Desktop companion with typed chat and interruption support
-- App, window, media, clipboard, file, screenshot, and system controls
-- Screen description and vision-guided clicking
-- Local conversation history, saved memories, reminders, and timers
-- Weather, web search, article summaries, system monitoring, and other plugins
-- Spoken confirmation before protected actions
+## What she does
 
-## Safety and privacy
+- Always-listening, gated on her name so she's not transcribing everything
+- Local speech-to-text (Faster Whisper), or ElevenLabs realtime if you'd
+  rather pay for lower latency
+- Swappable brain — local Ollama model or a cloud provider, your call
+- A little desktop companion window you can type into or talk to
+- App/window/media/clipboard/file/screenshot/system control
+- Can look at your screen and click things based on what it sees
+- Remembers facts across sessions, plus reminders and timers
+- Weather, web search, article summaries, system monitoring, and whatever
+  else I've bolted on via plugins
+- Asks before doing anything destructive
 
-Alyssa can type, click, run commands, move files, and control Windows. Review
-the code and configuration before giving it access to important data or running
-it with elevated privileges.
+## Before you give her the keys to your PC
 
-- Voice commands are ignored unless they mention `Alyssa` (or a configured
-  alias). Audio is still transcribed locally to detect that name.
-- The default configuration asks for confirmation before actions.
-- Commands, deletion, vision-guided clicks, process termination, Recycle Bin
-  emptying, and disruptive power actions require a separate approval step.
-- Spoken approval recognizes confirmation words such as `yes`, `confirm`, and
-  `go ahead`; it does not authenticate the speaker or provide a security
-  boundary against another person near the microphone.
-- Deleted files are normally moved to the Windows Recycle Bin.
-- Speech transcription is local unless `STT_PROVIDER` selects ElevenLabs
-  realtime (or `auto` finds an ElevenLabs key). Prompts and screenshots are
-  sent to the configured LLM provider when a cloud provider is selected.
-- Edge TTS sends reply text to Microsoft's online speech service. Networked
-  plugins may also contact their documented services.
-- `memory.json`, Google OAuth credentials, and OAuth tokens are ignored by Git.
-  Never commit API keys placed in `config.py`.
+Alyssa can type, click, run commands, move files, and generally do things a
+person sitting at your keyboard could do. Read through `config.py` and the
+`actions/` folder before you point her at anything you care about, and don't
+run her elevated unless you have a real reason to.
 
-These safeguards reduce accidental actions; they are not a security boundary.
+A few things worth knowing:
 
-## Architecture
+- She ignores audio that doesn't include her name (or an alias) — but that
+  audio is still transcribed locally to check, it just isn't acted on or sent
+  anywhere.
+- `CONFIRM_BEFORE_ACTIONS` is on by default. Deleting things, running
+  commands, vision-guided clicks, killing processes, emptying the Recycle
+  Bin, and power actions (shutdown/restart/sleep) always require a separate
+  spoken or typed "yes" regardless of that setting.
+- Saying "yes" out loud isn't a security boundary — it just recognizes
+  confirmation words, it doesn't check who said them. Anyone near the mic
+  can approve a pending action.
+- Deleted files go to the Recycle Bin, not straight to oblivion.
+- Speech stays local unless you turn on ElevenLabs for STT. Whatever cloud
+  LLM you've picked does see your prompts (and screenshots, if you use
+  vision), same as talking to it directly. Edge TTS sends your reply text to
+  Microsoft to turn into audio.
+- **API keys don't live in `config.py` anymore.** They're stored through
+  `credential_store.py` in your OS's own credential manager — Windows
+  Credential Manager, macOS Keychain, or the Linux Secret Service (GNOME
+  Keyring/KWallet). The Settings window writes there directly now instead of
+  patching a plaintext key into a file on disk. If you're updating from an
+  older copy that still has real keys sitting in `config.py`, the app
+  migrates them into the keyring automatically on next launch and blanks the
+  file — see `credential_store.py`'s docstring if you want the details.
+- `memory.json`, Google OAuth files, and OAuth tokens are gitignored. Don't
+  commit them.
 
-The runtime is intentionally stacked so dependencies point inward rather than
-forming UI/automation/reasoning cycles:
+None of this makes her safe to run unsupervised. It just means the obvious
+footguns have a confirmation step in front of them.
+
+## How it's laid out
+
+Kept this stacked on purpose so nothing has to import in a circle:
 
 ```text
 main.py / overlay
@@ -57,55 +76,54 @@ brain (dialogue, providers, vision)
 actions (desktop/system adapters) ----> plugin_loader ----> plugins
         |
         v
-OS / audio / network libraries
+OS / audio / network
 ```
 
-`brain/tool_catalog.py` owns the static LLM tool schemas and
-`brain/tool_registry.py` owns the live built-in + plugin tool view used by both
-providers and dialogue. Providers therefore do not import dialogue orchestration.
-`brain/dialogue.py` owns orchestration and conversation state. Desktop
-automation is isolated behind `actions/desktop.py`, so importing the reasoning
-layer does not initialize PyAutoGUI or require a live desktop session. The few
-brain-owned capabilities used by actions (vision and conversation reset) are
-injected through `actions/bridges.py`; action modules do not import `brain`.
+`brain/dialogue.py` owns the actual conversation loop and orchestration.
+`brain/tool_catalog.py` / `brain/tool_registry.py` own the tool schemas —
+built-in and plugin — that both the providers and dialogue share, so the
+provider code never has to import the orchestration code. Desktop automation
+lives behind `actions/desktop.py` so importing the reasoning layer doesn't
+drag in PyAutoGUI or require an active desktop session; the couple of things
+`actions` needs from `brain` (vision, resetting a conversation) get injected
+through `actions/bridges.py` instead of a direct import.
 
-This boundary keeps provider logic testable without a GUI, prevents circular
-dependencies from growing as plugins are added, and makes platform-specific
-automation replaceable independently of the assistant's reasoning layer.
+Mostly this exists so I can swap out the automation layer or add a plugin
+without provider logic breaking, and so I can unit-test the provider/dialogue
+code without a GUI attached.
 
-## Requirements
+## What you need
 
 - Windows 10 or 11
-- Python 3.10 or newer from [python.org](https://www.python.org/downloads/)
+- Python 3.10+ from [python.org](https://www.python.org/downloads/)
 - [Microsoft C++ Build Tools](https://visualstudio.microsoft.com/visual-cpp-build-tools/)
-  with the **Desktop development with C++** workload (required to compile
-  native packages when a matching prebuilt wheel is unavailable, including
-  `webrtcvad-wheels` on Python 3.14)
-- A microphone and audio output
-- One supported LLM provider
-- Internet access for cloud models, Edge TTS, and networked plugins
+  (Desktop development with C++ workload) — only needed if a package doesn't
+  have a prebuilt wheel for your Python version, which happens with
+  `webrtcvad-wheels` on newer Pythons
+- A mic and speakers
+- At least one LLM provider set up
+- Internet, if you're using a cloud model, Edge TTS, or anything network-y
 
-For a fully local language model, install [Ollama](https://ollama.com/) and
-pull the configured model:
+Want to run everything local? Grab [Ollama](https://ollama.com/) and pull the
+default model:
 
 ```powershell
 ollama pull qwen2.5:3b
 ```
 
-## Quick start
+## Getting it running
 
-1. Clone or download this repository.
-2. Open `config.py` and choose an `LLM_PROVIDER`, or configure it later in the
-   companion's Settings window.
-3. If you do not want NVIDIA CUDA packages installed, set
-   `WHISPER_DEVICE = "cpu"` before the first launch.
+1. Clone/download this repo.
+2. Open `config.py` and pick an `LLM_PROVIDER` — or just leave it and set it
+   from the companion's Settings window once she's running.
+3. Don't want NVIDIA CUDA packages pulled in? Set `WHISPER_DEVICE = "cpu"`
+   before your first launch.
 4. Double-click `scripts\start_alyssa.bat`.
 
-The launcher creates `.venv`, installs the required packages, and starts
-Alyssa. Later launches reuse the environment unless a requirements file
-changes.
+That script sets up a `.venv`, installs what's needed, and starts her.
+Later launches reuse the same environment unless a requirements file changed.
 
-To run it manually instead:
+Doing it by hand instead:
 
 ```powershell
 python -m venv .venv
@@ -113,34 +131,40 @@ python -m venv .venv
 .venv\Scripts\python main.py
 ```
 
-With `WHISPER_DEVICE` set to `auto` or `cuda`, also install
-`requirements-gpu.txt`. Those NVIDIA packages require several gigabytes.
+If `WHISPER_DEVICE` is `auto` or `cuda`, also install `requirements-gpu.txt` —
+heads up, that's a few gigs of NVIDIA packages.
 
-## LLM providers
+## Picking a provider
 
-Set `LLM_PROVIDER` in `config.py` to one of the following:
+Set `LLM_PROVIDER` in `config.py`:
 
-| Value | Provider | Required setup |
+| Value | Provider | What it needs |
 | --- | --- | --- |
-| `gemini` | Google Gemini (default) | Add a Gemini API key in Settings or `config.py` |
-| `ollama` | Local Ollama model | Install Ollama and pull `OLLAMA_MODEL` |
-| `openai` | OpenAI | Set `OPENAI_API_KEY` |
-| `anthropic` | Anthropic | Set `ANTHROPIC_API_KEY` |
-| `custom_openai` | OpenAI-compatible endpoint | Set the base URL, model, and optional `CUSTOM_LLM_API_KEY` |
+| `gemini` | Google Gemini (default) | A Gemini key, added via Settings |
+| `ollama` | Local Ollama model | Ollama installed, `OLLAMA_MODEL` pulled |
+| `openai` | OpenAI | An OpenAI key |
+| `anthropic` | Anthropic | An Anthropic key |
+| `custom_openai` | Any OpenAI-compatible endpoint | Base URL, model, optional key |
 
-Example environment-variable setup:
+Easiest way to set a key is through the Settings window (it goes straight
+into your OS keyring). If you'd rather use environment variables instead —
+handy for a server/headless setup — those still work and take priority over
+whatever's in the keyring:
 
 ```powershell
 setx OPENAI_API_KEY "your-key"
 setx ANTHROPIC_API_KEY "your-key"
+setx GEMINI_API_KEY "your-key"
 setx CUSTOM_LLM_API_KEY "your-key"
 ```
 
-Restart the terminal or Alyssa after using `setx`. Screen vision uses the
-selected provider; Ollama users must also pull the configured vision model,
-which defaults to `llava`.
+(Restart your terminal, or Alyssa, after `setx` — it doesn't apply to an
+already-open shell.)
 
-## Example commands
+Vision uses whatever provider you've got selected; Ollama folks also need to
+pull a vision model (`llava` by default).
+
+## Stuff you can say to her
 
 ```text
 Alyssa, open Notepad
@@ -154,83 +178,81 @@ Alyssa, summarize https://example.com/article
 Alyssa, what am I looking at?
 ```
 
-You can say "Alyssa, stop" or "stop, Alyssa" over a reply to interrupt it.
-Typed messages in the desktop companion do not require the assistant's name.
+"Alyssa, stop" (or "stop, Alyssa") interrupts whatever she's saying. Typed
+messages in the companion window don't need her name first.
 
-## Configuration
+## config.py cheat sheet
 
-The most useful settings are in `config.py`:
+The settings I actually touch most often:
 
-| Setting | Purpose |
+| Setting | What it does |
 | --- | --- |
-| `ASSISTANT_NAME` | Spoken command name |
-| `LLM_PROVIDER` | Active model provider |
-| `WHISPER_MODEL_SIZE` | Speech recognition model size |
+| `ASSISTANT_NAME` | The wake word |
+| `LLM_PROVIDER` | Which brain is active |
+| `WHISPER_MODEL_SIZE` | STT model size |
 | `WHISPER_DEVICE` | `cpu`, `cuda`, or `auto` |
-| `STT_PROVIDER` | `auto`, local Whisper, or ElevenLabs realtime WebSocket STT |
-| `SILENCE_SECONDS` | Base pause required to end a spoken turn |
+| `STT_PROVIDER` | `auto`, local Whisper, or ElevenLabs realtime |
+| `SILENCE_SECONDS` | How long a pause has to be before she thinks you're done |
 | `TTS_PROVIDER` | `edge` or `elevenlabs` |
-| `TTS_AUDIO_BUFFER_MS` | PCM prebuffer used by ElevenLabs streaming playback |
-| `CONFIRM_BEFORE_ACTIONS` | Confirm ordinary actions before running them |
-| `POWER_CONFIRMATION_TIMEOUT_SECONDS` | How long a protected-action approval remains pending |
-| `ALLOW_INTERRUPTIONS` | Permit speech to interrupt replies |
-| `BARGE_IN_REQUIRE_NAME` | Require both the assistant's name and `stop` for spoken interruptions |
-| `CONVERSATION_MEMORY_TURNS` | Number of recent conversation turns kept in context |
-| `PLUGINS_ENABLED` | Load tools from `plugins/` |
-| `ENABLE_BACKGROUND_WATCHER` | Run proactive plugin checks |
-| `ENABLE_COMPANION_GUI` | Show the desktop companion |
+| `TTS_AUDIO_BUFFER_MS` | Prebuffer for ElevenLabs streaming playback |
+| `CONFIRM_BEFORE_ACTIONS` | Confirm ordinary actions too, not just protected ones |
+| `POWER_CONFIRMATION_TIMEOUT_SECONDS` | How long a pending protected action stays pending |
+| `ALLOW_INTERRUPTIONS` | Whether talking over her cancels a reply |
+| `BARGE_IN_REQUIRE_NAME` | Require her name + "stop" together to interrupt |
+| `CONVERSATION_MEMORY_TURNS` | How many recent turns she keeps in context |
+| `PLUGINS_ENABLED` | Whether `plugins/` gets loaded at all |
+| `ENABLE_BACKGROUND_WATCHER` | Proactive plugin checks (reminders, etc.) |
+| `ENABLE_COMPANION_GUI` | Show/hide the desktop companion |
 
-The Settings window exposes the common provider, voice, assistant, and
-companion options without requiring manual edits. Its Updates tab installs
-the latest published GitHub release while preserving local settings and data.
-Application files are replaced with the published versions, including local
-edits, so commit or back up code changes before updating.
+Most of this is also editable from the Settings window without touching the
+file directly. Its Updates tab pulls the latest GitHub release and overwrites
+application files (including any local edits you've made) while keeping your
+settings and data — so commit or back up code changes first if you've been
+poking around.
 
-### Low-latency voice pipeline
+### On latency
 
-The default endpointing window is 300 ms and adapts between 240–420 ms from
-the observed speaking rate. Speech starts after 120 ms of sustained voice;
-barge-in detection starts after 150 ms. With name-gated interruptions enabled,
-playback stops only after the captured phrase contains both the assistant's
-name and the whole word `stop`. Conversation context keeps 11 turns and slides
-again at 4,000 characters.
+Endpointing defaults to a 300ms window that adapts between 240–420ms based on
+how fast you're talking. Speech has to run 120ms before it counts; barge-in
+detection kicks in after 150ms. With name-gated interruption on, playback only
+stops once the captured audio has both her name and the full word "stop" in
+it. Context holds 11 turns and slides once it hits 4,000 characters.
 
-With an ElevenLabs key, `STT_PROVIDER = "auto"` uses Scribe realtime over one
-persistent WebSocket and emits partial transcripts while recording. Without a
-key it falls back to the existing local Faster Whisper path. ElevenLabs TTS
-uses the Flash model, clause-level text streaming, raw 24 kHz PCM playback, and
-a 100 ms client prebuffer. Edge TTS retains clause pipelining but must finish
-each clause's encoded audio before that clause can play.
+If you've got an ElevenLabs key, `STT_PROVIDER = "auto"` switches to Scribe
+realtime over a persistent WebSocket with partial transcripts while you're
+still talking. No key, it falls back to local Whisper. ElevenLabs TTS uses
+the Flash model with clause-level streaming and a 100ms prebuffer on raw PCM.
+Edge TTS still pipelines by clause but has to finish encoding each clause
+before it can start playing.
 
-LLM text streams for Gemini, Ollama, OpenAI-compatible, and Anthropic providers.
-Generation, TTS, playback, and interruption listening overlap; new speech
-is transcribed and checked before a name-gated spoken interruption cancels the
-active response. A typed message still interrupts immediately.
+Text streams from every provider I support. Generation, TTS, playback, and
+interruption listening all overlap — new speech gets transcribed and checked
+before a name-gated interruption actually cancels anything. Typed messages
+interrupt instantly, no gating.
 
-## Included plugins
+## Plugins
 
-Plugins are loaded from `plugins/` at startup. The included set provides:
+Everything in `plugins/` loads at startup. What's in there right now:
 
-- Calculator and unit conversion
-- Read-only Google Calendar and Gmail access
-- IP-based location and Open-Meteo weather
-- Web search and webpage summarization
+- Calculator / unit conversion
+- Read-only Google Calendar + Gmail
+- IP-based location + Open-Meteo weather
+- Web search and page summarization
 - News digests
-- Reminders, timers, and stopwatch controls
-- Process management and temporary-file cleanup
+- Reminders, timers, stopwatch
+- Process management, temp-file cleanup
 - System health monitoring
 - Optional webcam motion alerts
-- Runtime Caveman and Ponytail response modes
+- Caveman mode / Ponytail response-length modes
 
-Some plugins require network access, extra credentials, or local hardware.
-See the module docstring at the top of each plugin for its setup and privacy
-details. Google integration uses read-only OAuth scopes and stores its local
-token in `token.json`.
+Some need extra credentials or hardware — check the docstring at the top of
+each plugin file for setup and what it sends where. The Google plugin uses
+read-only OAuth scopes and keeps its token in `token.json`.
 
-### Adding a plugin
+### Writing your own
 
-Create a `.py` file in `plugins/` that exports `FUNCTIONS` and matching `TOOLS`
-schemas. Files beginning with `_` are ignored.
+A plugin is just a `.py` file in `plugins/` exporting `FUNCTIONS` and a
+matching `TOOLS` schema. Files starting with `_` get skipped.
 
 ```python
 def roll_die(sides: int = 6) -> str:
@@ -255,49 +277,49 @@ TOOLS = [
 ]
 ```
 
-A plugin may also expose `check_watch() -> str | None` and an optional
-`WATCH_INTERVAL_SECONDS` value to provide proactive spoken alerts.
+Add a `check_watch() -> str | None` function (plus an optional
+`WATCH_INTERVAL_SECONDS`) if you want it to proactively speak up on its own.
 
-## Local data
+## What's stored locally
 
-| File | Contents |
+| File | What's in it |
 | --- | --- |
-| `memory.json` | Saved facts |
-| `reminders.json` | Local reminders |
-| `token.json` | Google OAuth token, when enabled |
-| `overlay_config.json` | Companion appearance and position |
+| `memory.json` | Facts she's been told to remember |
+| `reminders.json` | Reminders |
+| `token.json` | Google OAuth token, if you've enabled that plugin |
+| `overlay_config.json` | Companion window position/appearance |
 
-Saved memories are plain JSON and use lightweight keyword matching. Session
-conversation history stays in memory and expires after the configured timeout.
+API keys aren't in this list anymore — those live in the OS keyring, not a
+local file. Memories are plain JSON with basic keyword matching, nothing
+fancy. Conversation history for the current session lives in memory only and
+expires after the configured timeout.
 
-## Run the tests
-
-Install the development requirements after setting up the environment, then
-run the tests:
+## Running the tests
 
 ```powershell
 .venv\Scripts\python -m pip install -r requirements-dev.txt
 .venv\Scripts\python -m pytest
 ```
 
-## Start with Windows
+## Launching on startup
 
-Run `scripts\install_startup.bat` to register Alyssa with Windows Task Scheduler. Run
-`scripts\uninstall_startup.bat` to remove the task. Inspect the script first and only
-enable startup after you are comfortable with Alyssa's permissions.
+`scripts\install_startup.bat` registers her with Windows Task Scheduler.
+`scripts\uninstall_startup.bat` undoes that. Read the script before running
+it, and only set this up once you're comfortable with what she's allowed to
+do unattended.
 
-## Troubleshooting
+## When something's broken
 
-- **Python is not found:** reinstall from python.org and enable **Add Python to
-  PATH** during setup.
-- **Dependency setup is stuck or inconsistent:** delete only the local `.venv`
-  folder and run `scripts\start_alyssa.bat` again.
-- **Ollama cannot be reached:** open Ollama and confirm the configured model is
-  present with `ollama list`.
-- **No cloud response:** verify the selected provider's key and model in
-  Settings.
-- **False interruptions:** keep `BARGE_IN_REQUIRE_NAME = True`; spoken
-  interruptions then require both "Alyssa" and "stop". A headset microphone
-  can further reduce false speech detection.
-- **Plugin failed to load:** check the startup console; plugin import errors are
-  reported and the remaining plugins continue loading.
+- **Python isn't found** — reinstall from python.org and check "Add Python
+  to PATH" during setup.
+- **Setup seems stuck or broken** — delete the local `.venv` folder and rerun
+  `scripts\start_alyssa.bat`.
+- **Can't reach Ollama** — make sure Ollama's actually running and
+  `ollama list` shows the model you configured.
+- **No response from a cloud provider** — double-check the key and model in
+  Settings for whichever provider is selected.
+- **She keeps interrupting herself on background noise** — keep
+  `BARGE_IN_REQUIRE_NAME = True` (needs her name + "stop" together) and,
+  if that's still not enough, try a headset mic instead of open speakers.
+- **A plugin didn't load** — check the startup console. Import errors get
+  printed there and the rest of the plugins keep loading regardless.
