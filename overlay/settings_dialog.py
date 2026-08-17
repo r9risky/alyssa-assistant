@@ -25,6 +25,11 @@ import config
 import plugin_loader
 import updater
 
+try:
+    import sounddevice as sd
+except ImportError:  # pragma: no cover - sounddevice is a core dependency
+    sd = None
+
 from .app_shell import _set_console_visible
 from .credential_checks import (
     _atomic_write_text, _extract_elevenlabs_voice_id, _fetch_custom_openai_models,
@@ -623,6 +628,7 @@ class ConfigDialog(QDialog):
         self.tabs = _SidebarTabs(self)
         self.tabs.addTab(self._wrap_in_scroll_area(self._build_assistant_tab()), "Assistant")
         self.tabs.addTab(self._wrap_in_scroll_area(self._build_engine_tab()), "Engine")
+        self.tabs.addTab(self._wrap_in_scroll_area(self._build_audio_tab()), "Audio")
         self.tabs.addTab(self._wrap_in_scroll_area(self._build_companion_tab()), "Companion")
         # Not wrapped in _wrap_in_scroll_area like the tabs above - this
         # tab's own splitter (plugin list + code editor) needs to claim
@@ -1415,6 +1421,74 @@ class ConfigDialog(QDialog):
         self._engine_status_poll_timer.setInterval(1000)
         self._engine_status_poll_timer.timeout.connect(self._on_engine_status_poll_tick)
         self._engine_status_poll_ticks = 0
+
+        return w
+
+    # -- Audio tab (input/output device picker) -----------------------------
+    def _populate_device_combo(self, combo: QComboBox, channel_key: str, configured_value: str):
+        """Fills combo with "Default" plus every device exposing
+        channel_key (max_input_channels/max_output_channels), each item's
+        data holding the exact string that goes in config.py. Selects
+        "Default" or whichever device name contains configured_value."""
+        combo.addItem("Default", "default")
+        configured = str(configured_value or "").strip()
+        matched = False
+        try:
+            devices = sd.query_devices() if sd is not None else []
+        except Exception:
+            devices = []
+        seen_names = set()
+        for device in devices:
+            if device.get(channel_key, 0) <= 0:
+                continue
+            name = device["name"]
+            if name in seen_names:
+                # Same physical device often shows up once per Windows
+                # audio driver (MME, DirectSound, WASAPI, WDM-KS) - the
+                # matching in recorder.py/voice.py is name-based anyway,
+                # so listing every duplicate just adds clutter without
+                # adding a real choice.
+                continue
+            seen_names.add(name)
+            combo.addItem(name, name)
+            if configured and configured.lower() != "default" and configured.lower() in name.lower():
+                combo.setCurrentText(name)
+                matched = True
+        if not matched and configured and configured.lower() != "default":
+            # Configured device isn't currently plugged in/detected - keep
+            # its name selectable so saving other fields doesn't silently
+            # drop it.
+            combo.addItem(f"{configured} (not detected)", configured)
+            combo.setCurrentText(f"{configured} (not detected)")
+
+    def _build_audio_tab(self) -> _QW:
+        w = _QW()
+        w.setObjectName("tabPage")
+        form = QFormLayout(w)
+        form.setContentsMargins(16, 16, 16, 16)
+        form.setSpacing(10)
+        form.setLabelAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        form.setFieldGrowthPolicy(QFormLayout.ExpandingFieldsGrow)
+        form.setRowWrapPolicy(QFormLayout.WrapLongRows)
+        self._responsive_forms.append(form)
+
+        form.addRow("", self._section_header("Audio", "🔊", first=True))
+
+        self.audio_input_combo = QComboBox()
+        self._populate_device_combo(
+            self.audio_input_combo, "max_input_channels", getattr(config, "MICROPHONE_DEVICE", "")
+        )
+        self.audio_input_combo.setToolTip("Microphone Alyssa listens on.")
+        self.audio_input_combo.currentIndexChanged.connect(self._queue_assistant_apply)
+        form.addRow("Input:", self.audio_input_combo)
+
+        self.audio_output_combo = QComboBox()
+        self._populate_device_combo(
+            self.audio_output_combo, "max_output_channels", getattr(config, "AUDIO_OUTPUT_DEVICE", "")
+        )
+        self.audio_output_combo.setToolTip("Speaker/headset replies play through.")
+        self.audio_output_combo.currentIndexChanged.connect(self._queue_assistant_apply)
+        form.addRow("Output:", self.audio_output_combo)
 
         return w
 
@@ -2605,6 +2679,8 @@ TOOLS = [
             "WHISPER_MODEL_SIZE": self.whisper_model_combo.currentText().strip() or config.WHISPER_MODEL_SIZE,
             "WHISPER_DEVICE": self._whisper_device_display_to_value.get(self.whisper_device_combo.currentText(), "auto"),
             "WHISPER_COMPUTE_TYPE": self.whisper_compute_combo.currentText().strip() or "auto",
+            "MICROPHONE_DEVICE": self.audio_input_combo.currentData() or "default",
+            "AUDIO_OUTPUT_DEVICE": self.audio_output_combo.currentData() or "default",
             "CONVERSATION_MEMORY_TURNS": self.conversation_turns_spin.value(),
             "CONVERSATION_TIMEOUT_SECONDS": self.conversation_timeout_spin.value(),
             "MAX_SAVED_MEMORIES": self.max_saved_memories_spin.value(),
@@ -2668,6 +2744,7 @@ TOOLS = [
         old_hide = config.HIDE_CONSOLE_WINDOW
         old_whisper = (config.WHISPER_MODEL_SIZE, config.WHISPER_DEVICE, config.WHISPER_COMPUTE_TYPE)
         old_spotify = (config.SPOTIFY_CLIENT_ID, config.SPOTIFY_CLIENT_SECRET)
+        old_audio_output = getattr(config, "AUDIO_OUTPUT_DEVICE", "default")
         for key, value in values.items():
             setattr(config, key, value)
 
@@ -2691,6 +2768,16 @@ TOOLS = [
                 # CPU) without you having to click Refresh yourself.
                 if hasattr(self, "_poll_engine_status_after_change"):
                     self._poll_engine_status_after_change()
+            except ImportError:
+                pass
+        if old_audio_output != getattr(config, "AUDIO_OUTPUT_DEVICE", "default"):
+            # pygame's mixer only opens its output device once, at
+            # first use - without this, picking a new speaker here would
+            # patch config.py but replies would keep playing through the
+            # old device until a full restart.
+            try:
+                import voice
+                voice.reinit_mixer()
             except ImportError:
                 pass
         if old_spotify != (config.SPOTIFY_CLIENT_ID, config.SPOTIFY_CLIENT_SECRET):

@@ -1,4 +1,4 @@
-import pyautogui
+from .desktop import pyautogui
 
 from .confirmation import _confirm
 

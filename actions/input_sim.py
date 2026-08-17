@@ -1,6 +1,6 @@
 import time
 
-import pyautogui
+from .desktop import pyautogui
 import pyperclip
 
 from .confirmation import _confirm

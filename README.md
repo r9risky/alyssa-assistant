@@ -42,6 +42,37 @@ it with elevated privileges.
 
 These safeguards reduce accidental actions; they are not a security boundary.
 
+## Architecture
+
+The runtime is intentionally stacked so dependencies point inward rather than
+forming UI/automation/reasoning cycles:
+
+```text
+main.py / overlay
+        |
+        v
+brain (dialogue, providers, vision)
+        |
+        v
+actions (desktop/system adapters) ----> plugin_loader ----> plugins
+        |
+        v
+OS / audio / network libraries
+```
+
+`brain/tool_catalog.py` owns the static LLM tool schemas and
+`brain/tool_registry.py` owns the live built-in + plugin tool view used by both
+providers and dialogue. Providers therefore do not import dialogue orchestration.
+`brain/dialogue.py` owns orchestration and conversation state. Desktop
+automation is isolated behind `actions/desktop.py`, so importing the reasoning
+layer does not initialize PyAutoGUI or require a live desktop session. The few
+brain-owned capabilities used by actions (vision and conversation reset) are
+injected through `actions/bridges.py`; action modules do not import `brain`.
+
+This boundary keeps provider logic testable without a GUI, prevents circular
+dependencies from growing as plugins are added, and makes platform-specific
+automation replaceable independently of the assistant's reasoning layer.
+
 ## Requirements
 
 - Windows 10 or 11

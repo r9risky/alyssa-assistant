@@ -31,6 +31,36 @@ _mixer_lock = threading.Lock()
 _mixer_ready = False
 
 
+def _configured_output_device():
+    """Return the sounddevice output index matching AUDIO_OUTPUT_DEVICE, or
+    None to use the system default - same name-matching convention as
+    recorder._configured_input_device()."""
+    configured = getattr(config, "AUDIO_OUTPUT_DEVICE", None)
+    if not configured or str(configured).lower() == "default":
+        return None
+    if isinstance(configured, int):
+        return configured
+    needle = str(configured).lower()
+    for index, device in enumerate(sd.query_devices()):
+        if device["max_output_channels"] > 0 and needle in device["name"].lower():
+            return index
+    return None  # falls back to default rather than failing playback
+
+
+def _configured_output_device_name():
+    """Like _configured_output_device(), but returns the matched device's
+    exact name - pygame's mixer takes a device name, not a sounddevice
+    index."""
+    configured = getattr(config, "AUDIO_OUTPUT_DEVICE", None)
+    if not configured or str(configured).lower() == "default":
+        return None
+    needle = str(configured).lower()
+    for device in sd.query_devices():
+        if device["max_output_channels"] > 0 and needle in device["name"].lower():
+            return device["name"]
+    return None
+
+
 def _ensure_mixer():
     global _mixer_ready
     if _mixer_ready:
@@ -38,7 +68,33 @@ def _ensure_mixer():
     with _mixer_lock:
         if _mixer_ready:
             return
-        pygame.mixer.init()
+        _init_mixer_locked()
+        _mixer_ready = True
+
+
+def _init_mixer_locked():
+    device_name = _configured_output_device_name()
+    if device_name:
+        try:
+            pygame.mixer.init(devicename=device_name)
+            return
+        except Exception as e:
+            print(f"(couldn't open output device {device_name!r}, using default: {e})")
+    pygame.mixer.init()
+
+
+def reinit_mixer():
+    """Reopens the pygame mixer on the currently configured output device -
+    called from Settings when AUDIO_OUTPUT_DEVICE changes, so picking a new
+    speaker/headset takes effect immediately instead of needing a restart."""
+    global _mixer_ready
+    with _mixer_lock:
+        if _mixer_ready:
+            try:
+                pygame.mixer.quit()
+            except Exception:
+                pass
+        _init_mixer_locked()
         _mixer_ready = True
 
 
@@ -406,13 +462,22 @@ class StreamingSpeaker:
             if match is None:
                 break
             end = match.end()
-            if end < minimum and not self._pending[:end].rstrip().endswith(
-                (".", "!", "?")
-            ):
+            # Keep merging forward across boundaries - even real sentence
+            # ends (".", "!", "?") - until the chunk reaches the minimum
+            # length. A short standalone sentence ("Hello user.") used to
+            # be flushed to TTS immediately just because it ended in a
+            # period, so it started playing before the *next* clause had
+            # even begun synthesizing - that's the audible gap. Waiting
+            # for more text to accumulate first gives the next clause's
+            # synthesis a real head start.
+            while end < minimum:
                 next_match = self._BOUNDARY_RE.search(self._pending, end)
                 if next_match is None:
+                    end = None
                     break
                 end = next_match.end()
+            if end is None:
+                break
             chunk, self._pending = self._pending[:end], self._pending[end:]
             chunk = _smooth_speech_text(chunk)
             if chunk:
@@ -524,6 +589,7 @@ class StreamingSpeaker:
                                 dtype="int16",
                                 blocksize=buffer_bytes // 2,
                                 latency="low",
+                                device=_configured_output_device(),
                             )
                             stream.start()
                             self._start_playback()
@@ -537,6 +603,7 @@ class StreamingSpeaker:
                         dtype="int16",
                         blocksize=buffer_bytes // 2,
                         latency="low",
+                        device=_configured_output_device(),
                     )
                     stream.start()
                     self._start_playback()
@@ -683,6 +750,16 @@ def _speak_pipelined(sentences: list, on_playback_start=None, on_playback_end=No
             threads[i] = threading.Thread(target=synth, args=(i,), daemon=True)
             threads[i].start()
 
+    # Kick off synthesis for every sentence right away, in parallel, rather
+    # than only staying one sentence ahead of playback. A short sentence
+    # ("Hello user.") can finish playing well before a network TTS round
+    # trip for the *next* sentence completes, which is exactly what causes
+    # an audible gap ("Hello user. <pause> How may I help you today?").
+    # Starting every request immediately gives each later sentence the
+    # maximum possible head start to finish before playback reaches it.
+    for _i in range(len(sentences)):
+        ensure_started(_i)
+
     def cleanup_when_ready():
         # Runs on its own thread so an interrupted speak() call can return
         # immediately instead of waiting on synthesis that's still in
@@ -698,7 +775,6 @@ def _speak_pipelined(sentences: list, on_playback_start=None, on_playback_end=No
                 except OSError:
                     pass
 
-    ensure_started(0)
     started_playback = False
     interrupted = False
     played_through = 0
@@ -707,7 +783,6 @@ def _speak_pipelined(sentences: list, on_playback_start=None, on_playback_end=No
             if stop_event is not None and stop_event.is_set():
                 interrupted = True
                 break
-            ensure_started(i + 1)  # stay one sentence ahead of what's playing
             ready[i].wait()
             played_through = i + 1
             if errors[i] is not None:

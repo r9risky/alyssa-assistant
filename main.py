@@ -8,6 +8,29 @@ import sys
 import threading
 import time
 
+# When launched via pythonw.exe (as scripts/install_startup.bat does for
+# silent Task Scheduler startup) there's no console attached at all, and
+# Python leaves sys.stdout/stderr/stdin as None rather than a stream - not
+# just closed. Every plain print() call throughout this codebase (and
+# there are many, used for status/debugging) would then raise
+# AttributeError: 'NoneType' object has no attribute 'write' the instant
+# it runs. Uncaught, that silently kills the background assistant thread
+# (see overlay/app_shell.py's _start_worker) with nothing to show the
+# error in - so Alyssa never starts listening, while the Qt GUI on the
+# main thread looks completely normal since it never touched stdout.
+# Redirecting to os.devnull here, before any other import or print, makes
+# print() a harmless no-op instead - matching how it already behaves in
+# this mode (no console to show output in anyway).
+if sys.stdout is None or sys.stderr is None or sys.stdin is None:
+    import os
+    _devnull = open(os.devnull, "w")
+    if sys.stdout is None:
+        sys.stdout = _devnull
+    if sys.stderr is None:
+        sys.stderr = _devnull
+    if sys.stdin is None:
+        sys.stdin = open(os.devnull, "r")
+
 # PyInstaller exe: look for config.py next to the exe, not bundled inside it,
 # so editing config.py takes effect without a rebuild.
 if getattr(sys, "frozen", False):
@@ -446,7 +469,22 @@ def run_assistant_loop(bridge=None):
     # Audio captured by recorder.listen_for_barge_in if you interrupted the
     # previous reply (or the initial greeting) - consumed below instead of
     # making you repeat yourself. None on every ordinary pass.
-    pending_interrupt_audio = speak(f"{config.ASSISTANT_NAME} ready. At your service.", bridge)
+    #
+    # This call sits outside the while loop's try/except below, so it used
+    # to be a real crash risk: a transient hiccup here (TTS network error,
+    # audio device briefly busy/reclaimed, etc.) raised straight out of
+    # run_assistant_loop() and killed the whole listening thread before a
+    # single command was ever heard - looking exactly like a random crash,
+    # often right after waking the PC or right after another app grabbed
+    # the mic/speakers. Catching it here means a bad greeting just gets
+    # skipped instead of taking the whole assistant down with it.
+    try:
+        pending_interrupt_audio = speak(
+            f"{config.ASSISTANT_NAME} ready. At your service.", bridge
+        )
+    except Exception as e:
+        print(f"(startup greeting failed, continuing without it: {e})")
+        pending_interrupt_audio = None
 
     while True:
         try:
@@ -548,8 +586,13 @@ def run_assistant_loop(bridge=None):
         except KeyboardInterrupt:
             print("\nShutting down.")
             break
-        except Exception as e:
-            print(f"Error: {e}")
+        except Exception:
+            # Full traceback (not just str(e)) so a recurring "random
+            # crash" report is actually diagnosable from the console log
+            # or telemetry, instead of a bare one-line message that
+            # doesn't say where in the turn it happened.
+            import traceback
+            traceback.print_exc()
             print("Recovering and going back to listening...")
             time.sleep(1)  # brief backoff so a persistent failure doesn't spin
 

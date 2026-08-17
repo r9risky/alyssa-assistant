@@ -3,7 +3,7 @@ import time
 import urllib.parse
 import webbrowser
 
-import pyautogui
+from .desktop import pyautogui
 import requests
 
 import config

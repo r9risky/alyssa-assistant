@@ -9,9 +9,7 @@ import config
 import memory
 import plugin_loader
 
-import actions
-
-from . import confirmation
+from . import bridges, confirmation
 
 def get_datetime() -> str:
     """Returns the current local date and time."""
@@ -69,11 +67,8 @@ def reset_conversation() -> str:
     this session) - use when the user asks to start fresh, change the
     subject, or forget the current conversation. Does NOT touch anything
     saved with remember_fact - that permanent memory is untouched."""
-    # Imported here, not at module load time, to avoid a circular import
-    # with brain.py (which imports actions) - resolves fine once brain has
-    # finished importing, by the time this is actually called.
-    import brain
-    brain.clear_conversation_history()
+    if not bridges.clear_conversation():
+        return "I couldn't clear the conversation because the brain service is not initialized."
     return "Starting fresh - I've cleared what we were just discussing."
 
 
@@ -341,8 +336,9 @@ def run_diagnostics() -> str:
     if not getattr(config, "PLUGINS_ENABLED", True):
         _append_check("Plugins", True, "disabled in config.py")
     else:
-        errors = plugin_loader.get_load_errors() + actions._PLUGIN_LOAD_PROBLEMS
-        count = len(actions.PLUGIN_FUNCTIONS)
+        from . import PLUGIN_FUNCTIONS, _PLUGIN_LOAD_PROBLEMS
+        errors = plugin_loader.get_load_errors() + _PLUGIN_LOAD_PROBLEMS
+        count = len(PLUGIN_FUNCTIONS)
         if errors:
             _append_check("Plugins", False, f"{count} loaded, but ran into: {'; '.join(errors)}")
         else:

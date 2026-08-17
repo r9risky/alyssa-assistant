@@ -1,6 +1,6 @@
 import time
 
-import pyautogui
+from .desktop import pyautogui
 
 from .apps_and_files import (
     _SC_MAXIMIZE, _SC_MINIMIZE, _close_foreground_window,
