@@ -38,7 +38,7 @@ it with elevated privileges.
 - Edge TTS sends reply text to Microsoft's online speech service. Networked
   plugins may also contact their documented services.
 - `memory.json`, Google OAuth credentials, and OAuth tokens are ignored by Git.
-  Never commit API keys placed in `config.py`.
+  LLM API keys are stored outside the project; never commit other service credentials.
 
 These safeguards reduce accidental actions; they are not a security boundary.
 
@@ -122,7 +122,7 @@ Set `LLM_PROVIDER` in `config.py` to one of the following:
 
 | Value | Provider | Required setup |
 | --- | --- | --- |
-| `gemini` | Google Gemini (default) | Add a Gemini API key in Settings or `config.py` |
+| `gemini` | Google Gemini (default) | Add a Gemini API key in Settings or `GEMINI_API_KEY` |
 | `ollama` | Local Ollama model | Install Ollama and pull `OLLAMA_MODEL` |
 | `openai` | OpenAI | Set `OPENAI_API_KEY` |
 | `anthropic` | Anthropic | Set `ANTHROPIC_API_KEY` |
@@ -131,10 +131,13 @@ Set `LLM_PROVIDER` in `config.py` to one of the following:
 Example environment-variable setup:
 
 ```powershell
+setx GEMINI_API_KEY "your-key"
 setx OPENAI_API_KEY "your-key"
 setx ANTHROPIC_API_KEY "your-key"
 setx CUSTOM_LLM_API_KEY "your-key"
 ```
+
+LLM API keys entered in **Settings** are not written to `config.py`. They are stored in a per-user credential file outside the project (`%LOCALAPPDATA%\AlyssaAi\llm_credentials.dat` on Windows). Windows encrypts that file with DPAPI for the current user. Environment variables still take precedence and are recommended for managed deployments.
 
 Restart the terminal or Alyssa after using `setx`. Screen vision uses the
 selected provider; Ollama users must also pull the configured vision model,

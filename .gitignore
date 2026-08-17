@@ -28,3 +28,8 @@ build_alyssa.bat
 build/
 dist/
 *.spec
+
+# LLM API credentials are stored outside the repository by credential_store.py.
+# Ignore these too if ALYSSA_DATA_DIR is intentionally pointed into the project.
+llm_credentials.dat
+.llm_credentials-*

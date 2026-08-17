@@ -760,7 +760,7 @@ def _call_model_with_error_handling(
         if e.response is not None:
             print(f"[{provider_label} error {status}] {e.response.text}")
         if status in (401, 403):
-            return None, f"{provider_label} rejected my API key - double check it in config.py."
+            return None, f"{provider_label} rejected my API key - double check it in Settings or your environment variables."
         if status == 429:
             if config.LLM_PROVIDER == "gemini":
                 from .providers.gemini import _describe_gemini_429

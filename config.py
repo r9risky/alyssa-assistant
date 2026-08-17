@@ -3,6 +3,8 @@ Central Configuration Settings for Alyssa Assistant.
 """
 import os
 
+from credential_store import get_llm_credential
+
 # --- Identity ---
 ASSISTANT_NAME = 'Alyssa'
 CREATOR_NAME = "Riya"
@@ -21,11 +23,11 @@ OLLAMA_URL = "http://localhost:11434/api/chat"
 OLLAMA_KEEP_ALIVE = "10m"
 
 # --- Gemini Settings ---
-GEMINI_API_KEY = ''
+GEMINI_API_KEY = get_llm_credential("GEMINI_API_KEY")
 GEMINI_MODEL = 'gemini-3.5-flash-lite'
 
 # --- OpenAI Settings ---
-OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "")
+OPENAI_API_KEY = get_llm_credential("OPENAI_API_KEY")
 OPENAI_MODEL = 'gpt-5-mini'
 OPENAI_BASE_URL = "https://api.openai.com/v1"
 
@@ -35,11 +37,11 @@ SPOTIFY_CLIENT_SECRET = os.environ.get("SPOTIFY_CLIENT_SECRET", "")
 YOUTUBE_API_KEY = os.environ.get("YOUTUBE_API_KEY", "")
 
 # --- Anthropic Settings ---
-ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
+ANTHROPIC_API_KEY = get_llm_credential("ANTHROPIC_API_KEY")
 ANTHROPIC_MODEL = 'claude-sonnet-5'
 
 # --- Custom OpenAI-Compatible Provider ---
-CUSTOM_API_KEY = os.environ.get("CUSTOM_LLM_API_KEY", "")
+CUSTOM_API_KEY = get_llm_credential("CUSTOM_API_KEY")
 CUSTOM_BASE_URL = 'https://openrouter.ai/api/v1'
 CUSTOM_MODEL = 'meta-llama/llama-3.3-70b-instruct'
 LLM_MAX_OUTPUT_TOKENS = 256
@@ -73,7 +75,7 @@ VOCABULARY_CORRECTIONS = [
 ]
 
 # --- Audio Recording ---
-MICROPHONE_DEVICE = 'default'
+MICROPHONE_DEVICE = 'SteelSeries Sonar - Microphone (SteelSeries Sonar Virtual Audio Device)'
 AUDIO_OUTPUT_DEVICE = 'default'  # "default" or a (partial) speaker/headset name
 SAMPLE_RATE = 16000
 SILENCE_SECONDS = 0.30

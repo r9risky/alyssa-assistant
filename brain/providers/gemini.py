@@ -91,9 +91,7 @@ def _messages_to_gemini(messages):
 def _call_gemini(messages, force_tools: bool = False, on_text_delta=None, cancel_event=None):
     if not config.GEMINI_API_KEY:
         raise RuntimeError(
-            "GEMINI_API_KEY isn't set. Set it as an environment variable "
-            "(or paste it directly into config.py) - see the comments in "
-            "config.py for exact steps."
+            "GEMINI_API_KEY isn't set. Add it in Settings or set the GEMINI_API_KEY environment variable."
         )
 
     system_text, contents = _messages_to_gemini(messages)
@@ -237,7 +235,7 @@ def _describe_image_gemini(image_bytes: bytes, mime_type: str, prompt: str) -> s
         if e.response is not None:
             print(f"[Gemini vision error {status}] {e.response.text}")
         if status in (401, 403):
-            return "Gemini rejected my API key - double check GEMINI_API_KEY in config.py."
+            return "Gemini rejected my API key - double check it in Settings or GEMINI_API_KEY."
         if status == 429:
             return _describe_gemini_429(e.response)
         if status == 503:

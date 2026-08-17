@@ -92,9 +92,7 @@ def _messages_to_anthropic(messages):
 def _call_anthropic(messages, on_text_delta=None, cancel_event=None):
     if not config.ANTHROPIC_API_KEY:
         raise RuntimeError(
-            "ANTHROPIC_API_KEY isn't set. Set it as an environment variable "
-            "(or paste it directly into config.py) - see the comments in "
-            "config.py for exact steps."
+            "ANTHROPIC_API_KEY isn't set. Add it in Settings or set the ANTHROPIC_API_KEY environment variable."
         )
 
     system_text, anthropic_messages = _messages_to_anthropic(messages)
@@ -118,7 +116,7 @@ def _call_anthropic(messages, on_text_delta=None, cancel_event=None):
         _ANTHROPIC_URL, headers=headers, json=body, timeout=(10, 60), stream=True
     )
     if response.status_code in (401, 403):
-        raise RuntimeError("Anthropic rejected the API key - double check ANTHROPIC_API_KEY in config.py.")
+        raise RuntimeError("Anthropic rejected the API key - double check it in Settings or ANTHROPIC_API_KEY.")
     response.raise_for_status()
     text_chunks = []
     streamed_calls = {}
@@ -219,7 +217,7 @@ def _describe_image_anthropic(image_bytes: bytes, mime_type: str, prompt: str) -
         if e.response is not None:
             print(f"[Anthropic vision error {status}] {e.response.text}")
         if status in (401, 403):
-            return "Anthropic rejected my API key - double check ANTHROPIC_API_KEY in config.py."
+            return "Anthropic rejected my API key - double check it in Settings or ANTHROPIC_API_KEY."
         if status == 429:
             return "I'm being rate-limited by Anthropic right now - give it a moment."
         return f"Anthropic returned an error ({status}) while looking at the screen."

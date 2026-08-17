@@ -86,7 +86,7 @@ def _call_openai_compatible(
     )
     if response.status_code in (401, 403):
         raise RuntimeError(
-            f"{provider_label} rejected the API key - double check it in config.py."
+            f"{provider_label} rejected the API key - double check it in Settings or your environment variables."
         )
     response.raise_for_status()
     text_chunks = []
@@ -216,7 +216,7 @@ def _describe_image_openai_compatible(
         if e.response is not None:
             print(f"[{provider_label} vision error {status}] {e.response.text}")
         if status in (401, 403):
-            return f"{provider_label} rejected my API key - double check it in config.py."
+            return f"{provider_label} rejected my API key - double check it in Settings or your environment variables."
         if status == 429:
             return f"I'm being rate-limited by {provider_label} right now - give it a moment."
         return f"{provider_label} returned an error ({status}) while looking at the screen."

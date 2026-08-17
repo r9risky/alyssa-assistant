@@ -22,6 +22,7 @@ _QW = QWidget
 import actions
 import brain
 import config
+import credential_store
 import plugin_loader
 import updater
 
@@ -2711,9 +2712,11 @@ TOOLS = [
             "SPOTIFY_CLIENT_SECRET": self._original_spotify_client_secret,
             "YOUTUBE_API_KEY": self._original_youtube_key,
         }
+        llm_secret_keys = set(credential_store.LLM_CREDENTIAL_ENV)
         return {
             key: repr(value) for key, value in values.items()
-            if key not in originals or value != originals[key]
+            if key not in llm_secret_keys
+            and (key not in originals or value != originals[key])
         }
 
     def _queue_assistant_apply(self, *args):
@@ -2726,10 +2729,20 @@ TOOLS = [
         self._queue_assistant_apply()
 
     def _apply_assistant_live(self):
-        # Patch config.py on disk + this session's already-imported config
-        # module, so changes take effect immediately without a restart.
+        # Persist ordinary settings to config.py and LLM secrets to the secure
+        # per-user credential store, then update this session immediately.
         values = self._gather_assistant_values()
         updates = self._gather_assistant_updates(values)
+        llm_secrets = {
+            key: values[key]
+            for key in credential_store.LLM_CREDENTIAL_ENV
+            if values[key] != {
+                "GEMINI_API_KEY": self._original_gemini_key,
+                "OPENAI_API_KEY": self._original_openai_key,
+                "ANTHROPIC_API_KEY": self._original_anthropic_key,
+                "CUSTOM_API_KEY": self._original_custom_key,
+            }[key]
+        }
         try:
             config_path = os.path.join(_BASE_DIR, "config.py")
             with open(config_path, "r", encoding="utf-8") as f:
@@ -2737,8 +2750,14 @@ TOOLS = [
             for key, literal in updates.items():
                 text = _patch_config_line(text, key, literal)
             _atomic_write_text(config_path, text)
+            if llm_secrets:
+                credential_store.save_llm_credentials(llm_secrets)
+                self._original_gemini_key = values["GEMINI_API_KEY"]
+                self._original_openai_key = values["OPENAI_API_KEY"]
+                self._original_anthropic_key = values["ANTHROPIC_API_KEY"]
+                self._original_custom_key = values["CUSTOM_API_KEY"]
         except OSError as e:
-            QMessageBox.warning(self, "Settings", f"Couldn't write changes to config.py: {e}")
+            QMessageBox.warning(self, "Settings", f"Couldn't save settings securely: {e}")
             return
 
         old_hide = config.HIDE_CONSOLE_WINDOW
