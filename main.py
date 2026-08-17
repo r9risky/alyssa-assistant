@@ -344,9 +344,9 @@ def run_preflight_checks(bridge=None) -> bool:
             f"NOTE: {env_var} isn't set yet.\n"
             f"Set it as an environment variable, e.g. in PowerShell:\n"
             f'    setx {env_var} "your-key-here"\n'
-            "(close and reopen your terminal after running that), or paste it "
-            "directly into config.py - see the comments there, or right-click "
-            "the companion and use the Settings window."
+            "(close and reopen your terminal after running that), or right-click "
+            "the companion and save the key in Settings. Alyssa stores LLM keys "
+            "outside the project through credential_store.py."
         )
 
     if config.LLM_PROVIDER == "gemini":
@@ -355,9 +355,9 @@ def run_preflight_checks(bridge=None) -> bool:
                 "NOTE: GEMINI_API_KEY isn't set yet.\n"
                 "Set it as an environment variable, e.g. in PowerShell:\n"
                 '    setx GEMINI_API_KEY "your-key-here"\n'
-                "(close and reopen your terminal after running that), or paste it "
-                "directly into config.py - see the comments there, or right-click "
-                "the companion and use the Settings window."
+                "(close and reopen your terminal after running that), or right-click "
+                "the companion and save the key in Settings. Alyssa stores LLM keys "
+                "outside the project through credential_store.py."
             )
             if bridge is not None:
                 bridge.gemini_key_needed.emit()
@@ -514,6 +514,14 @@ def run_assistant_loop(bridge=None):
                         except queue.Empty:
                             pass
                     if typed_text is None:
+                        # Normally record_command() has already spent the full
+                        # listening window here. Some virtual/driver devices can
+                        # return silent buffers unnaturally fast, though; a tiny
+                        # backoff prevents that failure mode from becoming a hot
+                        # CPU/console loop.
+                        time.sleep(max(0.0, float(getattr(
+                            config, "IDLE_LISTEN_RETRY_DELAY_SECONDS", 0.10
+                        ))))
                         continue
 
             if typed_text is not None:

@@ -59,7 +59,7 @@ STT_PROVIDER = "auto"  # "auto", "elevenlabs_realtime", or "local"
 STT_REALTIME_MODEL = "scribe_v2_realtime"
 STT_LANGUAGE = "en"
 STT_FINAL_TIMEOUT_SECONDS = 2.0
-WHISPER_MODEL_SIZE = 'base.en'
+WHISPER_MODEL_SIZE = 'small.en'
 WHISPER_DEVICE = 'auto'
 WHISPER_COMPUTE_TYPE = 'auto'
 WHISPER_CPU_THREADS = 0
@@ -75,13 +75,26 @@ VOCABULARY_CORRECTIONS = [
 ]
 
 # --- Audio Recording ---
-MICROPHONE_DEVICE = 'SteelSeries Sonar - Microphone (SteelSeries Sonar Virtual Audio Device)'
+MICROPHONE_DEVICE = 'SteelSeries Sonar - Microphone '
 AUDIO_OUTPUT_DEVICE = 'default'  # "default" or a (partial) speaker/headset name
 SAMPLE_RATE = 16000
 SILENCE_SECONDS = 0.30
 MAX_RECORD_SECONDS = 15
 VAD_AGGRESSIVENESS = 2
 MIN_SPEECH_MS = 120
+# WebRTC VAD can reject audio from processed/virtual microphones (for example
+# SteelSeries Sonar). The adaptive RMS gate is a fallback, not a replacement.
+VAD_ENERGY_FALLBACK_ENABLED = True
+VAD_ENERGY_THRESHOLD_DBFS = -50.0
+VAD_ENERGY_MARGIN_DB = 10.0
+VAD_INITIAL_NOISE_FLOOR_DBFS = -60.0
+VAD_NOISE_FLOOR_ALPHA = 0.03
+VAD_PREROLL_MS = 300
+# Turn this on temporarily when diagnosing microphone routing/levels.
+DEBUG_AUDIO_LEVELS = False
+# Small safety backoff if a virtual/driver device returns silent buffers faster
+# than real time. Normally this is only paid after a full silent listen pass.
+IDLE_LISTEN_RETRY_DELAY_SECONDS = 0.10
 
 # --- Adaptive Silence Timeout ---
 ADAPTIVE_SILENCE_ENABLED = True
@@ -142,7 +155,7 @@ REMINDER_UPCOMING_WINDOW_HOURS = 24
 
 # --- Desktop Companion GUI ---
 ENABLE_COMPANION_GUI = True
-HIDE_CONSOLE_WINDOW = True  # "Show command prompt" defaults to off
+HIDE_CONSOLE_WINDOW = False  # "Show command prompt" defaults to off
 
 # --- Caveman Mode (runtime-toggled via plugins/caveman_mode.py) ---
 # None = off. Otherwise "lite" / "full" / "ultra" - shrinks Alyssa's own

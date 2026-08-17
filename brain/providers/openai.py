@@ -145,9 +145,9 @@ def _call_openai_compatible(
 def _call_openai(messages, on_text_delta=None, cancel_event=None):
     if not config.OPENAI_API_KEY:
         raise RuntimeError(
-            "OPENAI_API_KEY isn't set. Set it as an environment variable "
-            "(or paste it directly into config.py) - see the comments in "
-            "config.py for exact steps."
+            "OPENAI_API_KEY isn't set. Set it as an environment variable or "
+            "save it through Alyssa Settings; LLM keys are stored outside the "
+            "project by credential_store.py."
         )
     return _call_openai_compatible(
         messages,

@@ -1,6 +1,7 @@
 """Records a command from the microphone until you go quiet."""
 
 import contextlib
+from collections import deque
 import queue
 import threading
 import time
@@ -13,6 +14,7 @@ import webrtcvad
 import config
 import nameutil
 import transcribe
+from audio_gate import AdaptiveSpeechGate
 
 # How much longer than MAX_RECORD_SECONDS to wait before deciding the mic
 # read itself has hung (device unplugged, driver stall, etc).
@@ -29,6 +31,20 @@ _recovery_lock = threading.Lock()
 # see _open_stream() and the docstring below for why that matters.
 _active_streams = 0
 _active_streams_lock = threading.Lock()
+
+# WebRTC VAD remains the primary speech detector, but processed/virtual
+# microphones can produce audio that it rejects even when the user is clearly
+# speaking. Keep one session-wide adaptive energy fallback so its learned noise
+# floor survives the 15-second listening passes.
+_speech_gate = AdaptiveSpeechGate(
+    enabled=getattr(config, "VAD_ENERGY_FALLBACK_ENABLED", True),
+    absolute_threshold_dbfs=getattr(config, "VAD_ENERGY_THRESHOLD_DBFS", -50.0),
+    margin_db=getattr(config, "VAD_ENERGY_MARGIN_DB", 10.0),
+    initial_noise_floor_dbfs=getattr(config, "VAD_INITIAL_NOISE_FLOOR_DBFS", -60.0),
+    noise_alpha=getattr(config, "VAD_NOISE_FLOOR_ALPHA", 0.03),
+)
+_speech_gate_lock = threading.Lock()
+_listening_banner_printed = False
 
 
 # How long to keep retrying for the configured microphone on the very
@@ -201,36 +217,41 @@ def update_speaking_rate(word_count: int) -> None:
 
 
 def _record_command_blocking(result_q: "queue.Queue", text_queue: "Optional[queue.Queue]" = None) -> None:
-    """The actual (blocking) recording work. Runs on a worker thread so the
-    caller can enforce a timeout - see record_command() below. Puts an
-    (audio_or_None, error_or_None) tuple on result_q when done, or never
-    returns if stream.read() itself hangs.
+    """Record one command, using WebRTC VAD plus an adaptive energy fallback.
 
-    If text_queue is given (the desktop companion's typed-chat box), this
-    checks it every ~30ms and abandons the recording pass early the moment
-    a typed message shows up."""
+    A rolling pre-roll keeps the beginning of the utterance while the detector
+    waits for MIN_SPEECH_MS of sustained speech. This is especially important
+    for short wake/name phrases such as "Alyssa".
+    """
     try:
         vad = webrtcvad.Vad(getattr(config, "VAD_AGGRESSIVENESS", 2))
         frame_ms = _FRAME_MS
         frame_size = int(config.SAMPLE_RATE * frame_ms / 1000)
 
         silence_seconds = _current_silence_seconds()
-        silence_frames_needed = int(silence_seconds * 1000 / frame_ms)
-        max_frames = int(config.MAX_RECORD_SECONDS * 1000 / frame_ms)
-        # Require a short sustained run of speech frames (not just one) to
-        # filter out stray noise blips (click, cough, chair creak).
+        silence_frames_needed = max(1, int(silence_seconds * 1000 / frame_ms))
+        max_frames = max(1, int(config.MAX_RECORD_SECONDS * 1000 / frame_ms))
         min_speech_frames = max(
             1, int(getattr(config, "MIN_SPEECH_MS", 120) / frame_ms)
         )
+        pre_roll_frames = max(
+            min_speech_frames,
+            int(getattr(config, "VAD_PREROLL_MS", 300) / frame_ms),
+        )
 
-        if getattr(config, "DEBUG_PRINT_TRANSCRIPTS", True):
-            print(f"(Pause-before-done threshold this pass: {silence_seconds:.2f}s)")
-        print("Listening for your command...")
+        global _listening_banner_printed
+        if not _listening_banner_printed:
+            print("Listening for your command...")
+            _listening_banner_printed = True
+
         frames = []
+        pre_roll = deque(maxlen=pre_roll_frames)
         silent_run = 0
         speech_run = 0
         heard_speech = False
         total_speech_frames = 0
+        peak_dbfs = -120.0
+        last_gate = None
         streaming_stt = transcribe.start_streaming()
         stt_frames = []
 
@@ -242,18 +263,48 @@ def _record_command_blocking(result_q: "queue.Queue", text_queue: "Optional[queu
         ) as stream:
             for _ in range(max_frames):
                 if text_queue is not None and not text_queue.empty():
-                    # Typed message arrived - stop now (heard_speech stays
-                    # False, like an ordinary "nothing said" pass); partial
-                    # audio is dropped.
                     print("Typed message arrived - pausing mic listen.")
                     break
 
-                chunk, _ = stream.read(frame_size)
+                chunk, overflowed = stream.read(frame_size)
+                if overflowed and getattr(config, "DEBUG_AUDIO_LEVELS", False):
+                    print("(microphone input overflowed; continuing)")
                 chunk = chunk.flatten()
+
+                webrtc_speech = vad.is_speech(chunk.tobytes(), config.SAMPLE_RATE)
+                with _speech_gate_lock:
+                    gate = _speech_gate.classify(chunk, webrtc_speech)
+                last_gate = gate
+                peak_dbfs = max(peak_dbfs, gate.level_dbfs)
+                is_speech = gate.speech
+
+                if not heard_speech:
+                    pre_roll.append(chunk)
+                    if is_speech:
+                        speech_run += 1
+                        silent_run = 0
+                        if speech_run >= min_speech_frames:
+                            heard_speech = True
+                            frames.extend(pre_roll)
+                            pre_roll.clear()
+                            total_speech_frames += speech_run
+                            if streaming_stt is not None and frames:
+                                try:
+                                    streaming_stt.send(np.concatenate(frames).tobytes())
+                                except Exception as e:
+                                    print(f"(realtime STT stream failed, using local Whisper: {e})")
+                                    streaming_stt.disconnect()
+                                    streaming_stt = None
+                    else:
+                        speech_run = 0
+                    continue
+
+                # Once speech has started, keep the whole utterance until the
+                # configured trailing-silence threshold is reached.
                 frames.append(chunk)
                 if streaming_stt is not None:
                     stt_frames.append(chunk)
-                    if len(stt_frames) >= 4:  # 120 ms: low latency without tiny WS frames
+                    if len(stt_frames) >= 4:  # 120 ms chunks for low WS overhead
                         try:
                             streaming_stt.send(np.concatenate(stt_frames).tobytes())
                             stt_frames.clear()
@@ -262,38 +313,39 @@ def _record_command_blocking(result_q: "queue.Queue", text_queue: "Optional[queu
                             streaming_stt.disconnect()
                             streaming_stt = None
 
-                is_speech = vad.is_speech(chunk.tobytes(), config.SAMPLE_RATE)
-
                 if is_speech:
-                    speech_run += 1
                     silent_run = 0
                     total_speech_frames += 1
-                    if speech_run >= min_speech_frames:
-                        heard_speech = True
                 else:
                     silent_run += 1
-                    speech_run = 0
 
-                if heard_speech and silent_run >= silence_frames_needed:
+                if silent_run >= silence_frames_needed:
                     break
 
-        print("Done listening.")
-
-        if streaming_stt is not None:
+        if streaming_stt is not None and heard_speech:
             try:
                 if stt_frames:
                     streaming_stt.send(np.concatenate(stt_frames).tobytes())
                 streamed_text = streaming_stt.finish()
-                if heard_speech and streamed_text:
+                if streamed_text:
                     transcribe.cache_streaming_transcript(streamed_text)
             except Exception as e:
                 print(f"(realtime STT finalization failed, using local Whisper: {e})")
                 streaming_stt.disconnect()
 
         if not heard_speech:
+            if getattr(config, "DEBUG_AUDIO_LEVELS", False) and last_gate is not None:
+                print(
+                    f"(No speech detected; peak={peak_dbfs:.1f} dBFS, "
+                    f"energy gate={last_gate.threshold_dbfs:.1f} dBFS, "
+                    f"noise floor={last_gate.noise_floor_dbfs:.1f} dBFS)"
+                )
             result_q.put((None, None))
             return
 
+        if getattr(config, "DEBUG_PRINT_TRANSCRIPTS", True):
+            print(f"(Pause-before-done threshold this turn: {silence_seconds:.2f}s)")
+        print("Done listening - transcribing...")
         global _last_speech_frames
         with _rate_lock:
             _last_speech_frames = total_speech_frames
