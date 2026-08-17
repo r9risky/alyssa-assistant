@@ -33,9 +33,24 @@ if sys.stdout is None or sys.stderr is None or sys.stdin is None:
 
 # PyInstaller exe: look for config.py next to the exe, not bundled inside it,
 # so editing config.py takes effect without a rebuild.
+import os
 if getattr(sys, "frozen", False):
-    import os
     sys.path.insert(0, os.path.dirname(sys.executable))
+    _config_dir = os.path.dirname(sys.executable)
+else:
+    _config_dir = os.path.dirname(os.path.abspath(__file__))
+
+# One-time upgrade path: if this install still has real API keys sitting
+# in config.py as plaintext literals (how the Settings window used to
+# save them, before credential_store.py moved secrets into the OS
+# keyring), move them into the keyring and blank the literals - before
+# config.py is imported below, so the values it reads via
+# credential_store.get_secret() are already in place either way. See
+# credential_store.py's docstring for what this is protecting against.
+import credential_store as _cred
+_migrated = _cred.migrate_legacy_plaintext_keys(os.path.join(_config_dir, "config.py"))
+if _migrated:
+    print(f"Moved {', '.join(_migrated)} from config.py into the OS keyring.")
 
 import config
 

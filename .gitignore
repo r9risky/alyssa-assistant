@@ -1,4 +1,8 @@
 # --- Secrets & personal data — never commit these ---
+# NOTE: API keys (Gemini/OpenAI/Anthropic/ElevenLabs/custom provider) and
+# Spotify/YouTube credentials now live in the OS keyring via
+# credential_store.py - config.py itself no longer holds secret values,
+# so it's fine to keep tracking it in git.
 # Google OAuth client secret (plugins/calendar_gmail.py) - user-provided,
 # downloaded from Google Cloud Console.
 credentials.json
