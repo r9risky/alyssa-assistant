@@ -140,7 +140,7 @@ REMINDER_UPCOMING_WINDOW_HOURS = 24
 
 # --- Desktop Companion GUI ---
 ENABLE_COMPANION_GUI = True
-HIDE_CONSOLE_WINDOW = False  # "Show command prompt" defaults to off
+HIDE_CONSOLE_WINDOW = True  # "Show command prompt" defaults to off
 
 # --- Caveman Mode (runtime-toggled via plugins/caveman_mode.py) ---
 # None = off. Otherwise "lite" / "full" / "ultra" - shrinks Alyssa's own
@@ -152,6 +152,6 @@ CAVEMAN_MODE = None
 LAUNCH_APPS_IN_BACKGROUND = True
 APP_LAUNCH_SETTLE_SECONDS = 1.5
 DEBUG_PRINT_TRANSCRIPTS = True
-CONFIRM_BEFORE_ACTIONS = False
+CONFIRM_BEFORE_ACTIONS = True
 
 

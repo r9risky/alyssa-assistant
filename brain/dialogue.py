@@ -857,10 +857,21 @@ def handle_command(
     for _ in range(max_turns):
         has_tool_result = any(m.get("role") == "tool" for m in messages)
 
+        # Once the "opened <app>" confirmation has already been spoken
+        # (see already_delivered_partial below), this and any further
+        # model calls are purely a silent follow-up check - is there a
+        # second action left to do, like "open Discord and type hello"?
+        # If we still streamed the tokens live here, a plain "Chrome is
+        # open, what would you like to search for?" reply would get
+        # spoken over the top of the confirmation already given, even
+        # though its *return value* is correctly suppressed further down
+        # (already_delivered_partial -> return ""). Passing None instead
+        # of on_text_delta stops that duplicate speech at the source;
+        # tool calls in the response still work fine without streaming.
         result, error_reply = _call_model_with_error_handling(
             messages,
             provider_label,
-            on_text_delta=on_text_delta,
+            on_text_delta=(None if already_delivered_partial else on_text_delta),
             cancel_event=cancel_event,
         )
         if error_reply is not None:
