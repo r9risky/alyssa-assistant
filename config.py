@@ -1,7 +1,7 @@
 """
 Central Configuration Settings for Alyssa Assistant.
 """
-import os
+import credential_store as _cred
 
 # --- Identity ---
 ASSISTANT_NAME = 'Alyssa'
@@ -21,25 +21,25 @@ OLLAMA_URL = "http://localhost:11434/api/chat"
 OLLAMA_KEEP_ALIVE = "10m"
 
 # --- Gemini Settings ---
-GEMINI_API_KEY = ''
+GEMINI_API_KEY = _cred.get_secret('GEMINI_API_KEY')  # env var GEMINI_API_KEY still overrides
 GEMINI_MODEL = 'gemini-3.5-flash-lite'
 
 # --- OpenAI Settings ---
-OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "")
+OPENAI_API_KEY = _cred.get_secret('OPENAI_API_KEY')  # env var OPENAI_API_KEY still overrides
 OPENAI_MODEL = 'gpt-5-mini'
 OPENAI_BASE_URL = "https://api.openai.com/v1"
 
 # --- Integrations & APIs ---
-SPOTIFY_CLIENT_ID = os.environ.get("SPOTIFY_CLIENT_ID", "")
-SPOTIFY_CLIENT_SECRET = os.environ.get("SPOTIFY_CLIENT_SECRET", "")
-YOUTUBE_API_KEY = os.environ.get("YOUTUBE_API_KEY", "")
+SPOTIFY_CLIENT_ID = _cred.get_secret('SPOTIFY_CLIENT_ID')  # env var SPOTIFY_CLIENT_ID still overrides
+SPOTIFY_CLIENT_SECRET = _cred.get_secret('SPOTIFY_CLIENT_SECRET')  # env var SPOTIFY_CLIENT_SECRET still overrides
+YOUTUBE_API_KEY = _cred.get_secret('YOUTUBE_API_KEY')  # env var YOUTUBE_API_KEY still overrides
 
 # --- Anthropic Settings ---
-ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
+ANTHROPIC_API_KEY = _cred.get_secret('ANTHROPIC_API_KEY')  # env var ANTHROPIC_API_KEY still overrides
 ANTHROPIC_MODEL = 'claude-sonnet-5'
 
 # --- Custom OpenAI-Compatible Provider ---
-CUSTOM_API_KEY = os.environ.get("CUSTOM_LLM_API_KEY", "")
+CUSTOM_API_KEY = _cred.get_secret('CUSTOM_API_KEY')  # env var CUSTOM_LLM_API_KEY still overrides
 CUSTOM_BASE_URL = 'https://openrouter.ai/api/v1'
 CUSTOM_MODEL = 'meta-llama/llama-3.3-70b-instruct'
 LLM_MAX_OUTPUT_TOKENS = 256
@@ -102,7 +102,7 @@ EDGE_TTS_VOLUME = '+0%'
 EDGE_TTS_PITCH = "+0Hz"
 
 # ElevenLabs Options
-ELEVENLABS_API_KEY = ""
+ELEVENLABS_API_KEY = _cred.get_secret('ELEVENLABS_API_KEY')  # env var not supported for this one; use the Settings window
 ELEVENLABS_VOICE_ID = ''
 ELEVENLABS_MODEL = 'eleven_flash_v2_5'
 

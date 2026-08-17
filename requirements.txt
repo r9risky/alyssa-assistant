@@ -1,5 +1,8 @@
 faster-whisper
 sounddevice
+# OS-native secure storage for API keys (Windows Credential Manager /
+# macOS Keychain / Linux Secret Service) - see credential_store.py.
+keyring
 numpy
 pyautogui
 Pillow

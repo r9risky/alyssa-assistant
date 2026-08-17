@@ -22,6 +22,7 @@ _QW = QWidget
 import actions
 import brain
 import config
+import credential_store
 import plugin_loader
 import updater
 
@@ -2699,7 +2700,11 @@ TOOLS = [
             "YOUTUBE_API_KEY": self.youtube_key_edit.text().strip(),
         }
 
-    def _gather_assistant_updates(self, values=None) -> dict:
+    def _gather_secret_updates(self, values=None) -> dict:
+        """Secret fields changed since the dialog opened (or since the
+        last apply). These never get patched into config.py as text -
+        see _apply_assistant_live, which routes them to
+        credential_store.set_secret() instead."""
         values = values or self._gather_assistant_values()
         originals = {
             "GEMINI_API_KEY": self._original_gemini_key,
@@ -2712,8 +2717,19 @@ TOOLS = [
             "YOUTUBE_API_KEY": self._original_youtube_key,
         }
         return {
+            key: values[key] for key in originals
+            if values[key] != originals[key]
+        }
+
+    def _gather_assistant_updates(self, values=None) -> dict:
+        """Non-secret fields to patch into config.py as text. Secret
+        fields (credential_store.SECRET_ENV_VARS) are excluded here on
+        purpose - they're persisted via _gather_secret_updates() /
+        credential_store.set_secret() instead, never as plaintext."""
+        values = values or self._gather_assistant_values()
+        return {
             key: repr(value) for key, value in values.items()
-            if key not in originals or value != originals[key]
+            if key not in credential_store.SECRET_ENV_VARS
         }
 
     def _queue_assistant_apply(self, *args):
@@ -2726,8 +2742,11 @@ TOOLS = [
         self._queue_assistant_apply()
 
     def _apply_assistant_live(self):
-        # Patch config.py on disk + this session's already-imported config
-        # module, so changes take effect immediately without a restart.
+        # Patch config.py on disk (non-secret settings only) + this
+        # session's already-imported config module, so changes take
+        # effect immediately without a restart. API keys/secrets never
+        # touch config.py - they go to the OS keyring via
+        # credential_store instead, so they aren't a plaintext file.
         values = self._gather_assistant_values()
         updates = self._gather_assistant_updates(values)
         try:
@@ -2740,6 +2759,29 @@ TOOLS = [
         except OSError as e:
             QMessageBox.warning(self, "Settings", f"Couldn't write changes to config.py: {e}")
             return
+
+        secret_updates = self._gather_secret_updates(values)
+        if secret_updates:
+            failed = [key for key, value in secret_updates.items() if not credential_store.set_secret(key, value)]
+            # Resync the "original" trackers (used to detect future changes
+            # and to restore on Cancel) from what was actually attempted -
+            # a failed set_secret leaves the keyring untouched, so its
+            # tracker stays at the old value in that case.
+            self._original_gemini_key = self.gemini_key_edit.text().strip() if "GEMINI_API_KEY" not in failed else self._original_gemini_key
+            self._original_openai_key = self.openai_key_edit.text().strip() if "OPENAI_API_KEY" not in failed else self._original_openai_key
+            self._original_anthropic_key = self.anthropic_key_edit.text().strip() if "ANTHROPIC_API_KEY" not in failed else self._original_anthropic_key
+            self._original_custom_key = self.custom_key_edit.text().strip() if "CUSTOM_API_KEY" not in failed else self._original_custom_key
+            self._original_elevenlabs_key = self.elevenlabs_key_edit.text().strip() if "ELEVENLABS_API_KEY" not in failed else self._original_elevenlabs_key
+            self._original_spotify_client_id = self.spotify_client_id_edit.text().strip() if "SPOTIFY_CLIENT_ID" not in failed else self._original_spotify_client_id
+            self._original_spotify_client_secret = self.spotify_client_secret_edit.text().strip() if "SPOTIFY_CLIENT_SECRET" not in failed else self._original_spotify_client_secret
+            self._original_youtube_key = self.youtube_key_edit.text().strip() if "YOUTUBE_API_KEY" not in failed else self._original_youtube_key
+            if failed:
+                QMessageBox.warning(
+                    self, "Settings",
+                    f"Couldn't save {', '.join(failed)} to the OS credential store "
+                    f"(backend: {credential_store.storage_backend_name()}). "
+                    "The value is active for this session but won't persist after restart."
+                )
 
         old_hide = config.HIDE_CONSOLE_WINDOW
         old_whisper = (config.WHISPER_MODEL_SIZE, config.WHISPER_DEVICE, config.WHISPER_COMPUTE_TYPE)
