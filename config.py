@@ -1,6 +1,8 @@
 """
 Central Configuration Settings for Alyssa Assistant.
 """
+import os
+
 import credential_store as _cred
 
 # --- Identity ---
