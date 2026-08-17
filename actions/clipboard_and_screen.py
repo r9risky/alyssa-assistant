@@ -1,10 +1,15 @@
 import os
 import time
 
-import pyautogui
+from .desktop import pyautogui
 import pyperclip
 
-from . import confirmation
+try:
+    from PIL import ImageGrab
+except ImportError:
+    ImageGrab = None
+
+from . import bridges, confirmation
 from .apps_and_files import _friendly_file_name
 from .confirmation import _confirm
 
@@ -57,11 +62,7 @@ def describe_screen(question: str = "") -> str:
     OLLAMA_VISION_MODEL / GEMINI_MODEL in config.py). Captures a fresh
     screenshot in memory only - unlike take_screenshot(), nothing is ever
     written to disk here."""
-    # Imported here, not at module load time, to avoid a circular import -
-    # brain.py imports this module, so this resolves fine only once brain
-    # has finished importing.
-    import brain
-    return brain.describe_screen_with_vision(question)
+    return bridges.describe_screen(question)
 
 
 def click_screen_element(description: str, double_click: bool = False, confirmed: bool = False) -> str:
@@ -87,8 +88,7 @@ def click_screen_element(description: str, double_click: bool = False, confirmed
         if not decision:
             return "Cancelled by user."
 
-    import brain
-    point = brain.locate_screen_element_with_vision(description)
+    point = bridges.locate_screen_element(description)
     if point is None:
         return f"I couldn't find '{description}' on screen."
     x_pct, y_pct = point

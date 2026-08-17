@@ -1,9 +1,7 @@
 """PC automation actions and system control utilities for Alyssa."""
 
-import pyautogui
 import plugin_loader
 
-pyautogui.FAILSAFE = True
 
 from .apps_and_files import (
     consume_restart_request, delete_file, open_app, open_file, open_url,
@@ -16,6 +14,7 @@ from .confirmation import (
     VoiceConfirmationRequired, set_critical_confirmation_callback,
     set_power_confirmation_callback, tool_confirmation_context,
 )
+from .bridges import configure_brain_services
 from .input_sim import press_keys, type_text
 from .media import (
     media_next_track, media_play_pause, media_previous_track, set_volume_level,

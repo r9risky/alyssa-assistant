@@ -21,7 +21,7 @@ OLLAMA_URL = "http://localhost:11434/api/chat"
 OLLAMA_KEEP_ALIVE = "10m"
 
 # --- Gemini Settings ---
-GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
+GEMINI_API_KEY = ''
 GEMINI_MODEL = 'gemini-3.5-flash-lite'
 
 # --- OpenAI Settings ---
@@ -73,7 +73,8 @@ VOCABULARY_CORRECTIONS = [
 ]
 
 # --- Audio Recording ---
-MICROPHONE_DEVICE = "PD100X"
+MICROPHONE_DEVICE = 'default'
+AUDIO_OUTPUT_DEVICE = 'default'  # "default" or a (partial) speaker/headset name
 SAMPLE_RATE = 16000
 SILENCE_SECONDS = 0.30
 MAX_RECORD_SECONDS = 15

@@ -8,7 +8,7 @@ import config
 import telemetry
 
 from ..common import GenerationCancelled, _HTTP_SESSION
-from ..dialogue import TOOLS
+from ..tool_registry import TOOLS
 
 def _call_ollama(messages, on_text_delta=None, cancel_event=None):
     response = _HTTP_SESSION.post(

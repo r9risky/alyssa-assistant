@@ -246,6 +246,24 @@ def run_with_assistant(assistant_loop_fn):
 
     window._worker_thread = None
 
+    def _run_worker_safely():
+        """Runs assistant_loop_fn and, if it ever exits via an unhandled
+        exception, reports it through the GUI instead of letting the
+        thread just vanish. Without this, any crash here (a bug, or a
+        None sys.stdout/stderr when launched via pythonw.exe with no
+        console - see main.py) leaves the window looking totally normal
+        while nothing is actually listening, with no way to tell why."""
+        try:
+            assistant_loop_fn(bridge)
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            bridge.error_signal.emit(
+                f"Alyssa's listening loop crashed and stopped:\n{e}\n\n"
+                "Check the console (Settings -> Show command prompt) for "
+                "the full error, or restart Alyssa."
+            )
+
     def _start_worker():
         """(Re)starts the background listening loop if it isn't already
         running. Safe to call any number of times - a no-op while the loop
@@ -257,7 +275,7 @@ def run_with_assistant(assistant_loop_fn):
         if window._worker_thread is not None and window._worker_thread.is_alive():
             return
         window._worker_thread = threading.Thread(
-            target=assistant_loop_fn, args=(bridge,), daemon=True
+            target=_run_worker_safely, daemon=True
         )
         window._worker_thread.start()
 

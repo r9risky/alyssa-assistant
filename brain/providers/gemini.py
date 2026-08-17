@@ -7,7 +7,7 @@ import config
 import telemetry
 
 from ..common import _HTTP_SESSION, _iter_sse_json
-from ..dialogue import TOOLS
+from ..tool_registry import TOOLS
 
 _gemini_tools_cache = None
 

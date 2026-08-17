@@ -31,6 +31,45 @@ _active_streams = 0
 _active_streams_lock = threading.Lock()
 
 
+# How long to keep retrying for the configured microphone on the very
+# first lookup before giving up. Covers USB/Bluetooth mics that haven't
+# finished reconnecting yet when Alyssa is launched automatically at
+# Windows login (scripts/install_startup.bat's Task Scheduler task fires
+# right at logon - much earlier than a manual double-click of
+# start_alyssa.bat typically would, before such a device has re-paired).
+# Only the first lookup waits like this; a mic that disappears later
+# (unplugged mid-session) still fails immediately instead of hanging
+# every subsequent call.
+_STARTUP_DEVICE_WAIT_SECONDS = 20.0
+_startup_device_wait_used = False
+
+
+def _find_configured_device(needle):
+    """Return the sounddevice index of the first input whose name matches
+    needle. Prefers an entry that passes check_input_settings(), but falls
+    back to the first name match even if that check fails - the same
+    device name is often listed once per Windows host API (MME,
+    DirectSound, WASAPI, WDM-KS), and check_input_settings() rejecting one
+    of those variants doesn't mean the device itself can't record; it can
+    end up rejecting every single matching entry for a mic that plays
+    perfectly fine in other apps, which used to mean Alyssa silently never
+    listened at all whenever anything but "Default" was picked."""
+    fallback = None
+    for index, device in enumerate(sd.query_devices()):
+        if device["max_input_channels"] <= 0 or needle not in device["name"].lower():
+            continue
+        if fallback is None:
+            fallback = index
+        try:
+            sd.check_input_settings(
+                device=index, channels=1, dtype="int16", samplerate=config.SAMPLE_RATE
+            )
+        except Exception:
+            continue
+        return index
+    return fallback
+
+
 def _configured_input_device():
     """Return the first compatible input whose name matches the setting."""
     configured = getattr(config, "MICROPHONE_DEVICE", None)
@@ -40,16 +79,41 @@ def _configured_input_device():
         return configured
 
     needle = str(configured).lower()
-    for index, device in enumerate(sd.query_devices()):
-        if device["max_input_channels"] <= 0 or needle not in device["name"].lower():
-            continue
-        try:
-            sd.check_input_settings(
-                device=index, channels=1, dtype="int16", samplerate=config.SAMPLE_RATE
-            )
-        except Exception:
-            continue
+    index = _find_configured_device(needle)
+    if index is not None:
         return index
+
+    global _startup_device_wait_used
+    if not _startup_device_wait_used:
+        _startup_device_wait_used = True
+        deadline = time.time() + _STARTUP_DEVICE_WAIT_SECONDS
+        print(
+            f"(Microphone {configured!r} not found yet - retrying for up "
+            f"to {_STARTUP_DEVICE_WAIT_SECONDS:.0f}s in case it's still "
+            "reconnecting after startup...)"
+        )
+        while time.time() < deadline:
+            time.sleep(1.0)
+            # Re-scan PortAudio's device list - a Bluetooth/USB mic that
+            # reconnects after this process started otherwise never shows
+            # up, since sd.query_devices() alone only reflects devices
+            # seen at PortAudio init. Safe here: no InputStream is open
+            # yet (this runs before _open_stream ever opens one).
+            with _recovery_lock:
+                try:
+                    sd._terminate()
+                    sd._initialize()
+                except Exception as e:
+                    print(f"(device re-scan failed: {e})")
+            index = _find_configured_device(needle)
+            if index is not None:
+                print(f"(Found microphone {configured!r} after waiting.)")
+                return index
+        print(
+            f"(Gave up waiting for microphone {configured!r} after "
+            f"{_STARTUP_DEVICE_WAIT_SECONDS:.0f}s.)"
+        )
+
     raise RuntimeError(f"No compatible microphone matching {configured!r} was found")
 
 
