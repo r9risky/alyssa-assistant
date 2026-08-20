@@ -9,8 +9,6 @@ from PySide6.QtWidgets import (
     QWidget, QPushButton, QGraphicsDropShadowEffect, QGraphicsOpacityEffect,
 )
 
-_QW = QWidget
-
 def _load_color_themes() -> dict:
     """Load themes from color_themes.json next to this file, converting
     bubble_top/bottom/border/shadow from JSON arrays back to tuples."""
@@ -96,7 +94,7 @@ def _theme(val) -> dict:
     return COLOR_THEMES["dark"]
 
 
-def _apply_elevation(widget: "_QW", blur: int = 28, y: int = 6, alpha: int = 110) -> QGraphicsDropShadowEffect:
+def _apply_elevation(widget: QWidget, blur: int = 28, y: int = 6, alpha: int = 110) -> QGraphicsDropShadowEffect:
     """Gives one widget its own soft drop shadow so it reads as a raised
     card instead of a flat glass panel. QSS has no box-shadow equivalent,
     so this has to happen in Python per-widget (Qt also only allows one

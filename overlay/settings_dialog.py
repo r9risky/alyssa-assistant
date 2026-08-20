@@ -17,8 +17,6 @@ from PySide6.QtWidgets import (
     QPlainTextEdit,
 )
 
-_QW = QWidget
-
 import actions
 import brain
 import config
@@ -665,7 +663,7 @@ class ConfigDialog(QDialog):
         btn_row.addWidget(close_btn)
         btn_row.setContentsMargins(0, 6, 0, 0)
 
-        content = _QW()
+        content = QWidget()
         content.setObjectName("dialogContent")
         content.setAttribute(Qt.WA_StyledBackground, True)
         content_layout = QVBoxLayout(content)
@@ -773,7 +771,7 @@ class ConfigDialog(QDialog):
         return label
 
     # -- Assistant tab helpers ----------------------------------------------
-    def _wrap_in_scroll_area(self, content: _QW) -> QScrollArea:
+    def _wrap_in_scroll_area(self, content: QWidget) -> QScrollArea:
         """Wraps a tab's content in a scroll area so a long tab (Assistant,
         Engine) doesn't force the whole Settings dialog taller than the
         screen."""
@@ -796,12 +794,12 @@ class ConfigDialog(QDialog):
         form.addRow(label_widget, field)
         return (label_widget, field)
 
-    def _stack_under(self, primary, *extras) -> _QW:
+    def _stack_under(self, primary, *extras) -> QWidget:
         """Stacks `extras` (status text, "don't have one?" links, etc.)
         directly beneath `primary` in a single column, so they line up
         under their field instead of spanning the full row width the way
         addRow("", ...) would."""
-        wrapper = _QW()
+        wrapper = QWidget()
         col = QVBoxLayout(wrapper)
         col.setContentsMargins(0, 0, 0, 0)
         col.setSpacing(4)
@@ -926,8 +924,8 @@ class ConfigDialog(QDialog):
         self._set_rows_visible(form, self._elevenlabs_rows, provider == "elevenlabs")
 
     # -- Assistant tab -----------------------------------------------------
-    def _build_assistant_tab(self) -> _QW:
-        w = _QW()
+    def _build_assistant_tab(self) -> QWidget:
+        w = QWidget()
         w.setObjectName("tabPage")
         form = QFormLayout(w)
         form.setContentsMargins(16, 16, 16, 16)
@@ -1321,8 +1319,8 @@ class ConfigDialog(QDialog):
         return w
 
     # -- Engine tab (Whisper speech-to-text device/model) ------------------
-    def _build_engine_tab(self) -> _QW:
-        w = _QW()
+    def _build_engine_tab(self) -> QWidget:
+        w = QWidget()
         w.setObjectName("tabPage")
         form = QFormLayout(w)
         form.setContentsMargins(16, 16, 16, 16)
@@ -1462,8 +1460,8 @@ class ConfigDialog(QDialog):
             combo.addItem(f"{configured} (not detected)", configured)
             combo.setCurrentText(f"{configured} (not detected)")
 
-    def _build_audio_tab(self) -> _QW:
-        w = _QW()
+    def _build_audio_tab(self) -> QWidget:
+        w = QWidget()
         w.setObjectName("tabPage")
         form = QFormLayout(w)
         form.setContentsMargins(16, 16, 16, 16)
@@ -1847,8 +1845,8 @@ class ConfigDialog(QDialog):
         )
 
     # -- Companion tab -----------------------------------------------------
-    def _build_companion_tab(self) -> _QW:
-        w = _QW()
+    def _build_companion_tab(self) -> QWidget:
+        w = QWidget()
         w.setObjectName("tabPage")
         outer = QVBoxLayout(w)
         outer.setContentsMargins(16, 16, 16, 16)
@@ -1860,7 +1858,7 @@ class ConfigDialog(QDialog):
         top_row.setVerticalSpacing(12)
         self._companion_grid = top_row
 
-        self._preview_panel = _QW()
+        self._preview_panel = QWidget()
         preview_col = QVBoxLayout(self._preview_panel)
         preview_col.setContentsMargins(0, 0, 0, 0)
         preview_col.setSpacing(2)
@@ -1875,7 +1873,7 @@ class ConfigDialog(QDialog):
         preview_col.addWidget(self.preview_talking_check, 0, Qt.AlignHCenter)
         top_row.addWidget(self._preview_panel, 0, 0, Qt.AlignTop)
 
-        self._companion_form_panel = _QW()
+        self._companion_form_panel = QWidget()
         form_col = QVBoxLayout(self._companion_form_panel)
         form_col.setContentsMargins(0, 0, 0, 0)
         form = QFormLayout()
@@ -2148,8 +2146,8 @@ class ConfigDialog(QDialog):
         self._refresh_preview()
 
     # -- Updates tab ----------------------------------------------------
-    def _build_updates_tab(self) -> _QW:
-        w = _QW()
+    def _build_updates_tab(self) -> QWidget:
+        w = QWidget()
         w.setObjectName("tabPage")
         outer = QVBoxLayout(w)
         outer.setContentsMargins(16, 16, 16, 16)
@@ -2281,7 +2279,7 @@ class ConfigDialog(QDialog):
         QMessageBox.information(self, "Update Installed", message)
 
     # -- Plugins tab ----------------------------------------------------
-    def _build_plugins_tab(self) -> _QW:
+    def _build_plugins_tab(self) -> QWidget:
         """A little in-app IDE for plugins/*.py: a file list on the left
         (green dot = enabled, gray dot = disabled - see plugin_loader.py's
         underscore-prefix convention) and a syntax-highlighted code editor
@@ -2290,7 +2288,7 @@ class ConfigDialog(QDialog):
         mid-edit, so changes only take effect on an explicit Save, and
         Save is also the moment reload_plugins()/reload_plugin_tools() run
         to pick the change up in this same running session."""
-        w = _QW()
+        w = QWidget()
         w.setObjectName("tabPage")
         outer = QVBoxLayout(w)
         outer.setContentsMargins(16, 16, 16, 16)
@@ -2312,7 +2310,7 @@ class ConfigDialog(QDialog):
         splitter.setHandleWidth(10)
 
         # -- Left: file list + list-level actions --
-        left = _QW()
+        left = QWidget()
         left_layout = QVBoxLayout(left)
         left_layout.setContentsMargins(0, 0, 0, 0)
         left_layout.setSpacing(8)
@@ -2335,12 +2333,12 @@ class ConfigDialog(QDialog):
         splitter.addWidget(left)
 
         # -- Right: header row (filename, enable toggle, save/delete) + editor --
-        right = _QW()
+        right = QWidget()
         right_layout = QVBoxLayout(right)
         right_layout.setContentsMargins(10, 0, 0, 0)
         right_layout.setSpacing(8)
 
-        header_widget = _QW()
+        header_widget = QWidget()
         header_row = QGridLayout(header_widget)
         header_row.setContentsMargins(0, 0, 0, 0)
         header_row.setHorizontalSpacing(8)

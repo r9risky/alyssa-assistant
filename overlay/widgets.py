@@ -15,8 +15,6 @@ from PySide6.QtWidgets import (
     QMessageBox,
 )
 
-_QW = QWidget
-
 import config
 
 from .rendering import (

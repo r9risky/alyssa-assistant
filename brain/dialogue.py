@@ -2,6 +2,7 @@ import inspect
 import random
 import re
 import time
+from functools import lru_cache
 
 import requests
 
@@ -602,24 +603,15 @@ def _handle_engine_question(user_text: str):
     return transcribe.get_engine_status()
 
 
-_STRIP_FILLER_PATTERNS_CACHE = {}
-
-
-def _get_strip_filler_patterns():
-    assistant_name = config.ASSISTANT_NAME.lower()
-    cached = _STRIP_FILLER_PATTERNS_CACHE.get(assistant_name)
-    if cached is not None:
-        return cached
-
-    patterns = [
+@lru_cache(maxsize=16)
+def _get_strip_filler_patterns(assistant_name: str):
+    return [
         re.compile(r"^(?:um+|uh+|so|okay|ok)[,]?\s+", re.IGNORECASE),
         re.compile(r"^(?:can|could|would)\s+you\s+(?:please\s+)?", re.IGNORECASE),
         re.compile(r"^please\s+", re.IGNORECASE),
         re.compile(r"^just\s+", re.IGNORECASE),
         re.compile(r"^hey\s+" + re.escape(assistant_name) + r"[,]?\s+", re.IGNORECASE),
     ]
-    _STRIP_FILLER_PATTERNS_CACHE[assistant_name] = patterns
-    return patterns
 
 
 def _strip_leading_filler(text: str) -> str:
@@ -630,7 +622,7 @@ def _strip_leading_filler(text: str) -> str:
     changed = True
     while changed:
         changed = False
-        for pattern in _get_strip_filler_patterns():
+        for pattern in _get_strip_filler_patterns(config.ASSISTANT_NAME.lower()):
             new_result = pattern.sub("", result, count=1)
             if new_result != result:
                 result = new_result

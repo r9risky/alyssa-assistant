@@ -9,6 +9,7 @@ actions.py, which requires pyautogui/pyperclip/requests/send2trash.
 import os
 import sys
 import unittest
+from unittest.mock import patch
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
@@ -139,6 +140,11 @@ class TestTextCleanupHelpers(unittest.TestCase):
         result = dialogue._summarize_for_speech(long_line, max_chars=140)
         self.assertTrue(result.endswith("..."))
         self.assertLessEqual(len(result), 143)  # 140 chars + "..."
+
+    def test_strip_leading_filler_uses_current_assistant_name(self):
+        dialogue._strip_leading_filler("Hey Alyssa, say hello")
+        with patch.object(dialogue.config, "ASSISTANT_NAME", "Nova"):
+            self.assertEqual(dialogue._strip_leading_filler("Hey Nova, say hello"), "say hello")
 
 
 if __name__ == "__main__":
