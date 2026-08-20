@@ -5,9 +5,6 @@ import sys
 from PySide6.QtCore import Qt, QSize
 from PySide6.QtGui import QPixmap, QPainter
 from PySide6.QtSvg import QSvgRenderer
-from PySide6.QtWidgets import QWidget
-
-_QW = QWidget
 
 if getattr(sys, "frozen", False):
     _BASE_DIR = os.path.dirname(sys.executable)

@@ -1,8 +1,6 @@
 """
 Central Configuration Settings for Alyssa Assistant.
 """
-import os
-
 import credential_store as _cred
 
 # --- Identity ---
@@ -154,6 +152,6 @@ CAVEMAN_MODE = None
 LAUNCH_APPS_IN_BACKGROUND = True
 APP_LAUNCH_SETTLE_SECONDS = 1.5
 DEBUG_PRINT_TRANSCRIPTS = True
-CONFIRM_BEFORE_ACTIONS = True
+CONFIRM_BEFORE_ACTIONS = False
 
 

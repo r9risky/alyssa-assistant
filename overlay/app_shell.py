@@ -7,10 +7,8 @@ from PySide6.QtGui import (
     QPixmap, QPainter, QColor, QPainterPath, QLinearGradient, QIcon,
 )
 from PySide6.QtWidgets import (
-    QApplication, QWidget, QMenu, QSystemTrayIcon,
+    QApplication, QMenu, QSystemTrayIcon,
 )
-
-_QW = QWidget
 
 import config
 
