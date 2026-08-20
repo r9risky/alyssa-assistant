@@ -15,7 +15,7 @@ import zipfile
 import requests
 
 LATEST_RELEASE_URL = "https://api.github.com/repos/r9risky/alyssa-assistant/releases/latest"
-CURRENT_VERSION = "v1.1.1"
+CURRENT_VERSION = "v1.1.4"
 MAX_DOWNLOAD_BYTES = 250 * 1024 * 1024
 PRESERVED_FILES = {
     "color_themes.json",
