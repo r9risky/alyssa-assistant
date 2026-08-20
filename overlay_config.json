@@ -1,9 +1,9 @@
 {
-  "pos_x": 1536,
-  "pos_y": 490,
+  "pos_x": 1370,
+  "pos_y": 357,
   "scale": 1.028,
   "opacity": 0.73,
-  "always_on_top": false,
+  "always_on_top": true,
   "character_image": "",
   "character_image_talking": "",
   "bubble_seconds": 11,
