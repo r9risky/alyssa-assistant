@@ -4,8 +4,8 @@ REM log in to Windows - via a Task Scheduler task (not the Startup folder,
 REM since a Startup-folder shortcut can't auto-elevate: it either skips
 REM admin rights entirely or throws a UAC prompt on every single login).
 REM A Task Scheduler task set to "run with highest privileges" gets the
-REM trust decision made once, right now, and then starts silently
-REM elevated at every future login - no repeated prompts.
+REM trust decision made once, right now, and then starts elevated at every
+REM future login with Alyssa's console visible - no repeated prompts.
 REM
 REM Run this by double-clicking it. It will ask for admin rights itself
 REM (a UAC prompt) - that's expected and required to register the task.
@@ -27,9 +27,10 @@ if not "%errorlevel%"=="0" (
 )
 
 REM --- Decide what the task should actually launch ---
-REM Use the virtual environment's windowless Python executable.
-if exist "%PROJECT_DIR%.venv\Scripts\pythonw.exe" (
-    set "ACTION_EXE=%PROJECT_DIR%.venv\Scripts\pythonw.exe"
+REM Use console Python so startup behaves exactly like a manual launch and
+REM errors remain visible. File logging in main.py remains available too.
+if exist "%PROJECT_DIR%.venv\Scripts\python.exe" (
+    set "ACTION_EXE=%PROJECT_DIR%.venv\Scripts\python.exe"
     set "ACTION_ARGS=main.py"
 ) else (
     echo ERROR: Alyssa hasn't been set up yet.
@@ -50,6 +51,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -Command ^
     "$ErrorActionPreference = 'Stop';" ^
     "$action = New-ScheduledTaskAction -Execute '%ACTION_EXE%' -Argument '%ACTION_ARGS%' -WorkingDirectory '%PROJECT_DIR%';" ^
     "$trigger = New-ScheduledTaskTrigger -AtLogOn -User \"$env:USERDOMAIN\$env:USERNAME\";" ^
+    "$trigger.Delay = 'PT15S';" ^
     "$principal = New-ScheduledTaskPrincipal -UserId \"$env:USERDOMAIN\$env:USERNAME\" -LogonType Interactive -RunLevel Highest;" ^
     "$settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable;" ^
     "Register-ScheduledTask -TaskName '%TASK_NAME%' -Action $action -Trigger $trigger -Principal $principal -Settings $settings -Force | Out-Null"
