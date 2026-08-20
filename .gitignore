@@ -25,3 +25,24 @@ __pycache__/
 .alyssa-version
 .alyssa-manifest.json
 logs/
+
+# --- Generated knowledge graph ---
+graphify-out/
+
+# --- Env files (in case any provider ever reads from one directly) ---
+.env
+.env.*
+
+# --- Editors / IDEs ---
+.vscode/
+.idea/
+*.swp
+
+# --- OS junk ---
+.DS_Store
+Thumbs.db
+
+# --- Build artifacts (in case of a future PyInstaller/packaging step) ---
+build/
+dist/
+*.egg-info/
