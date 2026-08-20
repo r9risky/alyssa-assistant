@@ -1231,7 +1231,7 @@ class ConfigDialog(QDialog):
         form.addRow("", self.confirm_check)
 
         self.show_console_check = QCheckBox("Show command prompt")
-        self.show_console_check.setChecked(not bool(getattr(config, "HIDE_CONSOLE_WINDOW", True)))
+        self.show_console_check.setChecked(not bool(getattr(config, "HIDE_CONSOLE_WINDOW", False)))
         self.show_console_check.toggled.connect(self._on_show_console_toggled)
         form.addRow("", self.show_console_check)
 

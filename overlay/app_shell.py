@@ -194,7 +194,7 @@ def run_with_assistant(assistant_loop_fn):
 
     # Hide the cmd.exe console window behind her by default (see
     # HIDE_CONSOLE_WINDOW in config.py).
-    _set_console_visible(not getattr(config, "HIDE_CONSOLE_WINDOW", True))
+    _set_console_visible(not getattr(config, "HIDE_CONSOLE_WINDOW", False))
 
     app = QApplication(sys.argv)
     app.setQuitOnLastWindowClosed(False)
@@ -238,7 +238,7 @@ def run_with_assistant(assistant_loop_fn):
     # Qt can reinitialize the Windows console during application/window setup.
     # Re-apply the configured visibility after the GUI is fully initialized so
     # the Settings checkbox and config.py value reliably control the console.
-    _set_console_visible(not getattr(config, "HIDE_CONSOLE_WINDOW", True))
+    _set_console_visible(not getattr(config, "HIDE_CONSOLE_WINDOW", False))
     # The startup greeting is spoken by run_assistant_loop() itself (via
     # speak(), once preflight checks pass) - not shown here directly,
     # since showing it here too would flash a silent, unvoiced duplicate

@@ -4,41 +4,31 @@ Alyssa Assistant - Main Listening Loop and Application Entrypoint.
 import queue
 import random
 import re
+import os
 import sys
 import threading
 import time
 
-# When launched via pythonw.exe (as scripts/install_startup.bat does for
-# silent Task Scheduler startup) there's no console attached at all, and
-# Python leaves sys.stdout/stderr/stdin as None rather than a stream - not
-# just closed. Every plain print() call throughout this codebase (and
-# there are many, used for status/debugging) would then raise
-# AttributeError: 'NoneType' object has no attribute 'write' the instant
-# it runs. Uncaught, that silently kills the background assistant thread
-# (see overlay/app_shell.py's _start_worker) with nothing to show the
-# error in - so Alyssa never starts listening, while the Qt GUI on the
-# main thread looks completely normal since it never touched stdout.
-# Redirecting to os.devnull here, before any other import or print, makes
-# print() a harmless no-op instead - matching how it already behaves in
-# this mode (no console to show output in anyway).
-if sys.stdout is None or sys.stderr is None or sys.stdin is None:
-    import os
-    _devnull = open(os.devnull, "w")
-    if sys.stdout is None:
-        sys.stdout = _devnull
-    if sys.stderr is None:
-        sys.stderr = _devnull
-    if sys.stdin is None:
-        sys.stdin = open(os.devnull, "r")
-
 # PyInstaller exe: look for config.py next to the exe, not bundled inside it,
 # so editing config.py takes effect without a rebuild.
-import os
 if getattr(sys, "frozen", False):
     sys.path.insert(0, os.path.dirname(sys.executable))
     _config_dir = os.path.dirname(sys.executable)
 else:
     _config_dir = os.path.dirname(os.path.abspath(__file__))
+
+# Windows startup processes can inherit an arbitrary current directory.
+os.chdir(_config_dir)
+
+import startup_logging
+_startup_log_path = startup_logging.configure(_config_dir)
+print(
+    f"Starting Alyssa: executable={sys.executable!r}, app_dir={_config_dir!r}, "
+    f"cwd={os.getcwd()!r}, frozen={bool(getattr(sys, 'frozen', False))}"
+)
+
+if sys.stdin is None:
+    sys.stdin = open(os.devnull, "r")
 
 # One-time upgrade path: if this install still has real API keys sitting
 # in config.py as plaintext literals (how the Settings window used to
@@ -53,11 +43,30 @@ if _migrated:
     print(f"Moved {', '.join(_migrated)} from config.py into the OS keyring.")
 
 import config
+_environment_credentials_present = sorted(
+    name
+    for name in (
+        "GEMINI_API_KEY",
+        "OPENAI_API_KEY",
+        "ANTHROPIC_API_KEY",
+        "CUSTOM_LLM_API_KEY",
+        "SPOTIFY_CLIENT_ID",
+        "SPOTIFY_CLIENT_SECRET",
+        "YOUTUBE_API_KEY",
+    )
+    if os.environ.get(name)
+)
+print(
+    f"Startup configuration: provider={config.LLM_PROVIDER!r}, "
+    f"microphone={getattr(config, 'MICROPHONE_DEVICE', 'default')!r}, "
+    "environment_credentials_present="
+    f"{_environment_credentials_present}"
+)
 
 
 def _apply_startup_console_setting():
     """Hide the Windows console before the rest of Alyssa initializes."""
-    if sys.platform != "win32" or not getattr(config, "HIDE_CONSOLE_WINDOW", True):
+    if sys.platform != "win32" or not getattr(config, "HIDE_CONSOLE_WINDOW", False):
         return
     try:
         import ctypes
@@ -345,6 +354,8 @@ def run_preflight_checks(bridge=None) -> bool:
     failure; in GUI mode reports the problem via bridge instead of killing
     the app, so Settings stays reachable."""
 
+    print("Running startup preflight checks...")
+
     def _fail(message: str) -> bool:
         print(message)
         if bridge is not None:
@@ -378,13 +389,20 @@ def run_preflight_checks(bridge=None) -> bool:
                 bridge.gemini_key_needed.emit()
                 return False
             sys.exit(1)
+        print("Startup preflight checks passed.")
         return True
 
     if config.LLM_PROVIDER == "openai":
-        return _require_key(config.OPENAI_API_KEY, "OpenAI", "OPENAI_API_KEY", bridge)
+        result = _require_key(config.OPENAI_API_KEY, "OpenAI", "OPENAI_API_KEY", bridge)
+        if result:
+            print("Startup preflight checks passed.")
+        return result
 
     if config.LLM_PROVIDER == "anthropic":
-        return _require_key(config.ANTHROPIC_API_KEY, "Anthropic", "ANTHROPIC_API_KEY", bridge)
+        result = _require_key(config.ANTHROPIC_API_KEY, "Anthropic", "ANTHROPIC_API_KEY", bridge)
+        if result:
+            print("Startup preflight checks passed.")
+        return result
 
     if config.LLM_PROVIDER == "custom_openai":
         if not getattr(config, "CUSTOM_BASE_URL", ""):
@@ -394,6 +412,7 @@ def run_preflight_checks(bridge=None) -> bool:
                 "Groq, OpenRouter, Together, or a local LM Studio/vLLM server), "
                 "or right-click the companion and use the Settings window."
             )
+        print("Startup preflight checks passed.")
         return True
 
     try:
@@ -448,6 +467,7 @@ def run_preflight_checks(bridge=None) -> bool:
     except requests.exceptions.RequestException:
         pass  # non-critical check
 
+    print("Startup preflight checks passed.")
     return True
 
 
@@ -613,6 +633,7 @@ def run_assistant_loop(bridge=None):
 
 
 def main():
+    print("Entering Alyssa application startup.")
     gui_enabled = getattr(config, "ENABLE_COMPANION_GUI", True)
 
     if gui_enabled:
