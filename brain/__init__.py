@@ -2,13 +2,13 @@
 
 from . import dialogue
 from .dialogue import (
-    TOOLS,
     clear_conversation_history,
     handle_command,
     has_pending_power_confirmation,
     reload_plugin_tools,
     warm_up_connections,
 )
+from .tool_registry import TOOLS
 from .vision import describe_screen_with_vision, locate_screen_element_with_vision
 
 # Compose the one-way bridge from reasoning -> actions after both brain

@@ -45,6 +45,20 @@ class Bridge(QObject):
         self.text_queue = queue.Queue()
 
 
+class _TopmostWindowMixin:
+    """Re-apply the Windows topmost flag after a tool window is shown."""
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        if sys.platform == "win32":
+            QTimer.singleShot(
+                0,
+                lambda: self.companion._apply_windows_topmost(
+                    self, bool(self.settings.get("always_on_top", True))
+                ),
+            )
+
+
 _BUBBLE_TAIL_H = 12  # px, height of the little triangle pointing at her
 
 
@@ -57,7 +71,7 @@ _BUBBLE_PAD_X = 16
 _BUBBLE_PAD_Y = 12
 
 
-class SpeechBubble(QWidget):
+class SpeechBubble(_TopmostWindowMixin, QWidget):
     def __init__(self, companion, settings: dict):
         flags = Qt.FramelessWindowHint | Qt.Tool | Qt.NoDropShadowWindowHint
         if settings.get("always_on_top", True):
@@ -122,15 +136,6 @@ class SpeechBubble(QWidget):
         self._thinking_timer = QTimer(self)
         self._thinking_timer.timeout.connect(self._on_thinking_tick)
 
-    def showEvent(self, event):
-        super().showEvent(event)
-        if sys.platform == "win32":
-            QTimer.singleShot(
-                0,
-                lambda: self.companion._apply_windows_topmost(
-                    self, bool(self.settings.get("always_on_top", True))
-                ),
-            )
 
     # -- showing / hiding, driven by speech ------------------------------
     def show_thinking(self):
@@ -299,7 +304,6 @@ class SpeechBubble(QWidget):
         self._hide_on_fade_finished = True
         self._opacity_anim.start()
 
-    # -- layout / painting ------------------------------------------------
     def _resize_to_content(self):
         w = self.label.width() + _BUBBLE_PAD_X * 2
         h = self.label.height() + _BUBBLE_PAD_Y * 2 + _BUBBLE_TAIL_H
@@ -373,7 +377,6 @@ class SpeechBubble(QWidget):
             _BUBBLE_RADIUS, _BUBBLE_RADIUS,
         )
 
-        # Tail (small triangle) touching the rounded body and pointing at her.
         tail = QPainterPath()
         tip_x = self._tail_x
         if self._tail_on_top:
@@ -421,7 +424,7 @@ _CHATBAR_HEIGHT = 36
 _CHATBAR_GAP = 6  # px between her and the bar
 
 
-class ChatInputBar(QWidget):
+class ChatInputBar(_TopmostWindowMixin, QWidget):
     def __init__(self, companion, settings: dict, bridge: Bridge):
         flags = Qt.FramelessWindowHint | Qt.Tool | Qt.NoDropShadowWindowHint
         if settings.get("always_on_top", True):
@@ -448,15 +451,6 @@ class ChatInputBar(QWidget):
         self.resize(_CHATBAR_WIDTH, _CHATBAR_HEIGHT)
         self.apply_theme()
 
-    def showEvent(self, event):
-        super().showEvent(event)
-        if sys.platform == "win32":
-            QTimer.singleShot(
-                0,
-                lambda: self.companion._apply_windows_topmost(
-                    self, bool(self.settings.get("always_on_top", True))
-                ),
-            )
 
     def _update_placeholder(self):
         name = getattr(config, "ASSISTANT_NAME", "her")
@@ -566,7 +560,6 @@ class CompanionWindow(
         self._drag_offset = QPoint()
         self._resize_start_pos = QPoint()
         self._resize_start_size = QSize()
-        # -- PNGTuber-style talk state --------------------------------
         self._talking = False
         self._mouth_open = False
         self._talk_tick = 0

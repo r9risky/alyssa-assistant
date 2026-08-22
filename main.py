@@ -284,7 +284,11 @@ def run_watcher_loop(bridge=None):
                 alert = None
             if alert:
                 print(f"[watcher] {w['name']}: {alert}")
-                speak(alert, bridge)
+                announce = brain.dialogue._natural_announce_reply(
+                    "proactive_alert", {"message": alert}
+                )
+                if announce:
+                    speak(announce, bridge)
         time.sleep(max(0.5, min(soonest, 5.0)))
 
 

@@ -4,10 +4,10 @@ import time
 
 import requests
 
-import config
+from config import PROVIDER_SETTINGS as config
 import telemetry
 
-from ..common import _HTTP_SESSION, _iter_sse_json
+from ..common import _HTTP_SESSION, _iter_sse_json, is_api_key_transport_secure
 from ..tool_registry import TOOLS
 
 def _messages_to_openai(messages):
@@ -58,12 +58,18 @@ def _call_openai_compatible(
     provider_label,
     on_text_delta=None,
     cancel_event=None,
+    tools=None,
 ):
     """Shared implementation for any provider that speaks the OpenAI
     chat-completions format - used directly for "openai" and
     "custom_openai", since they're wire-compatible aside from the base URL/
     key/model. api_key may be blank (e.g. a local LM Studio server that
     doesn't check one)."""
+    if not is_api_key_transport_secure(base_url, api_key):
+        raise RuntimeError(
+            f"{provider_label} requires HTTPS when an API key is configured; "
+            "HTTP is allowed only for loopback endpoints."
+        )
     headers = {"Content-Type": "application/json"}
     if api_key:
         headers["Authorization"] = f"Bearer {api_key}"
@@ -71,7 +77,7 @@ def _call_openai_compatible(
     body = {
         "model": model,
         "messages": _messages_to_openai(messages),
-        "tools": TOOLS,
+        "tools": TOOLS if tools is None else tools,
         "tool_choice": "auto",
         "stream": True,
     }
@@ -142,7 +148,7 @@ def _call_openai_compatible(
     }
 
 
-def _call_openai(messages, on_text_delta=None, cancel_event=None):
+def _call_openai(messages, on_text_delta=None, cancel_event=None, tools=None):
     if not config.OPENAI_API_KEY:
         raise RuntimeError(
             "OPENAI_API_KEY isn't set. Set it as an environment variable "
@@ -157,10 +163,11 @@ def _call_openai(messages, on_text_delta=None, cancel_event=None):
         "OpenAI",
         on_text_delta,
         cancel_event,
+        tools,
     )
 
 
-def _call_custom_openai(messages, on_text_delta=None, cancel_event=None):
+def _call_custom_openai(messages, on_text_delta=None, cancel_event=None, tools=None):
     return _call_openai_compatible(
         messages,
         getattr(config, "CUSTOM_BASE_URL", ""),
@@ -169,6 +176,7 @@ def _call_custom_openai(messages, on_text_delta=None, cancel_event=None):
         "Your custom provider",
         on_text_delta,
         cancel_event,
+        tools,
     )
 
 
@@ -184,6 +192,11 @@ def _describe_image_openai_compatible(
         return "I can't look at the screen - no model is configured for this provider in config.py."
 
     b64 = base64.b64encode(image_bytes).decode("ascii")
+    if not is_api_key_transport_secure(base_url, api_key):
+        raise RuntimeError(
+            f"{provider_label} requires HTTPS when an API key is configured; "
+            "HTTP is allowed only for loopback endpoints."
+        )
     headers = {"Content-Type": "application/json"}
     if api_key:
         headers["Authorization"] = f"Bearer {api_key}"

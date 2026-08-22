@@ -1,8 +1,9 @@
 import os
 import re
-from urllib.parse import urlsplit
 
 import requests
+
+from brain.common import is_api_key_transport_secure
 
 def _volume_str_to_percent(value: str, default: int = 0) -> int:
     """Parses config.EDGE_TTS_VOLUME's edge-tts format ('+0%', '-15%',
@@ -22,14 +23,10 @@ def _percent_to_volume_str(percent: int) -> str:
     return f"{percent:+d}%"
 
 
-def _is_http_url(value: str) -> bool:
+def _is_http_url(value: str, api_key: str = "") -> bool:
     if not value:
         return True
-    try:
-        parsed = urlsplit(value)
-        return parsed.scheme in {"http", "https"} and bool(parsed.netloc)
-    except ValueError:
-        return False
+    return is_api_key_transport_secure(value, api_key)
 
 
 def _verify_gemini_key(api_key: str) -> "tuple[bool, str, list]":
@@ -211,6 +208,8 @@ def _fetch_custom_openai_models(base_url: str, api_key: str) -> "tuple[bool, str
     base_url = (base_url or "").rstrip("/")
     if not base_url:
         return False, "Enter a base URL first.", []
+    if not _is_http_url(base_url, api_key):
+        return False, "Use HTTPS when sending an API key; HTTP is allowed only for loopback.", []
 
     url = base_url if base_url.endswith("/models") else f"{base_url}/models"
     headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}

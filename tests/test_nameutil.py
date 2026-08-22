@@ -15,7 +15,6 @@ class TestContainsName(unittest.TestCase):
         self.assertTrue(nameutil.contains_name("Alyssa, open notepad"))
 
     def test_detects_configured_alias(self):
-        # "alissa" is one of config.ASSISTANT_NAME_ALIASES
         self.assertTrue(nameutil.contains_name("hey alissa what time is it"))
 
     def test_case_insensitive(self):
@@ -25,7 +24,6 @@ class TestContainsName(unittest.TestCase):
         self.assertFalse(nameutil.contains_name("what's the weather today"))
 
     def test_whole_word_only_no_partial_match(self):
-        # "Alyssa" must not match inside an unrelated longer word
         self.assertFalse(nameutil.contains_name("melissandra is a name"))
 
     def test_empty_and_none_text(self):

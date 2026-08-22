@@ -9,6 +9,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 import actions
 import brain
 from brain import dialogue
+from overlay import credential_checks
 from plugins import process_manager, web_summarizer
 
 
@@ -259,6 +260,25 @@ class WebBoundaryTests(unittest.TestCase):
         self.assertEqual(action_calls, [])
         self.assertIn("blocked", reply.lower())
 
+class CustomProviderCredentialTests(unittest.TestCase):
+    def test_api_key_requires_https_except_for_loopback(self):
+        self.assertFalse(credential_checks._is_http_url("http://example.com/v1", "secret"))
+        self.assertTrue(credential_checks._is_http_url("https://example.com/v1", "secret"))
+        self.assertTrue(credential_checks._is_http_url("http://localhost:1234/v1", "secret"))
+        self.assertTrue(credential_checks._is_http_url("http://127.0.0.1:1234/v1", "secret"))
+        self.assertFalse(credential_checks._is_http_url("http://127.0.0.2:1234/v1", "secret"))
+        self.assertTrue(credential_checks._is_http_url("http://[::1]:1234/v1", "secret"))
+
+    def test_model_fetch_never_sends_key_over_remote_http(self):
+        with patch.object(credential_checks.requests, "get") as get:
+            ok, message, models = credential_checks._fetch_custom_openai_models(
+                "http://example.com/v1", "secret"
+            )
+
+        self.assertFalse(ok)
+        self.assertIn("HTTPS", message)
+        self.assertEqual(models, [])
+        get.assert_not_called()
 
 if __name__ == "__main__":
     unittest.main()

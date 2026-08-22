@@ -21,13 +21,9 @@ websockets
 
 send2trash
 PySide6
-# Persistent memory (memory.py) now stores facts in a plain memory.json
-# file with keyword-overlap matching instead of a vector database - see
-# memory.py's docstring and the "Saved memory storage" section of
-# README.md for what changed and why. This removes the chromadb +
-# onnxruntime dependencies and the ~90MB embedding model download that
-# used to live here, in exchange for losing true zero-shared-word
-# semantic matching (a fairly rare case in practice at this scale).
+# Local semantic memory retrieval. Downloads the quantized
+# BAAI/bge-small-en-v1.5 model (~67MB) once on first use.
+fastembed
 #
 # GPU acceleration for Whisper (nvidia-cublas-cu12, nvidia-cudnn-cu12,
 # nvidia-cuda-runtime-cu12) lives in requirements-gpu.txt, not here -

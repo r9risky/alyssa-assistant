@@ -8,7 +8,7 @@ import time
 
 import sounddevice as sd
 
-import config
+from config import AUDIO_SETTINGS as config
 import telemetry
 
 from voice_synthesis import (
@@ -194,20 +194,17 @@ class StreamingSpeaker:
             if match is None:
                 break
             end = match.end()
-            # Keep merging forward across boundaries - even real sentence
-            # ends (".", "!", "?") - until the chunk reaches the minimum
-            # length. A short standalone sentence ("Hello user.") used to
-            # be flushed to TTS immediately just because it ended in a
-            # period, so it started playing before the *next* clause had
-            # even begun synthesizing - that's the audible gap. Waiting
-            # for more text to accumulate first gives the next clause's
-            # synthesis a real head start.
-            while end < minimum:
+            hard_boundary = self._pending[match.start() - 1] in ".!?"
+            # Sentence punctuation is latency-sensitive and flushes at once.
+            # Soft clause punctuation waits for the configured minimum, but a
+            # later sentence boundary still ends the chunk immediately.
+            while not hard_boundary and end < minimum:
                 next_match = self._BOUNDARY_RE.search(self._pending, end)
                 if next_match is None:
                     end = None
                     break
                 end = next_match.end()
+                hard_boundary = self._pending[next_match.start() - 1] in ".!?"
             if end is None:
                 break
             chunk, self._pending = self._pending[:end], self._pending[end:]
@@ -438,16 +435,18 @@ def _speak_one(text: str, on_playback_start=None, on_playback_end=None, stop_eve
 
 
 def _speak_pipelined(sentences: list, on_playback_start=None, on_playback_end=None, stop_event=None) -> bool:
-    """Speaks multiple sentences back to back, synthesizing each one on a
-    background thread while the previous one plays (one sentence of
-    lookahead), so you hear the reply as soon as the first sentence is
-    ready instead of waiting for the whole thing. A sentence that fails to
-    synthesize is skipped rather than losing the whole reply.
+    """Speak sentences with at most two synthesis requests in flight.
 
-    Stops at the first opportunity if stop_event fires; synthesis threads
-    already in flight for later sentences finish in the background (daemon
-    threads) and their temp files are cleaned up once they do. Returns True
-    if playback was interrupted."""
+    The current sentence and one lookahead sentence synthesize concurrently.
+    As playback advances, the next job starts. On interruption, work that has
+    not started stays cancelled; already-running daemon jobs finish and their
+    temporary files are removed in the background.
+    """
+    if stop_event is not None and stop_event.is_set():
+        if on_playback_end is not None:
+            on_playback_end()
+        return True
+
     paths = [None] * len(sentences)
     errors = [None] * len(sentences)
     ready = [threading.Event() for _ in sentences]
@@ -466,25 +465,14 @@ def _speak_pipelined(sentences: list, on_playback_start=None, on_playback_end=No
             threads[i] = threading.Thread(target=synth, args=(i,), daemon=True)
             threads[i].start()
 
-    # Kick off synthesis for every sentence right away, in parallel, rather
-    # than only staying one sentence ahead of playback. A short sentence
-    # ("Hello user.") can finish playing well before a network TTS round
-    # trip for the *next* sentence completes, which is exactly what causes
-    # an audible gap ("Hello user. <pause> How may I help you today?").
-    # Starting every request immediately gives each later sentence the
-    # maximum possible head start to finish before playback reaches it.
-    for _i in range(len(sentences)):
-        ensure_started(_i)
+    ensure_started(0)
+    ensure_started(1)
 
     def cleanup_when_ready():
-        # Runs on its own thread so an interrupted speak() call can return
-        # immediately instead of waiting on synthesis that's still in
-        # flight for sentences we're no longer going to play.
         for i in range(played_through, len(sentences)):
             if threads[i] is None:
                 continue
-            ev = ready[i]
-            ev.wait()
+            ready[i].wait()
             if paths[i]:
                 try:
                     os.remove(paths[i])
@@ -499,8 +487,15 @@ def _speak_pipelined(sentences: list, on_playback_start=None, on_playback_end=No
             if stop_event is not None and stop_event.is_set():
                 interrupted = True
                 break
-            ready[i].wait()
+            while not ready[i].wait(0.05):
+                if stop_event is not None and stop_event.is_set():
+                    interrupted = True
+                    break
+            if interrupted:
+                break
+
             played_through = i + 1
+            ensure_started(i + 2)
             if errors[i] is not None:
                 print(f"(voice synthesis failed for one sentence, skipping: {errors[i]})")
                 continue
@@ -525,7 +520,6 @@ def _speak_pipelined(sentences: list, on_playback_start=None, on_playback_end=No
         if played_through < len(sentences):
             threading.Thread(target=cleanup_when_ready, daemon=True).start()
     return interrupted
-
 
 def speak(text: str, on_playback_start=None, on_playback_end=None, stop_event=None) -> bool:
     """Synthesize and play *text*, optionally reporting real playback bounds.

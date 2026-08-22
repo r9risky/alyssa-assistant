@@ -10,7 +10,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 import brain
 from brain import dialogue
-from brain.providers import openai
+from brain.providers import anthropic, openai
 import voice
 
 
@@ -33,6 +33,18 @@ class _Response:
 
 
 class LatencyPipelineTests(unittest.TestCase):
+    def test_anthropic_stream_uses_shared_sse_parser(self):
+        response = _Response(
+            [{"type": "content_block_delta", "delta": {"type": "text_delta", "text": "Ready."}}]
+        )
+        with (
+            patch.object(anthropic.config, "ANTHROPIC_API_KEY", "key"),
+            patch.object(anthropic._HTTP_SESSION, "post", return_value=response),
+        ):
+            result = anthropic._call_anthropic([])
+
+        self.assertEqual(result["message"]["content"], "Ready.")
+
     def test_openai_stream_emits_text_and_reassembles_tool_arguments(self):
         response = _Response(
             [
@@ -95,6 +107,18 @@ class LatencyPipelineTests(unittest.TestCase):
 
         self.assertEqual(speaker._chunks.get_nowait(), "Chrome is ready.")
         self.assertEqual(speaker._pending, "The rest is still generating")
+
+    def test_streaming_speaker_keeps_short_soft_clause_buffered(self):
+        speaker = object.__new__(voice.StreamingSpeaker)
+        speaker.stop_event = threading.Event()
+        speaker.text = ""
+        speaker._pending = ""
+        speaker._chunks = queue.Queue()
+
+        speaker.feed("Well, still thinking")
+
+        self.assertTrue(speaker._chunks.empty())
+        self.assertEqual(speaker._pending, "Well, still thinking")
 
     def test_history_slides_by_character_budget_in_whole_turns(self):
         brain.clear_conversation_history()
