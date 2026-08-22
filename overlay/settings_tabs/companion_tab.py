@@ -115,7 +115,6 @@ class CompanionTabMixin:
             "then reopen Settings to confirm."
         )
 
-    # -- Companion tab -----------------------------------------------------
 
     def _build_companion_tab(self) -> QWidget:
         w = QWidget()
@@ -260,7 +259,6 @@ class CompanionTabMixin:
         self.chatbox_enabled_check.toggled.connect(self.chatbox_position_combo.setEnabled)
         form.addRow("Chat box position:", self.chatbox_position_combo)
 
-        # -- PNGTuber talk animation --
         form.addRow("", self._section_header("Talk Animation", "🗣️"))
         self.mouth_flap_check = QCheckBox("Swap talk/not-talk image while speaking")
         self.mouth_flap_check.setChecked(bool(self.companion.settings.get("talk_mouth_flap_enabled", True)))
@@ -363,7 +361,6 @@ class CompanionTabMixin:
             pixmap.scaled(140, 198, Qt.KeepAspectRatio, Qt.SmoothTransformation)
         )
 
-    # -- live apply ----------------------------------------------------------
     # Every field on both tabs applies itself as you change it (debounced -
     # see the two QTimers set up in __init__) instead of waiting for a Save
     # click. Close just dismisses the window; there's nothing left to commit.
@@ -417,7 +414,6 @@ class CompanionTabMixin:
             self._last_companion_form_values["scale"] = self.scale_slider.value() / 100.0
         self._refresh_preview()
 
-    # -- Updates tab ----------------------------------------------------
 
     def _apply_companion_live(self):
         current = self._gather_companion_settings()

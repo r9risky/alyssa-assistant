@@ -21,7 +21,7 @@ class TestCleanAndCompact(unittest.TestCase):
     def test_clean_fact_respects_configured_length_limit(self):
         long_fact = "x" * 500
         cleaned = memory._clean_fact(long_fact)
-        self.assertLessEqual(len(cleaned), 400)  # config.MAX_MEMORY_FACT_CHARACTERS default
+        self.assertLessEqual(len(cleaned), 400)
 
     def test_compact_dedupes_case_insensitively(self):
         result = memory._compact(["likes cats", "Likes Cats", "likes dogs"])
@@ -30,8 +30,8 @@ class TestCleanAndCompact(unittest.TestCase):
     def test_compact_bounds_to_max_saved_memories(self):
         many = [f"fact number {i}" for i in range(200)]
         result = memory._compact(many)
-        self.assertLessEqual(len(result), 75)  # config.MAX_SAVED_MEMORIES default
-        self.assertEqual(result[-1], "fact number 199")  # keeps the newest
+        self.assertLessEqual(len(result), 75)
+        self.assertEqual(result[-1], "fact number 199")
 
 
 class TestFileBackedOperations(unittest.TestCase):
@@ -57,7 +57,7 @@ class TestFileBackedOperations(unittest.TestCase):
 
     def test_remember_does_not_duplicate(self):
         memory.remember("likes iced coffee")
-        memory.remember("Likes Iced Coffee")  # different case, same fact
+        memory.remember("Likes Iced Coffee")
         self.assertEqual(memory.load_memories().count("likes iced coffee"), 1)
 
     def test_forget_removes_matching_fact(self):

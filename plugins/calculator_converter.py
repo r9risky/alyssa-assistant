@@ -80,7 +80,6 @@ def calculate_math(expression: str) -> str:
         return "Please provide a mathematical expression to calculate."
 
     cleaned = expression.strip()
-    # Handle percentage expressions like "15% of 250"
     pct_match = re.match(r"^([\d.]+)\s*%\s*of\s*([\d.]+)$", cleaned, re.IGNORECASE)
     if pct_match:
         pct = float(pct_match.group(1))
@@ -88,7 +87,6 @@ def calculate_math(expression: str) -> str:
         res = (pct / 100.0) * val
         return f"{pct:g}% of {val:g} is {res:g}."
 
-    # Replace common spoken operator words
     cleaned = re.sub(r"\bx\b", "*", cleaned, flags=re.IGNORECASE)
     cleaned = re.sub(r"\btimes\b", "*", cleaned, flags=re.IGNORECASE)
     cleaned = re.sub(r"\bdivided by\b", "/", cleaned, flags=re.IGNORECASE)
@@ -105,7 +103,6 @@ def calculate_math(expression: str) -> str:
         return f"Couldn't calculate '{expression}': {e}"
 
 
-# Unit Conversion Definitions
 _LENGTH_TO_METERS = {
     "m": 1.0, "meter": 1.0, "km": 1000.0, "kilometer": 1000.0,
     "cm": 0.01, "centimeter": 0.01, "mm": 0.001, "millimeter": 0.001,
@@ -139,10 +136,8 @@ def convert_units(value: float, from_unit: str, to_unit: str) -> str:
     src = (from_unit or "").strip().lower()
     dst = (to_unit or "").strip().lower()
 
-    # Temperature conversion
     temp_units = {"c", "celsius", "f", "fahrenheit", "k", "kelvin"}
     if src in temp_units and dst in temp_units:
-        # Convert src -> Celsius first
         if src in ("c", "celsius"):
             c_val = val
         elif src in ("f", "fahrenheit"):
@@ -150,7 +145,6 @@ def convert_units(value: float, from_unit: str, to_unit: str) -> str:
         else:  # kelvin
             c_val = val - 273.15
 
-        # Convert Celsius -> dst
         if dst in ("c", "celsius"):
             res = c_val
             unit_sym = "°C"
@@ -163,19 +157,16 @@ def convert_units(value: float, from_unit: str, to_unit: str) -> str:
 
         return f"{val:g} {from_unit} is {res:.2f} {unit_sym}."
 
-    # Length conversion
     if src in _LENGTH_TO_METERS and dst in _LENGTH_TO_METERS:
         meters = val * _LENGTH_TO_METERS[src]
         res = meters / _LENGTH_TO_METERS[dst]
         return f"{val:g} {from_unit} is {res:.4g} {to_unit}."
 
-    # Mass conversion
     if src in _MASS_TO_KG and dst in _MASS_TO_KG:
         kg = val * _MASS_TO_KG[src]
         res = kg / _MASS_TO_KG[dst]
         return f"{val:g} {from_unit} is {res:.4g} {to_unit}."
 
-    # Volume conversion
     if src in _VOLUME_TO_LITERS and dst in _VOLUME_TO_LITERS:
         liters = val * _VOLUME_TO_LITERS[src]
         res = liters / _VOLUME_TO_LITERS[dst]

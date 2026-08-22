@@ -143,5 +143,4 @@ class UpdatesTabMixin:
         self.update_status_label.setText(message)
         QMessageBox.information(self, "Update Installed", message)
 
-    # -- Plugins tab ----------------------------------------------------
 
