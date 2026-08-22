@@ -21,7 +21,8 @@ __pycache__/
 
 # --- Local virtual environment (created automatically by start_alyssa.bat) ---
 .venv/
-.plans/
+plans/
+overlay_config.json
 .alyssa-version
 .alyssa-manifest.json
 logs/
