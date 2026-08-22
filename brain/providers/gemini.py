@@ -3,7 +3,7 @@ import time
 
 import requests
 
-import config
+from config import PROVIDER_SETTINGS as config
 import telemetry
 
 from ..common import _HTTP_SESSION, _iter_sse_json

@@ -9,6 +9,7 @@ from PySide6.QtWidgets import (
 
 import config
 import credential_store
+from brain.common import api_origin
 
 from ..credential_checks import (
     _extract_elevenlabs_voice_id, _fetch_custom_openai_models,
@@ -516,6 +517,26 @@ class AssistantTabMixin:
     # -- Custom OpenAI-compatible provider: "Fetch models" doubles as its
     # verify step, since there's no separate cheap auth-only probe. --------
 
+    def _confirm_custom_key_origin(self, base_url: str, key: str) -> bool:
+        if not key:
+            return True
+        origin = api_origin(base_url)
+        warned = getattr(self, "_warned_custom_key_origins", set())
+        if origin in warned:
+            return True
+        choice = QMessageBox.warning(
+            self,
+            "Send API key?",
+            f"This sends your custom-provider API key to {origin}. Continue?",
+            QMessageBox.Yes | QMessageBox.Cancel,
+            QMessageBox.Cancel,
+        )
+        if choice != QMessageBox.Yes:
+            return False
+        warned.add(origin)
+        self._warned_custom_key_origins = warned
+        return True
+
     def _start_custom_models_fetch(self):
         base_url = self.custom_base_url_edit.text().strip()
         key = self.custom_key_edit.text().strip()
@@ -523,10 +544,14 @@ class AssistantTabMixin:
             self.custom_models_status_label.setStyleSheet(f"font-size: 11px; color: {self._t()['danger']};")
             self.custom_models_status_label.setText("Enter a base URL first.")
             return
-        if not _is_http_url(base_url):
+        if not _is_http_url(base_url, key):
             self.custom_base_url_edit.setStyleSheet(f"border: 2px solid {self._t()['danger']};")
             self.custom_models_status_label.setStyleSheet(f"font-size: 11px; color: {self._t()['danger']};")
-            self.custom_models_status_label.setText("Enter a valid http:// or https:// base URL.")
+            self.custom_models_status_label.setText(
+                "Use HTTPS with an API key; HTTP is allowed only for loopback."
+            )
+            return
+        if not self._confirm_custom_key_origin(base_url, key):
             return
 
         self._custom_fetch_models_btn.setEnabled(False)
@@ -639,7 +664,7 @@ class AssistantTabMixin:
 
     def _gather_assistant_values(self) -> dict:
         custom_base_url = self.custom_base_url_edit.text().strip()
-        if not _is_http_url(custom_base_url):
+        if not _is_http_url(custom_base_url, self.custom_key_edit.text().strip()):
             self.custom_base_url_edit.setStyleSheet(f"border: 2px solid {self._t()['danger']};")
             self.custom_models_status_label.setStyleSheet(f"font-size: 11px; color: {self._t()['danger']};")
             self.custom_models_status_label.setText("Enter a valid http:// or https:// base URL.")

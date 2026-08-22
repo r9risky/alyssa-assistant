@@ -92,9 +92,7 @@ class VoiceLifecycleTests(unittest.TestCase):
         pipelined.assert_called_once()
         one.assert_not_called()
 
-    def test_interrupted_pipeline_cleanup_skips_unstarted_jobs(self):
-        fd, path = tempfile.mkstemp(suffix=".mp3")
-        os.close(fd)
+    def test_interrupted_pipeline_does_not_start_queued_jobs(self):
         created_threads = []
         real_thread = threading.Thread
 
@@ -106,16 +104,51 @@ class VoiceLifecycleTests(unittest.TestCase):
         stop_event = threading.Event()
         stop_event.set()
         with (
-            patch.object(voice, "_synthesize_to_temp_file", return_value=path),
+            patch.object(voice, "_synthesize_to_temp_file") as synthesize,
             patch.object(voice.threading, "Thread", side_effect=make_thread),
         ):
             voice._speak_pipelined(["first", "never started"], stop_event=stop_event)
 
-        for thread in created_threads:
-            thread.join(timeout=1.0)
-        self.assertTrue(created_threads)
-        self.assertTrue(all(not thread.is_alive() for thread in created_threads))
-        self.assertFalse(os.path.exists(path))
+        self.assertEqual(created_threads, [])
+        synthesize.assert_not_called()
+
+    def test_sentence_pipeline_limits_synthesis_concurrency(self):
+        lock = threading.Lock()
+        release = threading.Event()
+        first_pair_started = threading.Event()
+        active = 0
+        maximum_active = 0
+
+        def synthesize(_sentence):
+            nonlocal active, maximum_active
+            with lock:
+                active += 1
+                maximum_active = max(maximum_active, active)
+                if active == 2:
+                    first_pair_started.set()
+            release.wait(1)
+            fd, path = tempfile.mkstemp(suffix=".mp3")
+            os.close(fd)
+            with lock:
+                active -= 1
+            return path
+
+        worker = threading.Thread(
+            target=voice._speak_pipelined,
+            args=([f"sentence {index}" for index in range(8)],),
+        )
+        with (
+            patch.object(voice, "_synthesize_to_temp_file", side_effect=synthesize),
+            patch.object(voice, "_play", return_value=True),
+        ):
+            worker.start()
+            self.assertTrue(first_pair_started.wait(1))
+            self.assertEqual(maximum_active, 2)
+            release.set()
+            worker.join(3)
+
+        self.assertFalse(worker.is_alive())
+        self.assertLessEqual(maximum_active, 2)
 
     def test_playback_unloads_music_resource(self):
         calls = []

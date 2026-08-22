@@ -108,6 +108,18 @@ class LatencyPipelineTests(unittest.TestCase):
         self.assertEqual(speaker._chunks.get_nowait(), "Chrome is ready.")
         self.assertEqual(speaker._pending, "The rest is still generating")
 
+    def test_streaming_speaker_keeps_short_soft_clause_buffered(self):
+        speaker = object.__new__(voice.StreamingSpeaker)
+        speaker.stop_event = threading.Event()
+        speaker.text = ""
+        speaker._pending = ""
+        speaker._chunks = queue.Queue()
+
+        speaker.feed("Well, still thinking")
+
+        self.assertTrue(speaker._chunks.empty())
+        self.assertEqual(speaker._pending, "Well, still thinking")
+
     def test_history_slides_by_character_budget_in_whole_turns(self):
         brain.clear_conversation_history()
         with (
