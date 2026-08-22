@@ -1,13 +1,12 @@
-"""
-Persistent JSON memory storage and overlap retrieval for Alyssa.
-"""
+"""Persistent JSON memory storage and semantic retrieval for Alyssa."""
 
 import json
 import os
-import re
 import sys
 import threading
 from functools import lru_cache
+
+import numpy as np
 
 import config
 
@@ -21,35 +20,13 @@ MEMORY_FILE = os.path.join(_BASE_DIR, "memory.json")
 _lock = threading.RLock()
 _MEMORIES_CACHE = None
 _MEMORIES_CACHE_MTIME = None
-_STOPWORDS = {
-    "a", "an", "the", "is", "are", "was", "were", "am", "be", "been",
-    "my", "me", "i", "you", "your", "it", "its", "this", "that", "to",
-    "of", "in", "on", "at", "for", "and", "or", "with", "as", "do",
-    "does", "did", "what", "whats", "which", "who", "how", "so",
-}
 
 
-@lru_cache(maxsize=4096)
-def _tokenize(text: str) -> list:
-    """Tokenizes and stems input text, ignoring stopwords."""
-    words = re.findall(r"[a-z0-9']+", text.lower())
-    stemmed = []
-    for w in words:
-        if w in _STOPWORDS or len(w) < 2:
-            continue
-        for suffix in ("ing", "ed", "es", "s"):
-            if w.endswith(suffix) and len(w) > len(suffix) + 2:
-                w = w[: -len(suffix)]
-                break
-        stemmed.append(w)
-    return stemmed
+@lru_cache(maxsize=1)
+def _embedding_model():
+    from fastembed import TextEmbedding
 
-
-def _score(query_tokens: list, fact_tokens: list) -> int:
-    """Calculates shared distinct token count between query and fact."""
-    if not query_tokens or not fact_tokens:
-        return 0
-    return len(set(query_tokens) & set(fact_tokens))
+    return TextEmbedding(model_name="BAAI/bge-small-en-v1.5")
 
 
 def _clean_fact(fact: str) -> str:
@@ -134,27 +111,25 @@ def save_memories(memories: list):
 
 
 def relevant_memories(query: str, limit: int = 20) -> list:
-    """Returns top relevant memories matching the query using keyword overlap."""
+    """Returns top memories by local embedding similarity."""
     if limit <= 0:
         return []
     memories = load_memories()
     if not memories:
         return []
 
-    query_tokens = _tokenize(query or "")
-    scored = [
-        (i, m, _score(query_tokens, _tokenize(m)))
-        for i, m in enumerate(memories)
-    ]
-
     selected_indices = []
-    if query_tokens:
+    query = (query or "").strip()
+    if query:
+        model = _embedding_model()
+        query_vector = next(model.query_embed(query))
+        scores = np.dot(list(model.passage_embed(memories)), query_vector)
         ranked = sorted(
-            [s for s in scored if s[2] > 0],
-            key=lambda s: (s[2], s[0]),
+            enumerate(scores),
+            key=lambda item: (item[1], item[0]),
             reverse=True,
         )
-        selected_indices = [i for i, _m, _score_val in ranked[:limit]]
+        selected_indices = [i for i, _score in ranked[:limit]]
 
     recent_budget = min(5, limit)
     selected_set = set(selected_indices)

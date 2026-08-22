@@ -1,42 +1,17 @@
-"""Unit tests for memory.py's pure scoring/compaction logic and its
-file-backed remember/forget/relevant_memories functions. See
+"""Unit tests for memory.py's compaction and its file-backed operations. See
 plans/004-establish-test-baseline-pure-logic-modules.md.
 """
 import os
 import sys
 import tempfile
 import unittest
+from unittest import mock
+
+import numpy as np
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 import memory  # noqa: E402
-
-
-class TestTokenizeAndScore(unittest.TestCase):
-    def test_tokenize_strips_stopwords_and_stems_plurals(self):
-        tokens = memory._tokenize("What is my favorite programming languages")
-        # stopwords ("what", "is", "my") removed. Note: _tokenize's suffix
-        # stripping is naive single-pass, so "programming" -> "programm"
-        # (the "ing" suffix is stripped from the whole word, not just a
-        # plural ending) and "languages" -> "languag" ("es" stripped) -
-        # this is real, existing behavior confirmed against the live code,
-        # not the more conservative stemming the plan draft assumed.
-        self.assertIn("favorite", tokens)
-        self.assertIn("programm", tokens)
-        self.assertIn("languag", tokens)
-        self.assertNotIn("what", tokens)
-        self.assertNotIn("is", tokens)
-        self.assertNotIn("my", tokens)
-
-    def test_score_counts_shared_distinct_tokens(self):
-        query_tokens = memory._tokenize("play my music")
-        fact_tokens = memory._tokenize("prefers Spotify for music")
-        self.assertEqual(memory._score(query_tokens, fact_tokens), 1)  # "music"
-
-    def test_score_zero_when_no_overlap(self):
-        query_tokens = memory._tokenize("what is the weather")
-        fact_tokens = memory._tokenize("the golden retriever is named Max")
-        self.assertEqual(memory._score(query_tokens, fact_tokens), 0)
 
 
 class TestCleanAndCompact(unittest.TestCase):
@@ -95,11 +70,21 @@ class TestFileBackedOperations(unittest.TestCase):
         result = memory.forget("something never saved")
         self.assertIn("couldn't find", result.lower())
 
-    def test_relevant_memories_ranks_by_overlap(self):
+    def test_relevant_memories_finds_semantic_match_without_shared_words(self):
         memory.remember("prefers Spotify for music")
         memory.remember("the golden retriever is named Max")
-        results = memory.relevant_memories("play my music", limit=5)
-        self.assertIn("prefers Spotify for music", results)
+        model = mock.Mock()
+        model.query_embed.return_value = iter([np.array([1.0, 0.0])])
+        model.passage_embed.return_value = iter([
+            np.array([0.9, 0.1]),
+            np.array([0.1, 0.9]),
+        ])
+
+        with mock.patch.object(memory, "_embedding_model", return_value=model):
+            results = memory.relevant_memories("put on some songs", limit=1)
+
+        self.assertEqual(results, ["prefers Spotify for music"])
+        model.query_embed.assert_called_once_with("put on some songs")
 
 
 if __name__ == "__main__":
