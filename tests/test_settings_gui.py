@@ -130,6 +130,30 @@ class SettingsGuiTests(unittest.TestCase):
         self.assertEqual(settings_dialog.config.HIDE_CONSOLE_WINDOW, original)
         set_visible.assert_not_called()
 
+    def test_system_watch_controls_apply_and_reload_plugins(self):
+        original = (
+            config.SYSTEM_WATCH_ENABLED, config.SYSTEM_WATCH_INTERVAL_SECONDS
+        )
+        enabled = not original[0]
+        interval = original[1] + 10
+        try:
+            self.dialog.system_watch_enabled_check.setChecked(enabled)
+            self.dialog.system_watch_interval_spin.setValue(interval)
+            with (
+                patch.object(settings_dialog, "_atomic_write_text") as write_text,
+                patch.object(self.dialog, "_reload_plugins_backend") as reload_plugins,
+            ):
+                self.real_assistant_apply(self.dialog)
+
+            saved = write_text.call_args.args[1]
+            self.assertIn(f"SYSTEM_WATCH_ENABLED = {enabled}", saved)
+            self.assertIn(f"SYSTEM_WATCH_INTERVAL_SECONDS = {interval}", saved)
+            self.assertEqual(config.SYSTEM_WATCH_ENABLED, enabled)
+            self.assertEqual(config.SYSTEM_WATCH_INTERVAL_SECONDS, interval)
+            reload_plugins.assert_called_once_with()
+        finally:
+            config.SYSTEM_WATCH_ENABLED, config.SYSTEM_WATCH_INTERVAL_SECONDS = original
+
     def test_invalid_custom_url_is_not_saved(self):
         original = settings_dialog.config.CUSTOM_BASE_URL
         self.dialog.custom_base_url_edit.setText("not a URL")

@@ -17,13 +17,15 @@ _GEMINI_URL_TEMPLATE = "https://generativelanguage.googleapis.com/v1beta/models/
 _GEMINI_STREAM_URL_TEMPLATE = "https://generativelanguage.googleapis.com/v1beta/models/{model}:streamGenerateContent"
 
 
-def _tools_to_gemini_declarations():
+def _tools_to_gemini_declarations(tools=None):
     """Converts our OpenAI-style TOOLS list into Gemini's functionDeclarations
     format. The parameters schema itself (JSON Schema) is compatible as-is.
     Cached - see _gemini_tools_cache above."""
     global _gemini_tools_cache
-    if _gemini_tools_cache is None:
-        _gemini_tools_cache = [
+    tool_list = TOOLS if tools is None else tools
+    key = tuple(t["function"]["name"] for t in tool_list)
+    if _gemini_tools_cache is None or _gemini_tools_cache[0] != key:
+        _gemini_tools_cache = (key, [
             {
                 "name": t["function"]["name"],
                 "description": t["function"].get("description", ""),
@@ -31,9 +33,9 @@ def _tools_to_gemini_declarations():
                     "parameters", {"type": "object", "properties": {}}
                 ),
             }
-            for t in TOOLS
-        ]
-    return _gemini_tools_cache
+            for t in tool_list
+        ])
+    return _gemini_tools_cache[1]
 
 
 def _messages_to_gemini(messages):
@@ -88,7 +90,7 @@ def _messages_to_gemini(messages):
     return system_text, contents
 
 
-def _call_gemini(messages, force_tools: bool = False, on_text_delta=None, cancel_event=None):
+def _call_gemini(messages, force_tools: bool = False, on_text_delta=None, cancel_event=None, tools=None):
     if not config.GEMINI_API_KEY:
         raise RuntimeError(
             "GEMINI_API_KEY isn't set. Set it as an environment variable "
@@ -99,7 +101,7 @@ def _call_gemini(messages, force_tools: bool = False, on_text_delta=None, cancel
     system_text, contents = _messages_to_gemini(messages)
     body = {
         "contents": contents,
-        "tools": [{"functionDeclarations": _tools_to_gemini_declarations()}],
+        "tools": [{"functionDeclarations": _tools_to_gemini_declarations(tools)}],
         # Gemini 3.x models prefer thinkingLevel ("minimal"/"low"/"medium"/
         # "high") over the older numeric thinkingBudget, which Google's docs
         # call unpredictable on 3.x. "minimal" keeps this fixed-vocabulary

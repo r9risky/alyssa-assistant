@@ -352,6 +352,25 @@ class AssistantTabMixin:
         self.show_console_check.toggled.connect(self._on_show_console_toggled)
         form.addRow("", self.show_console_check)
 
+        form.addRow("", self._section_header("Proactive Monitoring", "🔔"))
+        self.system_watch_enabled_check = QCheckBox(
+            "Warn me when the system drive is almost full"
+        )
+        self.system_watch_enabled_check.setChecked(
+            bool(getattr(config, "SYSTEM_WATCH_ENABLED", False))
+        )
+        self.system_watch_enabled_check.toggled.connect(self._queue_assistant_apply)
+        form.addRow("", self.system_watch_enabled_check)
+
+        self.system_watch_interval_spin = QSpinBox()
+        self.system_watch_interval_spin.setRange(10, 86400)
+        self.system_watch_interval_spin.setSuffix(" sec")
+        self.system_watch_interval_spin.setValue(
+            int(getattr(config, "SYSTEM_WATCH_INTERVAL_SECONDS", 300))
+        )
+        self.system_watch_interval_spin.valueChanged.connect(self._queue_assistant_apply)
+        form.addRow("Check every:", self.system_watch_interval_spin)
+
         # -- Memory & Location --
         form.addRow("", self._section_header("Memory & Location", "🧾"))
 
@@ -647,6 +666,8 @@ class AssistantTabMixin:
             "CAVEMAN_MODE": self.caveman_combo.currentData(),
             "CONFIRM_BEFORE_ACTIONS": self.confirm_check.isChecked(),
             "HIDE_CONSOLE_WINDOW": not self.show_console_check.isChecked(),
+            "SYSTEM_WATCH_ENABLED": self.system_watch_enabled_check.isChecked(),
+            "SYSTEM_WATCH_INTERVAL_SECONDS": self.system_watch_interval_spin.value(),
             "WHISPER_MODEL_SIZE": self.whisper_model_combo.currentText().strip() or config.WHISPER_MODEL_SIZE,
             "WHISPER_DEVICE": self._whisper_device_display_to_value.get(self.whisper_device_combo.currentText(), "auto"),
             "WHISPER_COMPUTE_TYPE": self.whisper_compute_combo.currentText().strip() or "auto",
@@ -756,11 +777,18 @@ class AssistantTabMixin:
 
         old_hide = config.HIDE_CONSOLE_WINDOW
         old_whisper = (config.WHISPER_MODEL_SIZE, config.WHISPER_DEVICE, config.WHISPER_COMPUTE_TYPE)
+        old_system_watch = (
+            config.SYSTEM_WATCH_ENABLED, config.SYSTEM_WATCH_INTERVAL_SECONDS
+        )
         old_spotify = (config.SPOTIFY_CLIENT_ID, config.SPOTIFY_CLIENT_SECRET)
         old_audio_output = getattr(config, "AUDIO_OUTPUT_DEVICE", "default")
         for key, value in values.items():
             setattr(config, key, value)
 
+        if old_system_watch != (
+            config.SYSTEM_WATCH_ENABLED, config.SYSTEM_WATCH_INTERVAL_SECONDS
+        ):
+            self._reload_plugins_backend()
         if old_hide != config.HIDE_CONSOLE_WINDOW:
             _set_console_visible(not config.HIDE_CONSOLE_WINDOW)
         whisper_settings_changed = old_whisper != (
