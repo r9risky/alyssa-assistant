@@ -16,7 +16,7 @@ try:
 except ImportError:  # Existing installs keep file-based playback until updated.
     websocket_connect = None
 
-import config
+from config import AUDIO_SETTINGS as config
 
 async def _synthesize(text: str, out_path: str):
     """Dispatches to whichever provider TTS_PROVIDER (config.py) selects.

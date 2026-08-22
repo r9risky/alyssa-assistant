@@ -227,6 +227,25 @@ class UpdaterTests(unittest.TestCase):
             self.assertTrue((install / "overlay" / "__init__.py").exists())
             self.assertTrue((install / updater.MANIFEST_FILE).exists())
 
+    def test_manifestless_release_snapshots_cover_supported_versions(self):
+        cases = {
+            "v1.0.8": ("actions.py", "actions/bridges.py"),
+            "v1.1.0": ("LATENCY_AUDIT.md", "actions.py"),
+            "v1.1.1": ("credential_store.py", "LATENCY_AUDIT.md"),
+            "v1.1.2": ("credential_store.py", "LATENCY_AUDIT.md"),
+            "v1.1.4": ("voice_playback.py", "tests/test_tool_filtering.py"),
+            "v1.1.10": ("tests/test_tool_filtering.py", "alyssaai.zip"),
+        }
+        with tempfile.TemporaryDirectory() as temporary:
+            install = Path(temporary)
+            marker = install / ".alyssa-version"
+            for version, (known, absent) in cases.items():
+                with self.subTest(version=version):
+                    marker.write_text(version + "\n", encoding="utf-8")
+                    managed = updater._previously_managed_paths(install)
+                    self.assertIn(known, managed)
+                    self.assertNotIn(absent, managed)
+
     def test_managed_release_plugin_is_updated_and_removed(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -278,6 +297,45 @@ class UpdaterTests(unittest.TestCase):
                 (install / "plugins" / "official.py").read_text(encoding="utf-8"), "v2\n"
             )
 
+    def test_check_latest_rejects_non_https_download_url(self):
+        response = Mock()
+        response.json.return_value = {
+            "tag_name": "v1.6.0",
+            "zipball_url": "http://example.invalid/release.zip",
+        }
+        with tempfile.TemporaryDirectory() as temporary:
+            with patch.object(updater.requests, "get", return_value=response):
+                with self.assertRaisesRegex(RuntimeError, "HTTPS"):
+                    updater.check_latest(temporary)
+
+    def test_safe_extract_rejects_oversized_expanded_archive(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            archive = root / "large.zip"
+            with zipfile.ZipFile(archive, "w", compression=zipfile.ZIP_DEFLATED) as zipped:
+                zipped.writestr("alyssa-release/main.py", "x" * 64)
+            with patch.object(updater, "MAX_EXTRACTED_BYTES", 32):
+                with self.assertRaisesRegex(RuntimeError, "expanded size"):
+                    updater._safe_extract(archive, root / "source")
+
+    def test_install_release_closes_download_response(self):
+        archive_bytes = io.BytesIO()
+        with zipfile.ZipFile(archive_bytes, "w") as zipped:
+            zipped.writestr("alyssa-release/main.py", "new main\n")
+            zipped.writestr("alyssa-release/config.py", "SETTING = True\n")
+            zipped.writestr("alyssa-release/overlay/__init__.py", "new overlay\n")
+        response = Mock()
+        response.iter_content.return_value = [archive_bytes.getvalue()]
+        release = {
+            "latest_version": "v1.6.0",
+            "download_url": "https://example.invalid/release.zip",
+        }
+
+        with tempfile.TemporaryDirectory() as temporary:
+            with patch.object(updater.requests, "get", return_value=response):
+                updater.install_release(temporary, release)
+
+        response.close.assert_called_once_with()
 
 if __name__ == "__main__":
     unittest.main()

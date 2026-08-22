@@ -1,4 +1,4 @@
-import config
+from config import PROVIDER_SETTINGS as config
 
 from .anthropic import _call_anthropic
 from .gemini import _call_gemini

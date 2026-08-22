@@ -8,7 +8,7 @@ from functools import lru_cache
 
 import numpy as np
 
-import config
+from config import MEMORY_SETTINGS as config
 
 if getattr(sys, "frozen", False):
     _BASE_DIR = os.path.dirname(sys.executable)

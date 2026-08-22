@@ -4,7 +4,7 @@ import time
 
 import requests
 
-import config
+from config import PROVIDER_SETTINGS as config
 import telemetry
 
 from ..common import GenerationCancelled, _HTTP_SESSION

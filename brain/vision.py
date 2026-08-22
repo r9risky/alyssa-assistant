@@ -1,7 +1,7 @@
 import io
 import re
 
-import config
+from config import PROVIDER_SETTINGS as config
 
 from .providers.anthropic import _describe_image_anthropic
 from .providers.gemini import _describe_image_gemini

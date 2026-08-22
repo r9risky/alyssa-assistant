@@ -4,10 +4,10 @@ import time
 
 import requests
 
-import config
+from config import PROVIDER_SETTINGS as config
 import telemetry
 
-from ..common import _HTTP_SESSION, _iter_sse_json
+from ..common import _HTTP_SESSION, _iter_sse_json, is_api_key_transport_secure
 from ..tool_registry import TOOLS
 
 def _messages_to_openai(messages):
@@ -65,6 +65,11 @@ def _call_openai_compatible(
     "custom_openai", since they're wire-compatible aside from the base URL/
     key/model. api_key may be blank (e.g. a local LM Studio server that
     doesn't check one)."""
+    if not is_api_key_transport_secure(base_url, api_key):
+        raise RuntimeError(
+            f"{provider_label} requires HTTPS when an API key is configured; "
+            "HTTP is allowed only for loopback endpoints."
+        )
     headers = {"Content-Type": "application/json"}
     if api_key:
         headers["Authorization"] = f"Bearer {api_key}"
@@ -187,6 +192,11 @@ def _describe_image_openai_compatible(
         return "I can't look at the screen - no model is configured for this provider in config.py."
 
     b64 = base64.b64encode(image_bytes).decode("ascii")
+    if not is_api_key_transport_secure(base_url, api_key):
+        raise RuntimeError(
+            f"{provider_label} requires HTTPS when an API key is configured; "
+            "HTTP is allowed only for loopback endpoints."
+        )
     headers = {"Content-Type": "application/json"}
     if api_key:
         headers["Authorization"] = f"Bearer {api_key}"
