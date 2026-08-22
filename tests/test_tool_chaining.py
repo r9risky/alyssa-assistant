@@ -42,3 +42,17 @@ class ToolChainingTests(unittest.TestCase):
         self.assertEqual([m["role"] for m in messages[tool_index - 1:tool_index + 1]], ["assistant", "tool"])
         self.assertEqual(messages[tool_index]["content"], "12")
         self.assertIn("multiple tools in sequence", messages[0]["content"])
+
+    def test_string_encoded_tool_arguments_are_decoded(self):
+        calls = []
+        tool_call = {"message": {"role": "assistant", "content": "", "tool_calls": [
+            {"id": "call_1", "function": {"name": "read_value", "arguments": '{"value":"12"}'}}
+        ]}}
+        final = {"message": {"role": "assistant", "content": "Done.", "tool_calls": []}}
+        with (
+            patch.dict(actions.FUNCTIONS, {"read_value": lambda value: calls.append(value) or "ok"}),
+            patch.object(dialogue, "_call_model_with_error_handling", side_effect=[(tool_call, None), (final, None)]),
+        ):
+            brain.handle_command("Read it.")
+
+        self.assertEqual(calls, ["12"])

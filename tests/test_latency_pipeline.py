@@ -10,7 +10,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 import brain
 from brain import dialogue
-from brain.providers import openai
+from brain.providers import anthropic, openai
 import voice
 
 
@@ -33,6 +33,18 @@ class _Response:
 
 
 class LatencyPipelineTests(unittest.TestCase):
+    def test_anthropic_stream_uses_shared_sse_parser(self):
+        response = _Response(
+            [{"type": "content_block_delta", "delta": {"type": "text_delta", "text": "Ready."}}]
+        )
+        with (
+            patch.object(anthropic.config, "ANTHROPIC_API_KEY", "key"),
+            patch.object(anthropic._HTTP_SESSION, "post", return_value=response),
+        ):
+            result = anthropic._call_anthropic([])
+
+        self.assertEqual(result["message"]["content"], "Ready.")
+
     def test_openai_stream_emits_text_and_reassembles_tool_arguments(self):
         response = _Response(
             [

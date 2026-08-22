@@ -7,7 +7,7 @@ import requests
 import config
 import telemetry
 
-from ..common import _HTTP_SESSION
+from ..common import _HTTP_SESSION, _iter_sse_json
 from ..tool_registry import TOOLS
 
 _anthropic_tools_cache = None
