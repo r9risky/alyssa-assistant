@@ -158,7 +158,9 @@ def _compact_system_prompt() -> str:
         "clarifying question when a destructive, hard-to-undo request has no safe "
         "target; protected tools perform their own confirmation. Never write a tool "
         "call as text. For an open-then-interact command, open the app first and use "
-        "the next tool turn to finish the interaction.\n\n"
+        "the next tool turn to finish the interaction. You can and should call multiple "
+        "tools in sequence within one user turn when needed, using each result to decide "
+        "the next call. Give the final reply only after every requested step is resolved.\n\n"
         "Do not use tools for greetings, thanks, ordinary factual questions, advice, "
         "opinions, explanations, brainstorming, or conversation; answer those "
         "directly. If asked to say, repeat, or spell text, output only that requested "
@@ -1030,6 +1032,9 @@ def handle_command(
                 # extra field for Ollama.
                 tool_message["id"] = call["id"]
             messages.append(tool_message)
+            if blocked_by_web_content:
+                _remember_turn(user_text, tool_output)
+                return tool_output
 
         # open_app loops back for a second model call (to catch compound
         # commands like "open Discord and type hello"), but that's pure
@@ -1050,31 +1055,7 @@ def handle_command(
             _remember_turn(user_text, partial_reply)
             already_delivered_partial = True
 
-        # A second model call just to reword a completed tool result adds
-        # latency. Use the result directly by default; toggle in config.py
-        # if a task needs extra model reasoning.
-        #
-        # Exception: if this round opened an app, don't short-circuit yet -
-        # "type hello in Discord" needs open_app AND a follow-up type_text
-        # once Discord has loaded, split across two tool-calling turns
-        # rather than typing blind into an unfocused window. Returning
-        # immediately here would drop that second "type hello" half. If
-        # there really was nothing more to do, the model replies with plain
-        # text next turn and falls into the no-tool-calls branch below -
-        # one extra round trip, but only for this one tool.
-        #
-        # Also excluded: search_web. Its raw output is a bare title/
-        # snippet/URL dump, not something to read verbatim, and has no
-        # fixed phrasing in _natural_fast_reply - looping back lets the
-        # model turn it into a natural spoken summary with a follow-up question.
-        if (
-            getattr(config, "FAST_TOOL_RESPONSES", True)
-            and completed_outputs
-            and not opened_app_this_round
-            and not used_web_content_this_round
-        ):
-            reply = " ".join(completed_outputs)
-            _remember_turn(user_text, reply)
-            return reply
+        # Feed every result back through the existing loop so dependent tool
+        # calls can finish before the model gives its final reply.
 
     return "I got a bit stuck on that one - could you try rephrasing?"
