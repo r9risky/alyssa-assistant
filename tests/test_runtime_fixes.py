@@ -264,7 +264,7 @@ class FollowupAuditFixTests(unittest.TestCase):
         original_name = nameutil.config.ASSISTANT_NAME
         try:
             nameutil._compile_name_pattern.cache_clear()
-            nameutil.name_pattern()  # populate the cache for the old name
+            nameutil.name_pattern()
             nameutil.config.ASSISTANT_NAME = "NovaUniqueWakeName"
             self.assertTrue(nameutil.contains_name("NovaUniqueWakeName, hello"))
         finally:

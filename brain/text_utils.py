@@ -12,7 +12,6 @@ def _strip_fake_tool_call(text: str) -> str:
     i = 0
     while i < len(text):
         if text[i] == "{":
-            # Try to find the matching closing brace for this block
             depth = 0
             j = i
             while j < len(text):
@@ -26,7 +25,6 @@ def _strip_fake_tool_call(text: str) -> str:
 
             candidate = text[i : j + 1]
             if depth == 0 and '"name"' in candidate:
-                # This block looks like a fake tool call - skip over it entirely
                 i = j + 1
                 continue
 

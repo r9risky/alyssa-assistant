@@ -71,7 +71,7 @@ def _top_cpu_process():
         procs = list(psutil.process_iter(["name", "cpu_percent"]))
         for p in procs:
             try:
-                p.cpu_percent(None)  # prime it
+                p.cpu_percent(None)
             except (psutil.NoSuchProcess, psutil.AccessDenied):
                 pass
         time.sleep(0.3)

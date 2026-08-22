@@ -304,7 +304,6 @@ class SpeechBubble(_TopmostWindowMixin, QWidget):
         self._hide_on_fade_finished = True
         self._opacity_anim.start()
 
-    # -- layout / painting ------------------------------------------------
     def _resize_to_content(self):
         w = self.label.width() + _BUBBLE_PAD_X * 2
         h = self.label.height() + _BUBBLE_PAD_Y * 2 + _BUBBLE_TAIL_H
@@ -378,7 +377,6 @@ class SpeechBubble(_TopmostWindowMixin, QWidget):
             _BUBBLE_RADIUS, _BUBBLE_RADIUS,
         )
 
-        # Tail (small triangle) touching the rounded body and pointing at her.
         tail = QPainterPath()
         tip_x = self._tail_x
         if self._tail_on_top:
@@ -562,7 +560,6 @@ class CompanionWindow(
         self._drag_offset = QPoint()
         self._resize_start_pos = QPoint()
         self._resize_start_size = QSize()
-        # -- PNGTuber-style talk state --------------------------------
         self._talking = False
         self._mouth_open = False
         self._talk_tick = 0
