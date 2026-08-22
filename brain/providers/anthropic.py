@@ -18,14 +18,16 @@ _ANTHROPIC_URL = "https://api.anthropic.com/v1/messages"
 _ANTHROPIC_VERSION = "2023-06-01"
 
 
-def _tools_to_anthropic():
+def _tools_to_anthropic(tools=None):
     """Converts our OpenAI-style TOOLS list into Anthropic's tool schema -
     same JSON Schema `parameters`, just renamed to `input_schema` and
     flattened (no nested "function" wrapper). Cached - see
     _anthropic_tools_cache above."""
     global _anthropic_tools_cache
-    if _anthropic_tools_cache is None:
-        _anthropic_tools_cache = [
+    tool_list = TOOLS if tools is None else tools
+    key = tuple(t["function"]["name"] for t in tool_list)
+    if _anthropic_tools_cache is None or _anthropic_tools_cache[0] != key:
+        _anthropic_tools_cache = (key, [
             {
                 "name": t["function"]["name"],
                 "description": t["function"].get("description", ""),
@@ -33,9 +35,9 @@ def _tools_to_anthropic():
                     "parameters", {"type": "object", "properties": {}}
                 ),
             }
-            for t in TOOLS
-        ]
-    return _anthropic_tools_cache
+            for t in tool_list
+        ])
+    return _anthropic_tools_cache[1]
 
 
 def _messages_to_anthropic(messages):
@@ -89,7 +91,7 @@ def _messages_to_anthropic(messages):
     return system_text, out
 
 
-def _call_anthropic(messages, on_text_delta=None, cancel_event=None):
+def _call_anthropic(messages, on_text_delta=None, cancel_event=None, tools=None):
     if not config.ANTHROPIC_API_KEY:
         raise RuntimeError(
             "ANTHROPIC_API_KEY isn't set. Set it as an environment variable "
@@ -102,7 +104,7 @@ def _call_anthropic(messages, on_text_delta=None, cancel_event=None):
         "model": config.ANTHROPIC_MODEL,
         "max_tokens": getattr(config, "LLM_MAX_OUTPUT_TOKENS", 256),
         "messages": anthropic_messages,
-        "tools": _tools_to_anthropic(),
+        "tools": _tools_to_anthropic(tools),
         "temperature": 0.2,
         "stream": True,
     }

@@ -16,8 +16,10 @@ import telemetry
 from .common import GenerationCancelled, _HTTP_SESSION
 from .text_utils import _is_degenerate_reply, _looks_like_lazy_dodge, _strip_fake_tool_call
 from .tool_registry import TOOLS, refresh_tools
+from .tool_registry import select_tools
 
 _pending_confirmation = None
+_fallback_notice_logged = False
 
 
 _pending_confirmation_time = None
@@ -419,6 +421,9 @@ def _natural_announce_reply(name: str, arguments: dict):
     not "Chrome's open." only after. Returns None for tools that shouldn't
     be pre-announced (see the two sets above), in which case the caller
     just runs the tool exactly as it did before this existed."""
+    if name == "proactive_alert":
+        return str(arguments.get("message", "")).strip() or None
+
     if name in _CONFIRMATION_GATED_TOOLS or name in _SKIP_ANNOUNCE_TOOLS:
         return None
 
@@ -701,12 +706,40 @@ _CANT_DO_THAT_REPLY = (
 )
 
 
+_FAST_INTENT_RE = re.compile(
+    r"\b(?:timers?|stopwatches?|weather|forecast|temperature|umbrella|outside|"
+    r"play|pause|resume|skip|next|previous|volume|mute|songs?|music|tracks?)\b",
+    re.IGNORECASE,
+)
+_PLANNING_RE = re.compile(
+    r"\b(?:and|then|after|before|compare|plan|analy[sz]e|research|summari[sz]e|"
+    r"explain|why|steps?)\b",
+    re.IGNORECASE,
+)
+
+
+def _reasoning_tier(user_text: str) -> str:
+    configured = str(getattr(config, "LLM_REASONING_TIER", "auto")).casefold()
+    if configured in {"fast", "strong"}:
+        return configured
+    text = user_text or ""
+    if (
+        len(text.split()) <= 24
+        and _FAST_INTENT_RE.search(text)
+        and not _PLANNING_RE.search(text)
+    ):
+        return "fast"
+    return "strong"
+
+
 def _call_model_with_error_handling(
     messages,
+    provider,
     provider_label,
     force_tools=False,
     on_text_delta=None,
     cancel_event=None,
+    tools=None,
 ):
     """Calls the model and translates transport/auth/rate-limit errors into
     a short spoken reply. Returns (result, None) on success, or
@@ -722,6 +755,8 @@ def _call_model_with_error_handling(
             force_tools=force_tools,
             on_text_delta=on_text_delta,
             cancel_event=cancel_event,
+            provider=provider,
+            tools=tools,
         )
         if not isinstance(result, dict) or not isinstance(result.get("message"), dict):
             raise ValueError("missing message object")
@@ -742,14 +777,14 @@ def _call_model_with_error_handling(
     except requests.exceptions.Timeout:
         return None, f"That request to {provider_label} timed out - try again in a moment."
     except requests.exceptions.ConnectionError:
-        if config.LLM_PROVIDER == "ollama":
+        if provider == "ollama":
             return None, (
                 "I can't reach Ollama. Make sure it's installed and running "
                 "(open the Ollama app, or run 'ollama serve' in a terminal)."
             )
         return None, f"I can't reach {provider_label} - check your internet connection."
     except requests.exceptions.HTTPError as e:
-        if config.LLM_PROVIDER == "ollama":
+        if provider == "ollama":
             return None, f"Ollama returned an error: {e}"
         status = e.response.status_code if e.response is not None else "?"
         # Print the real error body to the console so it can actually
@@ -759,7 +794,7 @@ def _call_model_with_error_handling(
         if status in (401, 403):
             return None, f"{provider_label} rejected my API key - double check it in config.py."
         if status == 429:
-            if config.LLM_PROVIDER == "gemini":
+            if provider == "gemini":
                 from .providers.gemini import _describe_gemini_429
 
                 return None, _describe_gemini_429(e.response)
@@ -789,6 +824,7 @@ def handle_command(
     for-a-follow-up model round trip before saying anything at all - see the
     comment further down for why that round trip exists and why it's safe
     to speak this part of the reply early."""
+    global _fallback_notice_logged
     _maybe_expire_conversation_history()
     already_delivered_partial = False
 
@@ -828,6 +864,11 @@ def handle_command(
         _remember_turn(user_text, echo_reply)
         return echo_reply
 
+    from .providers import _provider_for_tier
+
+    reasoning_tier = _reasoning_tier(user_text)
+    provider, fallback_from = _provider_for_tier(reasoning_tier)
+
     messages = [
         {"role": "system", "content": _build_system_prompt(user_text)},
         *_conversation_history,
@@ -836,6 +877,7 @@ def handle_command(
     recent_context = _recent_action_prompt()
     if recent_context:
         messages.insert(1, {"role": "system", "content": recent_context})
+    request_tools = select_tools(user_text, _conversation_history)
 
     _PROVIDER_LABELS = {
         "gemini": "Gemini",
@@ -843,7 +885,12 @@ def handle_command(
         "anthropic": "Anthropic",
         "custom_openai": "your custom provider",
     }
-    provider_label = _PROVIDER_LABELS.get(config.LLM_PROVIDER, "Ollama")
+    provider_label = _PROVIDER_LABELS.get(provider, "Ollama")
+    if fallback_from and not _fallback_notice_logged:
+        _fallback_notice_logged = True
+        missing_label = _PROVIDER_LABELS.get(fallback_from, fallback_from)
+        notice = f"{missing_label} isn't configured, so I'm using {provider_label} for this request."
+        telemetry.log(f"[routing] {notice}")
 
     max_turns = 6  # safety cap so a confused model can't loop forever
     # Whether we've already retried a lazy first-turn dodge with a tool
@@ -867,9 +914,11 @@ def handle_command(
         # tool calls in the response still work fine without streaming.
         result, error_reply = _call_model_with_error_handling(
             messages,
+            provider,
             provider_label,
             on_text_delta=(None if already_delivered_partial else on_text_delta),
             cancel_event=cancel_event,
+            tools=request_tools,
         )
         if error_reply is not None:
             return error_reply
@@ -894,10 +943,12 @@ def handle_command(
                 retried_lazy_turn = True
                 result, error_reply = _call_model_with_error_handling(
                     messages,
+                    provider,
                     provider_label,
                     force_tools=True,
                     on_text_delta=on_text_delta,
                     cancel_event=cancel_event,
+                    tools=request_tools,
                 )
                 if error_reply is not None:
                     return error_reply

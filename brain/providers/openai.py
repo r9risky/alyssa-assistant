@@ -58,6 +58,7 @@ def _call_openai_compatible(
     provider_label,
     on_text_delta=None,
     cancel_event=None,
+    tools=None,
 ):
     """Shared implementation for any provider that speaks the OpenAI
     chat-completions format - used directly for "openai" and
@@ -71,7 +72,7 @@ def _call_openai_compatible(
     body = {
         "model": model,
         "messages": _messages_to_openai(messages),
-        "tools": TOOLS,
+        "tools": TOOLS if tools is None else tools,
         "tool_choice": "auto",
         "stream": True,
     }
@@ -142,7 +143,7 @@ def _call_openai_compatible(
     }
 
 
-def _call_openai(messages, on_text_delta=None, cancel_event=None):
+def _call_openai(messages, on_text_delta=None, cancel_event=None, tools=None):
     if not config.OPENAI_API_KEY:
         raise RuntimeError(
             "OPENAI_API_KEY isn't set. Set it as an environment variable "
@@ -157,10 +158,11 @@ def _call_openai(messages, on_text_delta=None, cancel_event=None):
         "OpenAI",
         on_text_delta,
         cancel_event,
+        tools,
     )
 
 
-def _call_custom_openai(messages, on_text_delta=None, cancel_event=None):
+def _call_custom_openai(messages, on_text_delta=None, cancel_event=None, tools=None):
     return _call_openai_compatible(
         messages,
         getattr(config, "CUSTOM_BASE_URL", ""),
@@ -169,6 +171,7 @@ def _call_custom_openai(messages, on_text_delta=None, cancel_event=None):
         "Your custom provider",
         on_text_delta,
         cancel_event,
+        tools,
     )
 
 

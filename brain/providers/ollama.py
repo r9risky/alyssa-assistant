@@ -10,13 +10,13 @@ import telemetry
 from ..common import GenerationCancelled, _HTTP_SESSION
 from ..tool_registry import TOOLS
 
-def _call_ollama(messages, on_text_delta=None, cancel_event=None):
+def _call_ollama(messages, on_text_delta=None, cancel_event=None, tools=None):
     response = _HTTP_SESSION.post(
         config.OLLAMA_URL,
         json={
             "model": config.OLLAMA_MODEL,
             "messages": messages,
-            "tools": TOOLS,
+            "tools": TOOLS if tools is None else tools,
             "stream": True,
             # Low temperature = more consistent rule-following (act, don't
             # ask/narrate) and more reliable tool-call formatting, at some
