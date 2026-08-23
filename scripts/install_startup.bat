@@ -1,15 +1,6 @@
 @echo off
-REM Makes Alyssa start automatically, with admin rights, every time you
-REM log in to Windows - via a Task Scheduler task (not the Startup folder,
-REM since a Startup-folder shortcut can't auto-elevate: it either skips
-REM admin rights entirely or throws a UAC prompt on every single login).
-REM A Task Scheduler task set to "run with highest privileges" gets the
-REM trust decision made once, right now, and then starts elevated at every
-REM future login with Alyssa's console visible - no repeated prompts.
-REM
-REM Run this by double-clicking it. It will ask for admin rights itself
-REM (a UAC prompt) - that's expected and required to register the task.
-REM
+REM Makes Alyssa start automatically as the current, non-elevated user every
+REM time you log in to Windows via a Task Scheduler task.
 REM Prerequisite: run scripts\start_alyssa.bat at least once first, so the
 REM virtual environment and dependencies already exist.
 
@@ -17,14 +8,6 @@ setlocal enabledelayedexpansion
 for %%I in ("%~dp0..") do set "PROJECT_DIR=%%~fI\"
 cd /d "%PROJECT_DIR%"
 set "TASK_NAME=AlyssaAssistant"
-
-REM --- Self-elevate if this window isn't already running as admin ---
-net session >nul 2>&1
-if not "%errorlevel%"=="0" (
-    echo Requesting administrator privileges...
-    powershell -NoProfile -Command "Start-Process -FilePath '%~f0' -WorkingDirectory '%PROJECT_DIR%' -Verb RunAs"
-    exit /b
-)
 
 REM --- Decide what the task should actually launch ---
 REM Use console Python so startup behaves exactly like a manual launch and
@@ -41,7 +24,7 @@ if exist "%PROJECT_DIR%.venv\Scripts\python.exe" (
     exit /b 1
 )
 
-echo Registering "%TASK_NAME%" to start Alyssa at login, elevated...
+echo Registering "%TASK_NAME%" to start Alyssa at login with normal user rights...
 
 REM One PowerShell block does the whole registration - New-ScheduledTask*
 REM lets us set the working directory directly (schtasks.exe's /Create
@@ -52,7 +35,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -Command ^
     "$action = New-ScheduledTaskAction -Execute '%ACTION_EXE%' -Argument '%ACTION_ARGS%' -WorkingDirectory '%PROJECT_DIR%';" ^
     "$trigger = New-ScheduledTaskTrigger -AtLogOn -User \"$env:USERDOMAIN\$env:USERNAME\";" ^
     "$trigger.Delay = 'PT15S';" ^
-    "$principal = New-ScheduledTaskPrincipal -UserId \"$env:USERDOMAIN\$env:USERNAME\" -LogonType Interactive -RunLevel Highest;" ^
+    "$principal = New-ScheduledTaskPrincipal -UserId \"$env:USERDOMAIN\$env:USERNAME\" -LogonType Interactive -RunLevel Limited;" ^
     "$settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable;" ^
     "Register-ScheduledTask -TaskName '%TASK_NAME%' -Action $action -Trigger $trigger -Principal $principal -Settings $settings -Force | Out-Null"
 
@@ -64,7 +47,7 @@ if errorlevel 1 (
 )
 
 echo.
-echo Done. Alyssa will now start automatically, with admin rights, the
+echo Done. Alyssa will now start automatically with normal user rights the
 echo next time you log in to Windows.
 echo.
 echo To test it right now without logging out: open Task Scheduler,

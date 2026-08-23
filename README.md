@@ -306,7 +306,8 @@ expires after the configured timeout.
 `scripts\install_startup.bat` registers her with Windows Task Scheduler.
 `scripts\uninstall_startup.bat` undoes that. Read the script before running
 it, and only set this up once you're comfortable with what she's allowed to
-do unattended.
+do unattended. Both the launcher and scheduled task run with the current
+user's normal privileges; Alyssa does not request administrator rights.
 
 ## When something's broken
 

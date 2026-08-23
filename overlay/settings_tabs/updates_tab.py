@@ -13,6 +13,7 @@ from ..rendering import _BASE_DIR
 
 class UpdatesTabMixin:
     def _build_updates_tab(self) -> QWidget:
+        self._update_installing = False
         w = QWidget()
         w.setObjectName("tabPage")
         outer = QVBoxLayout(w)
@@ -53,6 +54,16 @@ class UpdatesTabMixin:
         outer.addStretch(1)
         return w
 
+    def _set_update_installing(self, installing: bool) -> None:
+        self._update_installing = installing
+        self.check_update_btn.setEnabled(not installing)
+        self.restart_alyssa_btn.setEnabled(not installing)
+        self.restart_alyssa_btn.setToolTip(
+            "Update in progress - do not close or restart Alyssa."
+            if installing
+            else "Close and reopen Alyssa."
+        )
+
     def _on_check_update(self):
         self._flush_pending_applies()
         self.check_update_btn.setEnabled(False)
@@ -70,6 +81,11 @@ class UpdatesTabMixin:
         threading.Thread(target=_worker, daemon=True).start()
 
     def _on_restart_alyssa(self):
+        if getattr(self, "_update_installing", False):
+            self.update_status_label.setText(
+                "Update in progress - do not close or restart Alyssa."
+            )
+            return
         self._flush_pending_applies()
         self.update_status_label.setText("Restarting Alyssa…")
         try:
@@ -125,8 +141,10 @@ class UpdatesTabMixin:
             self.update_status_label.setText("Update cancelled. No files were changed.")
             return
 
-        self.check_update_btn.setEnabled(False)
-        self.update_status_label.setText(f"Downloading and installing {latest}…")
+        self._set_update_installing(True)
+        self.update_status_label.setText(
+            f"Downloading and installing {latest}… Do not close or restart Alyssa."
+        )
 
         def _worker():
             try:
@@ -134,10 +152,10 @@ class UpdatesTabMixin:
             except Exception as error:
                 self._update_installed_signal.emit(False, str(error))
 
-        threading.Thread(target=_worker, daemon=True).start()
+        threading.Thread(target=_worker, daemon=False).start()
 
     def _on_update_installed(self, ok: bool, detail: str):
-        self.check_update_btn.setEnabled(True)
+        self._set_update_installing(False)
         if not ok:
             self.update_status_label.setStyleSheet(
                 f"color: {self._t()['danger']}; font-size: 11px;"
