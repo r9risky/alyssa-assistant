@@ -1,11 +1,25 @@
+import hashlib
 import io
+import json
 import tempfile
 from pathlib import Path
+from types import SimpleNamespace
 import unittest
 from unittest.mock import Mock, patch
 import zipfile
 
 import updater
+
+
+ARCHIVE_NAME = "alyssa-assistant-v1.6.0.zip"
+DOWNLOAD_URL = (
+    "https://github.com/r9risky/alyssa-assistant/releases/download/"
+    f"v1.6.0/{ARCHIVE_NAME}"
+)
+FINAL_DOWNLOAD_URL = (
+    "https://release-assets.githubusercontent.com/github-production-release-asset/"
+    "123/archive.zip?sp=read"
+)
 
 
 class UpdaterTests(unittest.TestCase):
@@ -188,7 +202,8 @@ class UpdaterTests(unittest.TestCase):
             real_copy = updater._atomic_copy
 
             def failing_copy(source, destination):
-                if source.parent == release and destination.name == "b.py":
+                staged_root = install / updater.TRANSACTION_DIR / "new"
+                if source.is_relative_to(staged_root) and destination.name == "b.py":
                     raise OSError("disk full")
                 return real_copy(source, destination)
 
@@ -217,8 +232,14 @@ class UpdaterTests(unittest.TestCase):
         response = Mock()
         response.json.return_value = {
             "tag_name": "v1.6.0",
-            "zipball_url": "https://example.invalid/release.zip",
             "body": "New update flow",
+            "assets": [
+                {
+                    "name": ARCHIVE_NAME,
+                    "browser_download_url": DOWNLOAD_URL,
+                    "digest": "sha256:" + "a" * 64,
+                }
+            ],
         }
         with tempfile.TemporaryDirectory() as temporary:
             with patch.object(updater.requests, "get", return_value=response):
@@ -228,6 +249,8 @@ class UpdaterTests(unittest.TestCase):
         self.assertEqual(release["latest_version"], "v1.6.0")
         self.assertTrue(release["update_available"])
         self.assertEqual(release["notes"], "New update flow")
+        self.assertEqual(release["download_url"], DOWNLOAD_URL)
+        self.assertEqual(release["sha256"], "a" * 64)
 
     def test_check_latest_rejects_uncomparable_version(self):
         response = Mock()
@@ -250,11 +273,16 @@ class UpdaterTests(unittest.TestCase):
             ):
                 zipped.writestr(name, contents)
 
+        archive_data = archive_bytes.getvalue()
         response = Mock()
-        response.iter_content.return_value = [archive_bytes.getvalue()]
+        response.iter_content.return_value = [archive_data]
+        response.headers = {}
+        response.url = FINAL_DOWNLOAD_URL
         release = {
             "latest_version": "v1.6.0",
-            "download_url": "https://example.invalid/release.zip",
+            "archive_name": ARCHIVE_NAME,
+            "download_url": DOWNLOAD_URL,
+            "sha256": hashlib.sha256(archive_data).hexdigest(),
         }
         with tempfile.TemporaryDirectory() as temporary:
             install = Path(temporary)
@@ -421,7 +449,14 @@ class UpdaterTests(unittest.TestCase):
         response = Mock()
         response.json.return_value = {
             "tag_name": "v1.6.0",
-            "zipball_url": "http://example.invalid/release.zip",
+            "assets": [
+                {
+                    "name": ARCHIVE_NAME,
+                    "browser_download_url": "http://github.com/r9risky/alyssa-assistant/releases/download/v1.6.0/"
+                    + ARCHIVE_NAME,
+                    "digest": "sha256:" + "a" * 64,
+                }
+            ],
         }
         with tempfile.TemporaryDirectory() as temporary:
             with patch.object(updater.requests, "get", return_value=response):
@@ -444,11 +479,16 @@ class UpdaterTests(unittest.TestCase):
             zipped.writestr("alyssa-release/main.py", "new main\n")
             zipped.writestr("alyssa-release/config.py", "SETTING = True\n")
             zipped.writestr("alyssa-release/overlay/__init__.py", "new overlay\n")
+        archive_data = archive_bytes.getvalue()
         response = Mock()
-        response.iter_content.return_value = [archive_bytes.getvalue()]
+        response.iter_content.return_value = [archive_data]
+        response.headers = {}
+        response.url = FINAL_DOWNLOAD_URL
         release = {
             "latest_version": "v1.6.0",
-            "download_url": "https://example.invalid/release.zip",
+            "archive_name": ARCHIVE_NAME,
+            "download_url": DOWNLOAD_URL,
+            "sha256": hashlib.sha256(archive_data).hexdigest(),
         }
 
         with tempfile.TemporaryDirectory() as temporary:
@@ -456,6 +496,192 @@ class UpdaterTests(unittest.TestCase):
                 updater.install_release(temporary, release)
 
         response.close.assert_called_once_with()
+
+    def test_launchers_do_not_request_administrator_privileges(self):
+        root = Path(__file__).resolve().parents[1]
+        launcher = (root / "scripts" / "start_alyssa.bat").read_text(encoding="utf-8")
+        startup = (root / "scripts" / "install_startup.bat").read_text(encoding="utf-8")
+
+        self.assertNotIn("runas", launcher.casefold())
+        self.assertNotIn("runas", startup.casefold())
+        self.assertNotIn("runlevel highest", startup.casefold())
+        self.assertIn("-runlevel limited", startup.casefold())
+
+    def test_check_latest_fails_closed_without_a_published_checksum(self):
+        response = Mock()
+        response.json.return_value = {
+            "tag_name": "v1.6.0",
+            "assets": [
+                {
+                    "name": ARCHIVE_NAME,
+                    "browser_download_url": DOWNLOAD_URL,
+                    "digest": None,
+                }
+            ],
+        }
+        with tempfile.TemporaryDirectory() as temporary:
+            with patch.object(updater.requests, "get", return_value=response):
+                with self.assertRaisesRegex(RuntimeError, "no SHA-256"):
+                    updater.check_latest(temporary)
+
+    def test_check_latest_accepts_a_published_checksum_asset(self):
+        checksum_name = "SHA256SUMS"
+        checksum_url = (
+            "https://github.com/r9risky/alyssa-assistant/releases/download/"
+            f"v1.6.0/{checksum_name}"
+        )
+        response = Mock()
+        response.json.return_value = {
+            "tag_name": "v1.6.0",
+            "assets": [
+                {
+                    "name": ARCHIVE_NAME,
+                    "browser_download_url": DOWNLOAD_URL,
+                    "digest": None,
+                },
+                {
+                    "name": checksum_name,
+                    "browser_download_url": checksum_url,
+                },
+            ],
+        }
+        with tempfile.TemporaryDirectory() as temporary:
+            with patch.object(updater.requests, "get", return_value=response):
+                release = updater.check_latest(temporary)
+
+        self.assertIsNone(release["sha256"])
+        self.assertEqual(release["checksum_url"], checksum_url)
+        self.assertEqual(
+            updater._parse_checksum_file(
+                "b" * 64 + "  " + ARCHIVE_NAME, ARCHIVE_NAME
+            ),
+            "b" * 64,
+        )
+
+    def test_checksum_mismatch_is_rejected_before_extraction_or_install(self):
+        archive_data = b"not the expected archive"
+        response = Mock()
+        response.iter_content.return_value = [archive_data]
+        response.headers = {}
+        response.url = FINAL_DOWNLOAD_URL
+        release = {
+            "latest_version": "v1.6.0",
+            "archive_name": ARCHIVE_NAME,
+            "download_url": DOWNLOAD_URL,
+            "sha256": "0" * 64,
+        }
+        with tempfile.TemporaryDirectory() as temporary:
+            install = Path(temporary)
+            (install / "main.py").write_text("old main\n", encoding="utf-8")
+            with (
+                patch.object(updater.requests, "get", return_value=response),
+                patch.object(updater, "_safe_extract") as extract,
+                patch.object(updater, "_apply_release") as apply_release,
+            ):
+                with self.assertRaisesRegex(RuntimeError, "checksum did not match"):
+                    updater.install_release(install, release)
+
+            extract.assert_not_called()
+            apply_release.assert_not_called()
+            self.assertEqual(
+                (install / "main.py").read_text(encoding="utf-8"), "old main\n"
+            )
+            self.assertFalse((install / updater.TRANSACTION_DIR).exists())
+
+    def test_unexpected_final_download_host_is_rejected_before_extraction(self):
+        archive_data = b"archive"
+        response = Mock()
+        response.iter_content.return_value = [archive_data]
+        response.headers = {}
+        response.url = "https://example.invalid/redirected.zip"
+        release = {
+            "latest_version": "v1.6.0",
+            "archive_name": ARCHIVE_NAME,
+            "download_url": DOWNLOAD_URL,
+            "sha256": hashlib.sha256(archive_data).hexdigest(),
+        }
+        with tempfile.TemporaryDirectory() as temporary:
+            with (
+                patch.object(updater.requests, "get", return_value=response),
+                patch.object(updater, "_safe_extract") as extract,
+            ):
+                with self.assertRaisesRegex(RuntimeError, "expected GitHub"):
+                    updater.install_release(temporary, release)
+            extract.assert_not_called()
+
+    def test_interrupted_commit_is_detected_and_rolled_back_on_next_check(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            install = root / "install"
+            old_release = root / "old-release"
+            new_release = root / "new-release"
+            for path in (install, old_release, new_release):
+                path.mkdir()
+            (install / "main.py").write_text("old\n", encoding="utf-8")
+            (old_release / "main.py").write_text("old\n", encoding="utf-8")
+            (new_release / "main.py").write_text("new\n", encoding="utf-8")
+            (install / ".alyssa-version").write_text("v1.5.0\n", encoding="utf-8")
+            updater._write_manifest(old_release, install)
+            old_manifest = json.loads(
+                (install / updater.MANIFEST_FILE).read_text(encoding="utf-8")
+            )
+
+            real_copy = updater._atomic_copy
+
+            def interrupted_copy(source, destination):
+                if destination.name == updater.MANIFEST_FILE:
+                    raise KeyboardInterrupt("simulated process termination")
+                return real_copy(source, destination)
+
+            with patch.object(updater, "_atomic_copy", side_effect=interrupted_copy):
+                with self.assertRaisesRegex(KeyboardInterrupt, "simulated"):
+                    updater._apply_release(
+                        new_release, install, {"main.py"}, version="v1.6.0"
+                    )
+
+            self.assertEqual(
+                (install / "main.py").read_text(encoding="utf-8"), "new\n"
+            )
+            self.assertTrue((install / updater.TRANSACTION_DIR).is_dir())
+
+            self.assertEqual(updater.current_version(install), "v1.5.0")
+            self.assertEqual(
+                (install / "main.py").read_text(encoding="utf-8"), "old\n"
+            )
+            self.assertEqual(
+                json.loads((install / updater.MANIFEST_FILE).read_text(encoding="utf-8")),
+                old_manifest,
+            )
+            self.assertFalse((install / updater.TRANSACTION_DIR).exists())
+
+    def test_update_install_state_disables_and_reenables_restart(self):
+        from overlay.settings_tabs.updates_tab import UpdatesTabMixin
+
+        class Button:
+            def __init__(self):
+                self.enabled = True
+                self.tooltip = ""
+
+            def setEnabled(self, enabled):
+                self.enabled = enabled
+
+            def setToolTip(self, tooltip):
+                self.tooltip = tooltip
+
+        target = SimpleNamespace(
+            check_update_btn=Button(), restart_alyssa_btn=Button()
+        )
+        UpdatesTabMixin._set_update_installing(target, True)
+        self.assertTrue(target._update_installing)
+        self.assertFalse(target.check_update_btn.enabled)
+        self.assertFalse(target.restart_alyssa_btn.enabled)
+        self.assertIn("do not close", target.restart_alyssa_btn.tooltip)
+
+        UpdatesTabMixin._set_update_installing(target, False)
+        self.assertFalse(target._update_installing)
+        self.assertTrue(target.check_update_btn.enabled)
+        self.assertTrue(target.restart_alyssa_btn.enabled)
+
 
 if __name__ == "__main__":
     unittest.main()

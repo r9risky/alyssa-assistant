@@ -1,4 +1,10 @@
-"""Download and install the latest Alyssa source release safely."""
+"""Download and install Alyssa releases with bounded extraction and rollback.
+
+Archive SHA-256 values come from GitHub's release API asset digest or from a
+checksum asset published with that release. This verifies that the downloaded
+archive matches what GitHub reports over HTTPS; it is not a maintainer signature
+and does not protect against a compromised maintainer or GitHub account.
+"""
 
 from __future__ import annotations
 
@@ -15,12 +21,19 @@ import stat
 import subprocess
 import tempfile
 import zipfile
-from urllib.parse import urlsplit
+from urllib.parse import unquote, urlsplit
 
 import requests
 
-LATEST_RELEASE_URL = "https://api.github.com/repos/r9risky/alyssa-assistant/releases/latest"
+RELEASE_OWNER = "r9risky"
+RELEASE_REPOSITORY = "alyssa-assistant"
+LATEST_RELEASE_URL = (
+    f"https://api.github.com/repos/{RELEASE_OWNER}/{RELEASE_REPOSITORY}/releases/latest"
+)
 CURRENT_VERSION = "v1.1.11"
+TRANSACTION_DIR = ".alyssa-update-transaction"
+COMMITTED_TRANSACTION_DIR = ".alyssa-update-committed"
+MAX_CHECKSUM_BYTES = 1024 * 1024
 MAX_DOWNLOAD_BYTES = 250 * 1024 * 1024
 MAX_EXTRACTED_BYTES = 500 * 1024 * 1024
 MAX_ARCHIVE_FILES = 10_000
@@ -288,6 +301,178 @@ def _require_https_url(value: str, label: str) -> str:
     return value
 
 
+def _validate_release_asset_url(
+    value: str,
+    label: str,
+    *,
+    tag: str,
+    asset_name: str,
+    allow_redirect_host: bool = False,
+) -> str:
+    value = _require_https_url(value, label)
+    parsed = urlsplit(value)
+    host = (parsed.hostname or "").lower()
+    expected_path = (
+        f"/{RELEASE_OWNER}/{RELEASE_REPOSITORY}/releases/download/{tag}/{asset_name}"
+    )
+    if parsed.username or parsed.password or parsed.fragment:
+        raise RuntimeError(f"The {label} URL is not a valid GitHub release asset URL.")
+    if host == "github.com" and unquote(parsed.path) == expected_path:
+        return value
+    if allow_redirect_host and host == "release-assets.githubusercontent.com":
+        if parsed.path and parsed.path != "/":
+            return value
+    raise RuntimeError(f"The {label} URL is not an expected GitHub release asset URL.")
+
+
+def _validate_download_response(
+    response, requested_url: str, label: str, *, tag: str, asset_name: str
+) -> None:
+    final_url = getattr(response, "url", requested_url)
+    if not isinstance(final_url, str) or not final_url:
+        final_url = requested_url
+    _validate_release_asset_url(
+        final_url,
+        f"final {label}",
+        tag=tag,
+        asset_name=asset_name,
+        allow_redirect_host=True,
+    )
+
+
+def _checksum_asset_name(name: str) -> bool:
+    lowered = name.lower()
+    return (
+        "checksum" in lowered
+        or "sha256sum" in lowered
+        or lowered.endswith((".sha256", ".sha256.txt"))
+    )
+
+
+def _release_asset_metadata(release: dict[str, object], tag: str) -> dict[str, object]:
+    assets = release.get("assets")
+    if not isinstance(assets, list):
+        raise RuntimeError("The GitHub release has no downloadable assets.")
+    archives = [
+        asset
+        for asset in assets
+        if isinstance(asset, dict)
+        and isinstance(asset.get("name"), str)
+        and str(asset["name"]).lower().endswith(".zip")
+        and not _checksum_asset_name(str(asset["name"]))
+    ]
+    preferred = [
+        asset
+        for asset in archives
+        if RELEASE_REPOSITORY in str(asset["name"]).lower()
+    ]
+    if len(preferred) == 1:
+        archives = preferred
+    if len(archives) != 1:
+        raise RuntimeError("The GitHub release must contain exactly one Alyssa ZIP asset.")
+
+    archive = archives[0]
+    archive_name = str(archive["name"])
+    download_url = _validate_release_asset_url(
+        str(archive.get("browser_download_url") or ""),
+        "release download",
+        tag=tag,
+        asset_name=archive_name,
+    )
+    digest = archive.get("digest")
+    sha256 = None
+    checksum_url = None
+    checksum_name = None
+    if digest is not None:
+        match = re.fullmatch(r"sha256:([0-9a-fA-F]{64})", str(digest).strip())
+        if not match:
+            raise RuntimeError("The GitHub release asset has an invalid SHA-256 digest.")
+        sha256 = match.group(1).lower()
+    else:
+        checksum_assets = [
+            asset
+            for asset in assets
+            if isinstance(asset, dict)
+            and isinstance(asset.get("name"), str)
+            and _checksum_asset_name(str(asset["name"]))
+        ]
+        if not checksum_assets:
+            raise RuntimeError(
+                "The GitHub release has no SHA-256 digest or checksum asset; "
+                "refusing to install an unverified archive."
+            )
+        checksum_asset = sorted(
+            checksum_assets, key=lambda asset: str(asset["name"]).lower()
+        )[0]
+        checksum_name = str(checksum_asset["name"])
+        checksum_url = _validate_release_asset_url(
+            str(checksum_asset.get("browser_download_url") or ""),
+            "checksum download",
+            tag=tag,
+            asset_name=checksum_name,
+        )
+    return {
+        "download_url": download_url,
+        "archive_name": archive_name,
+        "sha256": sha256,
+        "checksum_url": checksum_url,
+        "checksum_name": checksum_name,
+    }
+
+
+def _parse_checksum_file(contents: str, archive_name: str) -> str:
+    for line in contents.splitlines():
+        standard = re.fullmatch(
+            r"\s*([0-9a-fA-F]{64})\s+[*]?(.+?)\s*", line
+        )
+        bsd = re.fullmatch(
+            r"\s*SHA256\s*\((.+?)\)\s*=\s*([0-9a-fA-F]{64})\s*",
+            line,
+            re.IGNORECASE,
+        )
+        if standard:
+            digest, name = standard.group(1), standard.group(2)
+        elif bsd:
+            name, digest = bsd.group(1), bsd.group(2)
+        else:
+            continue
+        if PurePosixPath(name.replace("\\", "/")).name == archive_name:
+            return digest.lower()
+    raise RuntimeError(
+        f"The published checksum file has no SHA-256 entry for {archive_name}."
+    )
+
+
+def _fetch_published_checksum(
+    url: str, *, tag: str, checksum_name: str, archive_name: str, headers: dict[str, str]
+) -> str:
+    response = None
+    try:
+        response = requests.get(url, headers=headers, stream=True, timeout=(10, 30))
+        response.raise_for_status()
+        _validate_download_response(
+            response, url, "checksum download", tag=tag, asset_name=checksum_name
+        )
+        downloaded = 0
+        chunks = []
+        for chunk in response.iter_content(64 * 1024):
+            if not chunk:
+                continue
+            downloaded += len(chunk)
+            if downloaded > MAX_CHECKSUM_BYTES:
+                raise RuntimeError("The release checksum file is unexpectedly large.")
+            chunks.append(chunk)
+    except requests.RequestException as error:
+        raise RuntimeError(f"Couldn't download the release checksum: {error}") from error
+    finally:
+        if response is not None:
+            response.close()
+    try:
+        contents = b"".join(chunks).decode("utf-8")
+    except UnicodeDecodeError as error:
+        raise RuntimeError("The release checksum file is not valid UTF-8.") from error
+    return _parse_checksum_file(contents, archive_name)
+
 def _manifest_paths(install_root: Path) -> set[str]:
     try:
         manifest = json.loads((install_root / MANIFEST_FILE).read_text(encoding="utf-8"))
@@ -554,12 +739,101 @@ def _atomic_copy(source: Path, destination: Path) -> None:
         temporary.unlink(missing_ok=True)
 
 
-def _apply_release(
-    source_root: Path, install_root: Path, managed: set[str] | None = None
-) -> None:
-    """Apply release files and restore the previous install on failure."""
+def _write_transaction_state(transaction_root: Path, state: dict[str, object]) -> None:
+    path = transaction_root / "state.json"
+    temporary = transaction_root / "state.json.update-tmp"
+    temporary.write_text(json.dumps(state, indent=2) + "\n", encoding="utf-8")
+    os.replace(temporary, path)
+
+
+def _load_transaction_state(transaction_root: Path) -> dict[str, object]:
+    try:
+        state = json.loads((transaction_root / "state.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError, TypeError) as error:
+        raise RuntimeError("The interrupted update journal is unreadable.") from error
+    if not isinstance(state, dict) or not isinstance(state.get("changes"), list):
+        raise RuntimeError("The interrupted update journal is invalid.")
+    return state
+
+
+def _journal_destination(install_root: Path, relative_name: object) -> tuple[Path, Path]:
+    if (
+        not isinstance(relative_name, str)
+        or "\\" in relative_name
+        or any(":" in part for part in PurePosixPath(relative_name).parts)
+    ):
+        raise RuntimeError("The interrupted update journal contains an unsafe path.")
+    relative = PurePosixPath(relative_name)
+    if relative.is_absolute() or not relative.parts or ".." in relative.parts:
+        raise RuntimeError("The interrupted update journal contains an unsafe path.")
+    native_relative = Path(*relative.parts)
+    destination = install_root / native_relative
+    if not destination.resolve().is_relative_to(install_root):
+        raise RuntimeError("The interrupted update journal contains an unsafe path.")
+    return native_relative, destination
+
+
+def _finish_transaction(install_root: Path, transaction_root: Path) -> None:
+    committed_root = install_root / COMMITTED_TRANSACTION_DIR
+    if committed_root.exists():
+        shutil.rmtree(committed_root)
+    os.replace(transaction_root, committed_root)
+    shutil.rmtree(committed_root)
+
+
+def _rollback_transaction(install_root: Path, transaction_root: Path) -> None:
+    state = _load_transaction_state(transaction_root)
+    backup_root = transaction_root / "backup"
+    for change in reversed(state["changes"]):
+        if not isinstance(change, dict):
+            raise RuntimeError("The interrupted update journal is invalid.")
+        relative, destination = _journal_destination(install_root, change.get("path"))
+        if change.get("existed") is True:
+            backup = backup_root / relative
+            if not backup.is_file():
+                raise RuntimeError("The interrupted update backup is incomplete.")
+            _atomic_copy(backup, destination)
+        else:
+            destination.unlink(missing_ok=True)
+            parent = destination.parent
+            while parent != install_root:
+                try:
+                    parent.rmdir()
+                except OSError:
+                    break
+                parent = parent.parent
+    _finish_transaction(install_root, transaction_root)
+
+
+def _recover_incomplete_update(install_root: Path) -> bool:
     install_root = install_root.resolve()
-    managed = managed if managed is not None else _managed_paths(source_root, install_root)
+    committed_root = install_root / COMMITTED_TRANSACTION_DIR
+    if committed_root.exists():
+        shutil.rmtree(committed_root)
+    transaction_root = install_root / TRANSACTION_DIR
+    if not transaction_root.exists():
+        return False
+    state_path = transaction_root / "state.json"
+    if not state_path.is_file():
+        shutil.rmtree(transaction_root)
+        return True
+    state = _load_transaction_state(transaction_root)
+    if state.get("phase") == "committed":
+        _finish_transaction(install_root, transaction_root)
+        return True
+    try:
+        _rollback_transaction(install_root, transaction_root)
+    except Exception as error:
+        raise RuntimeError(
+            "An interrupted Alyssa update could not be rolled back. "
+            "Restore the installation manually before trying again."
+        ) from error
+    return True
+
+
+def _prepare_update_transaction(
+    source_root: Path, install_root: Path, managed: set[str], version: str
+) -> Path:
     previous = _previously_managed_paths(install_root)
     previous_lower = {relative.lower() for relative in previous}
     managed_lower = {relative.lower() for relative in managed}
@@ -573,64 +847,133 @@ def _apply_release(
             previous_lower,
         )
     }
-    with tempfile.TemporaryDirectory(prefix="alyssa-backup-") as backup_name:
-        backup_root = Path(backup_name)
-        changed = []
-        try:
-            for source in sorted(source_root.rglob("*")):
-                if not source.is_file():
-                    continue
-                relative = source.relative_to(source_root)
-                destination = install_root / relative
-                if relative.as_posix() not in managed and relative.as_posix().lower() != "config.py":
-                    continue
+    transaction_root = install_root / TRANSACTION_DIR
+    transaction_root.mkdir()
+    staged_root = transaction_root / "new"
+    backup_root = transaction_root / "backup"
+    staged_root.mkdir()
+    backup_root.mkdir()
+    changes = []
+    recorded = set()
 
-                backup = backup_root / relative
-                existed = destination.exists()
-                if existed:
-                    backup.parent.mkdir(parents=True, exist_ok=True)
-                    shutil.copy2(destination, backup)
+    def record(relative_name: str, *, delete: bool = False) -> None:
+        if relative_name in recorded:
+            return
+        recorded.add(relative_name)
+        relative, destination = _journal_destination(install_root, relative_name)
+        if destination.exists() and not destination.is_file():
+            raise RuntimeError(f"Cannot update {relative_name}: destination is not a file.")
+        existed = destination.is_file()
+        if existed:
+            backup = backup_root / relative
+            backup.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(destination, backup)
+        changes.append({"path": relative_name, "existed": existed, "delete": delete})
 
-                if relative.as_posix().lower() == "config.py" and existed:
-                    merged = merge_config_settings(
-                        source.read_text(encoding="utf-8"),
-                        destination.read_text(encoding="utf-8"),
-                    )
-                    temporary_source = backup_root / "merged-config.py"
-                    temporary_source.write_text(merged, encoding="utf-8")
-                    _atomic_copy(temporary_source, destination)
-                else:
-                    _atomic_copy(source, destination)
-                changed.append((destination, backup if existed else None))
+    try:
+        for source in sorted(source_root.rglob("*")):
+            if not source.is_file():
+                continue
+            relative = source.relative_to(source_root)
+            relative_name = relative.as_posix()
+            if relative_name in {MANIFEST_FILE, ".alyssa-version"}:
+                continue
+            if relative_name not in managed and relative_name.lower() != "config.py":
+                continue
+            destination = install_root / relative
+            staged = staged_root / relative
+            staged.parent.mkdir(parents=True, exist_ok=True)
+            if relative_name.lower() == "config.py" and destination.is_file():
+                merged = merge_config_settings(
+                    source.read_text(encoding="utf-8"),
+                    destination.read_text(encoding="utf-8"),
+                )
+                staged.write_text(merged, encoding="utf-8")
+            else:
+                shutil.copy2(source, staged)
+            record(relative_name)
 
-            for name in sorted(obsolete):
-                relative = Path(*PurePosixPath(name).parts)
-                destination = install_root / relative
-                if not destination.is_file():
-                    continue
-                if os.path.commonpath((install_root, destination.resolve())) != str(install_root):
-                    continue
-                backup = backup_root / relative
-                backup.parent.mkdir(parents=True, exist_ok=True)
-                shutil.copy2(destination, backup)
-                changed.append((destination, backup))
-                destination.unlink()
-        except Exception:
-            for destination, backup in reversed(changed):
-                if backup is None:
-                    destination.unlink(missing_ok=True)
-                else:
-                    _atomic_copy(backup, destination)
-            raise
+        for name in sorted(obsolete):
+            _, destination = _journal_destination(install_root, name)
+            if destination.is_file():
+                record(name, delete=True)
+
+        manifest = {
+            relative: _file_hash(staged_root / Path(*PurePosixPath(relative).parts))
+            for relative in sorted(managed)
+            if (staged_root / Path(*PurePosixPath(relative).parts)).is_file()
+        }
+        (staged_root / MANIFEST_FILE).write_text(
+            json.dumps(manifest, indent=2) + "\n", encoding="utf-8"
+        )
+        (staged_root / ".alyssa-version").write_text(version + "\n", encoding="utf-8")
+        record(MANIFEST_FILE)
+        record(".alyssa-version")
+        state = {"phase": "prepared", "version": version, "changes": changes}
+        _write_transaction_state(transaction_root, state)
+    except BaseException:
+        if not (transaction_root / "state.json").is_file():
+            shutil.rmtree(transaction_root, ignore_errors=True)
+        raise
+    return transaction_root
+
+
+def _commit_update_transaction(install_root: Path, transaction_root: Path) -> None:
+    state = _load_transaction_state(transaction_root)
+    state["phase"] = "committing"
+    _write_transaction_state(transaction_root, state)
+    staged_root = transaction_root / "new"
+    try:
+        for change in state["changes"]:
+            if not isinstance(change, dict):
+                raise RuntimeError("The update journal is invalid.")
+            relative, destination = _journal_destination(install_root, change.get("path"))
+            if change.get("delete") is True:
+                destination.unlink(missing_ok=True)
+            else:
+                staged = staged_root / relative
+                if not staged.is_file():
+                    raise RuntimeError("The staged update is incomplete.")
+                _atomic_copy(staged, destination)
+        state["phase"] = "committed"
+        _write_transaction_state(transaction_root, state)
+    except Exception:
+        _rollback_transaction(install_root, transaction_root)
+        raise
+    try:
+        _finish_transaction(install_root, transaction_root)
+    except OSError:
+        # The committed journal is safe to clean up on the next launch/check.
+        pass
+
+
+def _apply_release(
+    source_root: Path,
+    install_root: Path,
+    managed: set[str] | None = None,
+    version: str | None = None,
+) -> None:
+    """Stage and commit files, manifest, and version through a rollback journal."""
+    install_root = install_root.resolve()
+    _recover_incomplete_update(install_root)
+    version = version if version is not None else current_version(install_root)
+    managed = managed if managed is not None else _managed_paths(source_root, install_root)
+    transaction_root = _prepare_update_transaction(
+        source_root, install_root, managed, version
+    )
+    _commit_update_transaction(install_root, transaction_root)
 
 
 def current_version(install_root: str | os.PathLike[str]) -> str:
-    marker = Path(install_root) / ".alyssa-version"
+    install_root = Path(install_root).resolve()
+    _recover_incomplete_update(install_root)
+    marker = install_root / ".alyssa-version"
     return marker.read_text(encoding="utf-8").strip() if marker.is_file() else CURRENT_VERSION
 
 
 def check_latest(install_root: str | os.PathLike[str]) -> dict[str, object]:
     """Return GitHub's latest release metadata and whether it is newer."""
+    installed = current_version(install_root)
     headers = {"Accept": "application/vnd.github+json", "User-Agent": "Alyssa-Updater"}
     response = None
     try:
@@ -638,54 +981,94 @@ def check_latest(install_root: str | os.PathLike[str]) -> dict[str, object]:
         response.raise_for_status()
         release = response.json()
         tag = str(release["tag_name"]).strip()
-        download_url = _require_https_url(
-            str(release["zipball_url"]), "release download"
-        )
     except (requests.RequestException, KeyError, TypeError, ValueError) as error:
         raise RuntimeError(f"Couldn't check GitHub for updates: {error}") from error
     finally:
         if response is not None:
             response.close()
 
-    installed = current_version(install_root)
     latest_key, installed_key = _version_key(tag), _version_key(installed)
     if latest_key is None or installed_key is None:
         raise RuntimeError(f"Couldn't compare release versions: installed {installed}, latest {tag}.")
+    update_available = installed_key < latest_key
+    asset_metadata = {
+        "download_url": "",
+        "archive_name": "",
+        "sha256": None,
+        "checksum_url": None,
+        "checksum_name": None,
+    }
+    if update_available:
+        asset_metadata = _release_asset_metadata(release, tag)
     return {
         "current_version": installed,
         "latest_version": tag,
-        "update_available": installed_key < latest_key,
+        "update_available": update_available,
         "notes": str(release.get("body") or "No release notes were provided.").strip(),
-        "download_url": download_url,
+        **asset_metadata,
     }
 
 
 def install_release(
     install_root: str | os.PathLike[str], release: dict[str, object]
 ) -> str:
-    """Download and transactionally install a release returned by check_latest."""
-    install_root = Path(install_root)
-    marker = install_root / ".alyssa-version"
+    """Download, authenticate, and journal-install a release from check_latest."""
+    install_root = Path(install_root).resolve()
+    _recover_incomplete_update(install_root)
     try:
         tag = str(release["latest_version"]).strip()
-        download_url = _require_https_url(
-            str(release["download_url"]), "release download"
+        archive_name = str(release["archive_name"]).strip()
+        download_url = _validate_release_asset_url(
+            str(release["download_url"]),
+            "release download",
+            tag=tag,
+            asset_name=archive_name,
         )
     except (KeyError, TypeError, ValueError) as error:
         raise RuntimeError("The release metadata is incomplete.") from error
     if _version_key(tag) is None:
         raise RuntimeError(f"The release version is invalid: {tag}.")
+    if not archive_name or PurePosixPath(archive_name).name != archive_name:
+        raise RuntimeError("The release archive name is invalid.")
 
-    headers = {"Accept": "application/vnd.github+json", "User-Agent": "Alyssa-Updater"}
+    expected_sha256 = release.get("sha256")
+    if expected_sha256 is not None:
+        expected_sha256 = str(expected_sha256).strip().lower()
+        if not re.fullmatch(r"[0-9a-f]{64}", expected_sha256):
+            raise RuntimeError("The release metadata has an invalid SHA-256 digest.")
+    headers = {"Accept": "application/octet-stream", "User-Agent": "Alyssa-Updater"}
+    if expected_sha256 is None:
+        checksum_name = str(release.get("checksum_name") or "").strip()
+        checksum_url = _validate_release_asset_url(
+            str(release.get("checksum_url") or ""),
+            "checksum download",
+            tag=tag,
+            asset_name=checksum_name,
+        )
+        expected_sha256 = _fetch_published_checksum(
+            checksum_url,
+            tag=tag,
+            checksum_name=checksum_name,
+            archive_name=archive_name,
+            headers=headers,
+        )
+
     with tempfile.TemporaryDirectory(prefix="alyssa-update-") as temporary_name:
         temporary = Path(temporary_name)
-        archive_path = temporary / "release.zip"
+        archive_path = temporary / archive_name
         response = None
         try:
             response = requests.get(
                 download_url, headers=headers, stream=True, timeout=(10, 60)
             )
             response.raise_for_status()
+            _validate_download_response(
+                response,
+                download_url,
+                "release download",
+                tag=tag,
+                asset_name=archive_name,
+            )
             content_length = response.headers.get("Content-Length")
             if isinstance(content_length, str) and content_length.isdigit():
                 if int(content_length) > MAX_DOWNLOAD_BYTES:
@@ -706,18 +1089,17 @@ def install_release(
             if response is not None:
                 response.close()
 
+        actual_sha256 = _file_hash(archive_path)
+        if actual_sha256 != expected_sha256:
+            raise RuntimeError(
+                "The release archive checksum did not match GitHub's published SHA-256; "
+                "the update was not installed."
+            )
         source_root = _safe_extract(archive_path, temporary / "source")
         managed = _managed_paths(source_root, install_root)
-        _apply_release(source_root, install_root, managed)
-        _write_manifest(source_root, install_root, managed)
-
-    temporary_marker = marker.with_name(marker.name + ".update-tmp")
-    try:
-        temporary_marker.write_text(tag + "\n", encoding="utf-8")
-        os.replace(temporary_marker, marker)
-    finally:
-        temporary_marker.unlink(missing_ok=True)
+        _apply_release(source_root, install_root, managed, version=tag)
     return tag
+
 
 def install_latest(install_root: str | os.PathLike[str]) -> tuple[bool, str]:
     """Compatibility helper: check for and install GitHub's latest release."""
