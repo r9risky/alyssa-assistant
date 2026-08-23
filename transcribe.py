@@ -20,7 +20,7 @@ try:
 except ImportError:  # Existing installs keep working until requirements are refreshed.
     websocket_connect = None
 
-import config
+from config import AUDIO_SETTINGS as config
 import telemetry
 
 _model = None

@@ -46,7 +46,6 @@ class PluginsTabMixin:
         # in _build_style instead, so it reads as a subtle divider.
         splitter.setHandleWidth(10)
 
-        # -- Left: file list + list-level actions --
         left = QWidget()
         left_layout = QVBoxLayout(left)
         left_layout.setContentsMargins(0, 0, 0, 0)
@@ -69,7 +68,6 @@ class PluginsTabMixin:
 
         splitter.addWidget(left)
 
-        # -- Right: header row (filename, enable toggle, save/delete) + editor --
         right = QWidget()
         right_layout = QVBoxLayout(right)
         right_layout.setContentsMargins(10, 0, 0, 0)

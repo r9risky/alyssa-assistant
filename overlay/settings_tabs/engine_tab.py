@@ -109,7 +109,6 @@ class EngineTabMixin:
 
         return w
 
-    # -- Audio tab (input/output device picker) -----------------------------
 
     def _refresh_engine_status(self):
         try:

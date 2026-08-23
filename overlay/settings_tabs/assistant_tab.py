@@ -9,6 +9,7 @@ from PySide6.QtWidgets import (
 
 import config
 import credential_store
+from brain.common import api_origin
 
 from ..credential_checks import (
     _extract_elevenlabs_voice_id, _fetch_custom_openai_models,
@@ -352,6 +353,25 @@ class AssistantTabMixin:
         self.show_console_check.toggled.connect(self._on_show_console_toggled)
         form.addRow("", self.show_console_check)
 
+        form.addRow("", self._section_header("Proactive Monitoring", "🔔"))
+        self.system_watch_enabled_check = QCheckBox(
+            "Warn me when the system drive is almost full"
+        )
+        self.system_watch_enabled_check.setChecked(
+            bool(getattr(config, "SYSTEM_WATCH_ENABLED", False))
+        )
+        self.system_watch_enabled_check.toggled.connect(self._queue_assistant_apply)
+        form.addRow("", self.system_watch_enabled_check)
+
+        self.system_watch_interval_spin = QSpinBox()
+        self.system_watch_interval_spin.setRange(10, 86400)
+        self.system_watch_interval_spin.setSuffix(" sec")
+        self.system_watch_interval_spin.setValue(
+            int(getattr(config, "SYSTEM_WATCH_INTERVAL_SECONDS", 300))
+        )
+        self.system_watch_interval_spin.valueChanged.connect(self._queue_assistant_apply)
+        form.addRow("Check every:", self.system_watch_interval_spin)
+
         # -- Memory & Location --
         form.addRow("", self._section_header("Memory & Location", "🧾"))
 
@@ -497,6 +517,26 @@ class AssistantTabMixin:
     # -- Custom OpenAI-compatible provider: "Fetch models" doubles as its
     # verify step, since there's no separate cheap auth-only probe. --------
 
+    def _confirm_custom_key_origin(self, base_url: str, key: str) -> bool:
+        if not key:
+            return True
+        origin = api_origin(base_url)
+        warned = getattr(self, "_warned_custom_key_origins", set())
+        if origin in warned:
+            return True
+        choice = QMessageBox.warning(
+            self,
+            "Send API key?",
+            f"This sends your custom-provider API key to {origin}. Continue?",
+            QMessageBox.Yes | QMessageBox.Cancel,
+            QMessageBox.Cancel,
+        )
+        if choice != QMessageBox.Yes:
+            return False
+        warned.add(origin)
+        self._warned_custom_key_origins = warned
+        return True
+
     def _start_custom_models_fetch(self):
         base_url = self.custom_base_url_edit.text().strip()
         key = self.custom_key_edit.text().strip()
@@ -504,10 +544,14 @@ class AssistantTabMixin:
             self.custom_models_status_label.setStyleSheet(f"font-size: 11px; color: {self._t()['danger']};")
             self.custom_models_status_label.setText("Enter a base URL first.")
             return
-        if not _is_http_url(base_url):
+        if not _is_http_url(base_url, key):
             self.custom_base_url_edit.setStyleSheet(f"border: 2px solid {self._t()['danger']};")
             self.custom_models_status_label.setStyleSheet(f"font-size: 11px; color: {self._t()['danger']};")
-            self.custom_models_status_label.setText("Enter a valid http:// or https:// base URL.")
+            self.custom_models_status_label.setText(
+                "Use HTTPS with an API key; HTTP is allowed only for loopback."
+            )
+            return
+        if not self._confirm_custom_key_origin(base_url, key):
             return
 
         self._custom_fetch_models_btn.setEnabled(False)
@@ -620,7 +664,7 @@ class AssistantTabMixin:
 
     def _gather_assistant_values(self) -> dict:
         custom_base_url = self.custom_base_url_edit.text().strip()
-        if not _is_http_url(custom_base_url):
+        if not _is_http_url(custom_base_url, self.custom_key_edit.text().strip()):
             self.custom_base_url_edit.setStyleSheet(f"border: 2px solid {self._t()['danger']};")
             self.custom_models_status_label.setStyleSheet(f"font-size: 11px; color: {self._t()['danger']};")
             self.custom_models_status_label.setText("Enter a valid http:// or https:// base URL.")
@@ -647,6 +691,8 @@ class AssistantTabMixin:
             "CAVEMAN_MODE": self.caveman_combo.currentData(),
             "CONFIRM_BEFORE_ACTIONS": self.confirm_check.isChecked(),
             "HIDE_CONSOLE_WINDOW": not self.show_console_check.isChecked(),
+            "SYSTEM_WATCH_ENABLED": self.system_watch_enabled_check.isChecked(),
+            "SYSTEM_WATCH_INTERVAL_SECONDS": self.system_watch_interval_spin.value(),
             "WHISPER_MODEL_SIZE": self.whisper_model_combo.currentText().strip() or config.WHISPER_MODEL_SIZE,
             "WHISPER_DEVICE": self._whisper_device_display_to_value.get(self.whisper_device_combo.currentText(), "auto"),
             "WHISPER_COMPUTE_TYPE": self.whisper_compute_combo.currentText().strip() or "auto",
@@ -756,11 +802,18 @@ class AssistantTabMixin:
 
         old_hide = config.HIDE_CONSOLE_WINDOW
         old_whisper = (config.WHISPER_MODEL_SIZE, config.WHISPER_DEVICE, config.WHISPER_COMPUTE_TYPE)
+        old_system_watch = (
+            config.SYSTEM_WATCH_ENABLED, config.SYSTEM_WATCH_INTERVAL_SECONDS
+        )
         old_spotify = (config.SPOTIFY_CLIENT_ID, config.SPOTIFY_CLIENT_SECRET)
         old_audio_output = getattr(config, "AUDIO_OUTPUT_DEVICE", "default")
         for key, value in values.items():
             setattr(config, key, value)
 
+        if old_system_watch != (
+            config.SYSTEM_WATCH_ENABLED, config.SYSTEM_WATCH_INTERVAL_SECONDS
+        ):
+            self._reload_plugins_backend()
         if old_hide != config.HIDE_CONSOLE_WINDOW:
             _set_console_visible(not config.HIDE_CONSOLE_WINDOW)
         whisper_settings_changed = old_whisper != (

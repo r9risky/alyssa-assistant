@@ -30,7 +30,6 @@ def start_timer(duration_minutes: float = 0.0, duration_seconds: float = 0.0, la
     timer_id = _timer_counter
     end_time = time.time() + total_secs
 
-    # Format human description
     parts = []
     mins = int(total_secs // 60)
     secs = int(total_secs % 60)
@@ -136,7 +135,6 @@ def check_watch() -> str | None:
     if not expired:
         return None
 
-    # Mark notified and remove
     messages = []
     for t in expired:
         t["notified"] = True

@@ -5,7 +5,7 @@ import importlib.util
 import os
 import sys
 
-import config
+from config import PLUGIN_SETTINGS as config
 
 PLUGINS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "plugins")
 

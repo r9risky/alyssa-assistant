@@ -10,7 +10,7 @@ import numpy as np
 import sounddevice as sd
 import webrtcvad
 
-import config
+from config import AUDIO_SETTINGS as config
 import nameutil
 import transcribe
 
