@@ -247,6 +247,17 @@ class ConfigDialog(QDialog, AssistantTabMixin, EngineTabMixin, AudioTabMixin,
     # request needs both at once.
     _spotify_verified_signal = Signal(bool, str)
     _update_checked_signal = Signal(bool, object)
+    _CREDENTIAL_EDIT_SPECS = (
+        ("gemini_key_edit", "GEMINI_API_KEY", "_original_gemini_key", "gemini_key_status_label"),
+        ("openai_key_edit", "OPENAI_API_KEY", "_original_openai_key", "openai_key_status_label"),
+        ("anthropic_key_edit", "ANTHROPIC_API_KEY", "_original_anthropic_key", "anthropic_key_status_label"),
+        ("custom_key_edit", "CUSTOM_API_KEY", "_original_custom_key", "custom_models_status_label"),
+        ("elevenlabs_key_edit", "ELEVENLABS_API_KEY", "_original_elevenlabs_key", "elevenlabs_key_status_label"),
+        ("spotify_client_id_edit", "SPOTIFY_CLIENT_ID", "_original_spotify_client_id", "spotify_status_label"),
+        ("spotify_client_secret_edit", "SPOTIFY_CLIENT_SECRET", "_original_spotify_client_secret", "spotify_status_label"),
+        ("youtube_key_edit", "YOUTUBE_API_KEY", "_original_youtube_key", "youtube_status_label"),
+    )
+
     _update_installed_signal = Signal(bool, str)
 
     # A cohesive theme matching the companion/speech-bubble palette,
@@ -293,11 +304,12 @@ class ConfigDialog(QDialog, AssistantTabMixin, EngineTabMixin, AudioTabMixin,
         self.setStyleSheet(build_voice_browser_style(companion.settings))
         self._responsive_forms = []
         self._compact_layout = None
+        self._credential_commit_names = frozenset()
 
-        # Every field applies as you change it - no Save button. Each tab
-        # has its own debounce timer so a burst of changes (a slider drag,
-        # typing character by character) collapses into one apply/persist
-        # instead of one per event.
+        # Non-secret fields still apply as they change. Credential fields
+        # deliberately bypass the debounce timer and commit only on Apply,
+        # successful verification, or editingFinished so partial values are
+        # never persisted during a pause in typing.
         self._companion_apply_timer = QTimer(self)
         self._companion_apply_timer.setSingleShot(True)
         self._companion_apply_timer.setInterval(150)
@@ -325,6 +337,8 @@ class ConfigDialog(QDialog, AssistantTabMixin, EngineTabMixin, AudioTabMixin,
         # shrink to content size inside a QScrollArea.
         self.tabs.addTab(self._build_plugins_tab(), "Plugins")
         self.tabs.addTab(self._wrap_in_scroll_area(self._build_updates_tab()), "Updates")
+        self._configure_credential_commit_behavior()
+
 
         # Root-cause fix for clipped combo text (provider/model dropdowns
         # etc.): QFormLayout's ExpandingFieldsGrow stretches QLineEdit
@@ -337,6 +351,10 @@ class ConfigDialog(QDialog, AssistantTabMixin, EngineTabMixin, AudioTabMixin,
             combo.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
 
         close_btn = QPushButton("Close")
+        self.apply_btn = QPushButton("Apply")
+        self.apply_btn.setObjectName("primaryButton")
+        self.apply_btn.clicked.connect(self._apply_all_pending)
+
         close_btn.setObjectName("primaryButton")
         close_btn.clicked.connect(self._on_close)
         # Soft micro-interaction: opacity dips on press, eases back on
@@ -350,6 +368,7 @@ class ConfigDialog(QDialog, AssistantTabMixin, EngineTabMixin, AudioTabMixin,
 
         btn_row = QHBoxLayout()
         btn_row.addStretch(1)
+        btn_row.addWidget(self.apply_btn)
         btn_row.addWidget(close_btn)
         btn_row.setContentsMargins(0, 6, 0, 0)
 
@@ -544,7 +563,6 @@ class ConfigDialog(QDialog, AssistantTabMixin, EngineTabMixin, AudioTabMixin,
         key_edit = QLineEdit(initial_value)
         key_edit.setEchoMode(QLineEdit.Password)
         key_edit.setPlaceholderText(placeholder)
-        key_edit.textChanged.connect(self._queue_assistant_apply)
         key_edit.textChanged.connect(
             lambda *args: self._reset_key_status(key_edit, status)
         )
@@ -621,6 +639,144 @@ class ConfigDialog(QDialog, AssistantTabMixin, EngineTabMixin, AudioTabMixin,
     def _apply_theme_stylesheet(self):
         self.setStyleSheet("")
         self.setStyleSheet(build_voice_browser_style(self.companion.settings))
+
+
+    def _configure_credential_commit_behavior(self):
+        self._credential_bindings = {}
+        for edit_attr, name, original_attr, status_attr in self._CREDENTIAL_EDIT_SPECS:
+            edit = getattr(self, edit_attr)
+            status = getattr(self, status_attr)
+            self._credential_bindings[edit] = (name, original_attr, status)
+            if edit_attr in {"custom_key_edit", "spotify_client_id_edit"}:
+                try:
+                    edit.textChanged.disconnect(self._queue_assistant_apply)
+                except (RuntimeError, TypeError):
+                    pass
+            edit.editingFinished.connect(
+                lambda edit=edit: self._commit_credential_edits({edit})
+            )
+
+        self.custom_key_edit.textChanged.connect(
+            lambda *args: self._mark_credential_pending(
+                self.custom_models_status_label
+            )
+        )
+        self.gemini_setup_hint.setText(
+            "⬆ Paste your key above, then Apply, Verify, or leave the field."
+        )
+        for label in self.findChildren(QLabel):
+            if label.text().startswith("Keys apply immediately"):
+                label.setText(
+                    "Credential changes save on Apply, successful Verify, or "
+                    "when you leave the field. Stored in the OS credential store."
+                )
+
+    def _mark_credential_pending(self, status):
+        status.setStyleSheet(
+            f"font-size: 11px; color: {self._t()['warning']};"
+        )
+        status.setText("Unsaved credential change.")
+
+    def _reset_key_status(self, edit, status):
+        AssistantTabMixin._reset_key_status(self, edit, status)
+        self._mark_credential_pending(status)
+
+    def _gather_assistant_values(self) -> dict:
+        values = AssistantTabMixin._gather_assistant_values(self)
+        allowed = getattr(self, "_credential_commit_names", frozenset())
+        for _edit_attr, name, original_attr, _status_attr in self._CREDENTIAL_EDIT_SPECS:
+            if name not in allowed:
+                values[name] = getattr(self, original_attr)
+        return values
+
+    def _commit_credential_names(self, names):
+        previous = self._credential_commit_names
+        self._credential_commit_names = frozenset(names)
+        if self._assistant_apply_timer.isActive():
+            self._assistant_apply_timer.stop()
+        try:
+            self._apply_assistant_live()
+        finally:
+            self._credential_commit_names = previous
+        return {
+            name
+            for edit, (name, original_attr, _status) in self._credential_bindings.items()
+            if name in names and edit.text().strip() == getattr(self, original_attr)
+        }
+
+    def _commit_credential_edits(self, edits):
+        names = {self._credential_bindings[edit][0] for edit in edits}
+        saved = self._commit_credential_names(names)
+        for edit in edits:
+            name, _original_attr, status = self._credential_bindings[edit]
+            if name in saved:
+                status.setStyleSheet(
+                    f"font-size: 11px; color: {self._t()['success']};"
+                )
+                status.setText("Saved.")
+            else:
+                self._mark_credential_pending(status)
+
+    def _apply_all_pending(self, *args):
+        pending = {
+            name
+            for _edit, (name, _original_attr, status) in self._credential_bindings.items()
+            if status.text().startswith("Unsaved")
+        }
+        saved = self._commit_credential_names(
+            {spec[1] for spec in self._CREDENTIAL_EDIT_SPECS}
+        )
+        for _edit, (name, _original_attr, status) in self._credential_bindings.items():
+            if name in pending:
+                if name in saved:
+                    status.setStyleSheet(
+                        f"font-size: 11px; color: {self._t()['success']};"
+                    )
+                    status.setText("Saved.")
+                else:
+                    self._mark_credential_pending(status)
+
+    def _on_key_verification_result(self, provider, valid, message, items):
+        AssistantTabMixin._on_key_verification_result(
+            self, provider, valid, message, items
+        )
+        edit, status = {
+            "gemini": (self.gemini_key_edit, self.gemini_key_status_label),
+            "openai": (self.openai_key_edit, self.openai_key_status_label),
+            "anthropic": (self.anthropic_key_edit, self.anthropic_key_status_label),
+            "elevenlabs": (self.elevenlabs_key_edit, self.elevenlabs_key_status_label),
+            "youtube": (self.youtube_key_edit, self.youtube_status_label),
+        }[provider]
+        if valid and edit.text().strip() == getattr(edit, "_verified_value", None):
+            verified_text = status.text()
+            saved = self._commit_credential_names(
+                {self._credential_bindings[edit][0]}
+            )
+            if self._credential_bindings[edit][0] in saved:
+                status.setText(f"{verified_text} Saved.")
+
+    def _on_custom_models_fetch_result(self, ok: bool, message: str, models: list):
+        AssistantTabMixin._on_custom_models_fetch_result(self, ok, message, models)
+        if ok and (
+            self.custom_base_url_edit.text().strip(),
+            self.custom_key_edit.text().strip(),
+        ) == self._last_custom_fetch_checked:
+            verified_text = self.custom_models_status_label.text()
+            saved = self._commit_credential_names({"CUSTOM_API_KEY"})
+            if "CUSTOM_API_KEY" in saved:
+                self.custom_models_status_label.setText(f"{verified_text} Saved.")
+
+    def _on_spotify_verify_result(self, valid: bool, message: str):
+        AssistantTabMixin._on_spotify_verify_result(self, valid, message)
+        current = (
+            self.spotify_client_id_edit.text().strip(),
+            self.spotify_client_secret_edit.text().strip(),
+        )
+        if valid and current == self._last_verified_spotify_checked:
+            verified_text = self.spotify_status_label.text()
+            names = {"SPOTIFY_CLIENT_ID", "SPOTIFY_CLIENT_SECRET"}
+            if names <= self._commit_credential_names(names):
+                self.spotify_status_label.setText(f"{verified_text} Saved.")
 
     def _queue_assistant_apply(self, *args):
         self._assistant_apply_timer.start()

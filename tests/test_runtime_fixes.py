@@ -1,4 +1,5 @@
 import os
+import json
 import runpy
 import sys
 import tempfile
@@ -23,6 +24,7 @@ import recorder
 import transcribe
 import voice
 import config
+import credential_store
 from plugins import calendar_gmail, reminders
 
 
@@ -370,6 +372,96 @@ class FinalAuditFixTests(unittest.TestCase):
             loaded = runpy.run_path(config.__file__)
         self.assertEqual(loaded["GEMINI_API_KEY"], "environment-key")
 
+
+    def test_legacy_secret_with_inline_comment_is_migrated(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            config_path = os.path.join(temp_dir, "config.py")
+            with open(config_path, "w", encoding="utf-8") as config_file:
+                config_file.write(
+                    "OPENAI_API_KEY = 'sk-fake-legacy-value'  # old install\n"
+                )
+
+            with (
+                patch.object(credential_store, "_keyring_available", return_value=True),
+                patch.object(credential_store, "set_secret", return_value=True) as set_secret,
+            ):
+                migrated = credential_store.migrate_legacy_plaintext_keys(config_path)
+
+            with open(config_path, "r", encoding="utf-8") as config_file:
+                migrated_source = config_file.read()
+
+        self.assertEqual(migrated, ["OPENAI_API_KEY"])
+        set_secret.assert_called_once_with(
+            "OPENAI_API_KEY", "sk-fake-legacy-value"
+        )
+        self.assertIn("OPENAI_API_KEY = ''", migrated_source)
+        self.assertNotIn("sk-fake-legacy-value", migrated_source)
+
+    def test_google_token_round_trips_through_credential_store(self):
+        token_info = {
+            "token": "fake-access-token",
+            "refresh_token": "fake-refresh-token",
+            "client_id": "fake-client",
+        }
+        stored = {}
+
+        def set_json_secret(name, value):
+            stored[name] = value
+            return True
+
+        class FakeCredentials:
+            def to_json(self):
+                return json.dumps(token_info)
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            token_path = os.path.join(temp_dir, "token.json")
+            with (
+                patch.object(calendar_gmail, "_TOKEN_PATH", token_path),
+                patch.object(
+                    calendar_gmail.credential_store,
+                    "set_json_secret",
+                    side_effect=set_json_secret,
+                ),
+                patch.object(
+                    calendar_gmail.credential_store,
+                    "get_json_secret",
+                    side_effect=lambda name: stored.get(name),
+                ),
+            ):
+                self.assertTrue(calendar_gmail._store_credentials(FakeCredentials()))
+                self.assertEqual(calendar_gmail._load_token_info(), token_info)
+
+            self.assertFalse(os.path.exists(token_path))
+
+    def test_legacy_google_token_is_migrated_and_plaintext_removed(self):
+        token_info = {
+            "token": "legacy-access-token",
+            "refresh_token": "legacy-refresh-token",
+        }
+        stored = {}
+
+        def set_json_secret(name, value):
+            stored[name] = value
+            return True
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            token_path = os.path.join(temp_dir, "token.json")
+            with open(token_path, "w", encoding="utf-8") as token_file:
+                json.dump(token_info, token_file)
+            with (
+                patch.object(calendar_gmail, "_TOKEN_PATH", token_path),
+                patch.object(
+                    calendar_gmail.credential_store,
+                    "set_json_secret",
+                    side_effect=set_json_secret,
+                ),
+                patch.object(
+                    calendar_gmail.credential_store,
+                    "get_json_secret",
+                    side_effect=lambda name: stored.get(name),
+                ),
+            ):
+                self.assertEqual(calendar_gmail._load_token_info(), token_info)
     def test_plugin_local_google_credentials_are_accepted(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             plugin_dir = os.path.join(temp_dir, "plugins")

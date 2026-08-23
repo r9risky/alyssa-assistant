@@ -16,6 +16,7 @@ from config import (
 )
 import memory
 import nameutil
+import startup_logging
 import telemetry
 
 from .common import GenerationCancelled, _HTTP_SESSION
@@ -115,7 +116,7 @@ def _handle_pending_power_confirmation(user_text: str):
         # Console visibility, matching the normal tool-call path in
         # handle_command below - without this, an approved action was
         # invisible in the console log.
-        print(f"[tool] {pending['name']}({pending['arguments']}) -> {raw_output}")
+        print(startup_logging.format_tool_log(pending["name"], pending["arguments"], raw_output))
         _record_recent_action(pending["name"], pending["arguments"], raw_output)
         # Route through the same natural-phrasing step every other tool
         # result goes through, instead of speaking the raw return value -
@@ -790,7 +791,13 @@ def _call_model_with_error_handling(
         # Print the real error body to the console so it can actually
         # be diagnosed - the spoken reply stays short on purpose.
         if e.response is not None:
-            print(f"[{provider_label} error {status}] {e.response.text}")
+            print(
+                startup_logging.format_content_log(
+                    f"[{provider_label} error {status}] response received",
+                    e.response.text,
+                    full_text=f"[{provider_label} error {status}] {e.response.text}",
+                )
+            )
         if status in (401, 403):
             return None, f"{provider_label} rejected my API key - double check it in config.py."
         if status == 429:
@@ -803,10 +810,22 @@ def _call_model_with_error_handling(
     except RuntimeError as e:
         return None, str(e)  # e.g. missing API key
     except (ValueError, TypeError, KeyError, IndexError, AttributeError) as e:
-        print(f"[{provider_label} malformed response] {e}")
+        print(
+            startup_logging.format_content_log(
+                f"[{provider_label} malformed response] detail received",
+                e,
+                full_text=f"[{provider_label} malformed response] {e}",
+            )
+        )
         return None, f"{provider_label} returned a malformed response. Please try again."
     except requests.exceptions.RequestException as e:
-        print(f"[{provider_label} request error] {e}")
+        print(
+            startup_logging.format_content_log(
+                f"[{provider_label} request error] detail received",
+                e,
+                full_text=f"[{provider_label} request error] {e}",
+            )
+        )
         return None, f"I couldn't complete that request to {provider_label}. Please try again."
 
 
@@ -1054,7 +1073,7 @@ def handle_command(
             if untrusted_output and not blocked_by_web_content:
                 untrusted_web_content_seen = True
 
-            print(f"[tool] {name}({arguments}) -> {tool_output}")
+            print(startup_logging.format_tool_log(name, arguments, tool_output))
             _record_recent_action(name, arguments, tool_output)
 
             if tool_output == "VOICE_CONFIRMATION_REQUIRED":
