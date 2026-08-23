@@ -5,6 +5,7 @@ from __future__ import annotations
 import ast
 import builtins
 import hashlib
+import html
 import json
 import os
 from pathlib import Path, PurePosixPath
@@ -180,6 +181,101 @@ LEGACY_MANAGED_PATHS = {
     "v1.1.4": _LEGACY_V1_1_4_PATHS,
     "v1.1.10": _LEGACY_V1_1_10_PATHS,
 }
+
+
+def _render_release_notes_inline(text: str) -> str:
+    """Render supported inline markdown after escaping the source text."""
+    rendered = html.escape(text, quote=True)
+    replacements: list[tuple[str, str]] = []
+
+    def protect(replacement: str) -> str:
+        token = f"\x00{len(replacements)}\x00"
+        replacements.append((token, replacement))
+        return token
+
+    rendered = re.sub(
+        r"`([^`\n]+)`",
+        lambda match: protect(f"<code>{match.group(1)}</code>"),
+        rendered,
+    )
+    rendered = re.sub(
+        r"\[([^\]\n]+)\]\(([^)\n]+)\)",
+        lambda match: protect(
+            f'<a href="{match.group(2)}">{match.group(1)}</a>'
+        ),
+        rendered,
+    )
+    rendered = re.sub(r"\*\*(.+?)\*\*", r"<b>\1</b>", rendered)
+    rendered = re.sub(r"__(.+?)__", r"<b>\1</b>", rendered)
+    rendered = re.sub(r"(?<!\*)\*([^*\n]+?)\*(?!\*)", r"<i>\1</i>", rendered)
+    rendered = re.sub(
+        r"(?<![\w_])_([^_\n]+?)_(?![\w_])", r"<i>\1</i>", rendered
+    )
+
+    for token, replacement in reversed(replacements):
+        rendered = rendered.replace(token, replacement)
+    return rendered
+
+
+def render_release_notes_html(markdown_text: str) -> str:
+    """Convert common release-note markdown into Qt-compatible rich text HTML."""
+    blocks: list[str] = []
+    paragraph: list[str] = []
+    list_kind: str | None = None
+    list_items: list[str] = []
+
+    def flush_paragraph() -> None:
+        if paragraph:
+            blocks.append(
+                f"<p>{_render_release_notes_inline(' '.join(paragraph))}</p>"
+            )
+            paragraph.clear()
+
+    def flush_list() -> None:
+        nonlocal list_kind
+        if list_kind is not None:
+            items = "".join(
+                f"<li>{_render_release_notes_inline(item)}</li>"
+                for item in list_items
+            )
+            blocks.append(f"<{list_kind}>{items}</{list_kind}>")
+            list_items.clear()
+            list_kind = None
+
+    for line in markdown_text.splitlines():
+        if not line.strip():
+            flush_paragraph()
+            flush_list()
+            continue
+
+        header = re.match(r"^\s{0,3}(#{1,4})\s+(.+?)\s*$", line)
+        if header:
+            flush_paragraph()
+            flush_list()
+            level = len(header.group(1))
+            blocks.append(
+                f"<h{level}>{_render_release_notes_inline(header.group(2))}</h{level}>"
+            )
+            continue
+
+        unordered = re.match(r"^\s*[-*]\s+(.+?)\s*$", line)
+        ordered = re.match(r"^\s*\d+\.\s+(.+?)\s*$", line)
+        match = unordered or ordered
+        if match:
+            flush_paragraph()
+            kind = "ul" if unordered else "ol"
+            if list_kind != kind:
+                flush_list()
+                list_kind = kind
+            list_items.append(match.group(1))
+            continue
+
+        flush_list()
+        paragraph.append(line.strip())
+
+    flush_paragraph()
+    flush_list()
+    return "\n".join(blocks)
 
 
 def _require_https_url(value: str, label: str) -> str:

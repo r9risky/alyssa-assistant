@@ -9,6 +9,60 @@ import updater
 
 
 class UpdaterTests(unittest.TestCase):
+    def test_render_release_notes_html_renders_header(self):
+        self.assertEqual(
+            updater.render_release_notes_html("## Highlights"),
+            "<h2>Highlights</h2>",
+        )
+
+    def test_render_release_notes_html_renders_bullet_and_ordered_lists(self):
+        rendered = updater.render_release_notes_html(
+            "- First change\n* Second change\n\n1. Download\n2. Restart"
+        )
+
+        self.assertEqual(
+            rendered,
+            "<ul><li>First change</li><li>Second change</li></ul>\n"
+            "<ol><li>Download</li><li>Restart</li></ol>",
+        )
+
+    def test_render_release_notes_html_renders_inline_formatting(self):
+        rendered = updater.render_release_notes_html(
+            "**Bold**, _italic_, and `code <value>`."
+        )
+
+        self.assertEqual(
+            rendered,
+            "<p><b>Bold</b>, <i>italic</i>, and "
+            "<code>code &lt;value&gt;</code>.</p>",
+        )
+
+    def test_render_release_notes_html_renders_link(self):
+        self.assertEqual(
+            updater.render_release_notes_html(
+                "See [the changelog](https://example.com/releases?a=1&b=2)."
+            ),
+            '<p>See <a href="https://example.com/releases?a=1&amp;b=2">'
+            "the changelog</a>.</p>",
+        )
+
+    def test_render_release_notes_html_escapes_html_injection(self):
+        rendered = updater.render_release_notes_html("<script>alert(1)</script>")
+
+        self.assertEqual(
+            rendered,
+            "<p>&lt;script&gt;alert(1)&lt;/script&gt;</p>",
+        )
+        self.assertNotIn("<script>", rendered)
+
+    def test_render_release_notes_html_renders_plain_paragraph(self):
+        self.assertEqual(
+            updater.render_release_notes_html(
+                "A plain release note.\nStill the same paragraph."
+            ),
+            "<p>A plain release note. Still the same paragraph.</p>",
+        )
+
     def test_merge_config_keeps_new_default_when_old_value_uses_removed_name(self):
         old_source = (
             "import os\n"
