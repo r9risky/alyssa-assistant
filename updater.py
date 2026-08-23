@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import ast
+import builtins
 import hashlib
+import html
 import json
 import os
 from pathlib import Path, PurePosixPath
@@ -181,6 +183,101 @@ LEGACY_MANAGED_PATHS = {
 }
 
 
+def _render_release_notes_inline(text: str) -> str:
+    """Render supported inline markdown after escaping the source text."""
+    rendered = html.escape(text, quote=True)
+    replacements: list[tuple[str, str]] = []
+
+    def protect(replacement: str) -> str:
+        token = f"\x00{len(replacements)}\x00"
+        replacements.append((token, replacement))
+        return token
+
+    rendered = re.sub(
+        r"`([^`\n]+)`",
+        lambda match: protect(f"<code>{match.group(1)}</code>"),
+        rendered,
+    )
+    rendered = re.sub(
+        r"\[([^\]\n]+)\]\(([^)\n]+)\)",
+        lambda match: protect(
+            f'<a href="{match.group(2)}">{match.group(1)}</a>'
+        ),
+        rendered,
+    )
+    rendered = re.sub(r"\*\*(.+?)\*\*", r"<b>\1</b>", rendered)
+    rendered = re.sub(r"__(.+?)__", r"<b>\1</b>", rendered)
+    rendered = re.sub(r"(?<!\*)\*([^*\n]+?)\*(?!\*)", r"<i>\1</i>", rendered)
+    rendered = re.sub(
+        r"(?<![\w_])_([^_\n]+?)_(?![\w_])", r"<i>\1</i>", rendered
+    )
+
+    for token, replacement in reversed(replacements):
+        rendered = rendered.replace(token, replacement)
+    return rendered
+
+
+def render_release_notes_html(markdown_text: str) -> str:
+    """Convert common release-note markdown into Qt-compatible rich text HTML."""
+    blocks: list[str] = []
+    paragraph: list[str] = []
+    list_kind: str | None = None
+    list_items: list[str] = []
+
+    def flush_paragraph() -> None:
+        if paragraph:
+            blocks.append(
+                f"<p>{_render_release_notes_inline(' '.join(paragraph))}</p>"
+            )
+            paragraph.clear()
+
+    def flush_list() -> None:
+        nonlocal list_kind
+        if list_kind is not None:
+            items = "".join(
+                f"<li>{_render_release_notes_inline(item)}</li>"
+                for item in list_items
+            )
+            blocks.append(f"<{list_kind}>{items}</{list_kind}>")
+            list_items.clear()
+            list_kind = None
+
+    for line in markdown_text.splitlines():
+        if not line.strip():
+            flush_paragraph()
+            flush_list()
+            continue
+
+        header = re.match(r"^\s{0,3}(#{1,4})\s+(.+?)\s*$", line)
+        if header:
+            flush_paragraph()
+            flush_list()
+            level = len(header.group(1))
+            blocks.append(
+                f"<h{level}>{_render_release_notes_inline(header.group(2))}</h{level}>"
+            )
+            continue
+
+        unordered = re.match(r"^\s*[-*]\s+(.+?)\s*$", line)
+        ordered = re.match(r"^\s*\d+\.\s+(.+?)\s*$", line)
+        match = unordered or ordered
+        if match:
+            flush_paragraph()
+            kind = "ul" if unordered else "ol"
+            if list_kind != kind:
+                flush_list()
+                list_kind = kind
+            list_items.append(match.group(1))
+            continue
+
+        flush_list()
+        paragraph.append(line.strip())
+
+    flush_paragraph()
+    flush_list()
+    return "\n".join(blocks)
+
+
 def _require_https_url(value: str, label: str) -> str:
     try:
         parsed = urlsplit(value)
@@ -323,6 +420,32 @@ def merge_config_settings(new_source: str, old_source: str) -> str:
     """Keep installed config values while retaining the new file structure."""
     old_values = _assignment_values(old_source)
     tree = ast.parse(new_source)
+    resolvable_names = set(dir(builtins))
+
+    def add_assignment_names(target: ast.expr) -> None:
+        resolvable_names.update(
+            child.id
+            for child in ast.walk(target)
+            if isinstance(child, ast.Name) and isinstance(child.ctx, ast.Store)
+        )
+
+    for node in tree.body:
+        if isinstance(node, ast.Import):
+            resolvable_names.update(
+                alias.asname or alias.name.split(".", 1)[0] for alias in node.names
+            )
+        elif isinstance(node, ast.ImportFrom):
+            resolvable_names.update(
+                alias.asname or alias.name for alias in node.names if alias.name != "*"
+            )
+        elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            resolvable_names.add(node.name)
+        elif isinstance(node, ast.Assign):
+            for target in node.targets:
+                add_assignment_names(target)
+        elif isinstance(node, (ast.AnnAssign, ast.AugAssign)):
+            add_assignment_names(node.target)
+
     lines = new_source.splitlines(keepends=True)
     offsets = [0]
     for line in lines:
@@ -338,13 +461,35 @@ def merge_config_settings(new_source: str, old_source: str) -> str:
             continue
         if not isinstance(target, ast.Name) or target.id not in old_values or node.value is None:
             continue
+        old_value = old_values[target.id]
+        old_value_tree = ast.parse(old_value, mode="eval")
+        referenced_names = {
+            child.id
+            for child in ast.walk(old_value_tree)
+            if isinstance(child, ast.Name) and isinstance(child.ctx, ast.Load)
+        }
+        missing_names = sorted(referenced_names - resolvable_names)
+        if missing_names:
+            names = ", ".join(repr(name) for name in missing_names)
+            verb = "is" if len(missing_names) == 1 else "are"
+            print(
+                f"config: kept new default for {target.id} - old value referenced "
+                f"{names}, which {verb} no longer imported or defined"
+            )
+            continue
         start = offsets[node.value.lineno - 1] + node.value.col_offset
         end = offsets[node.value.end_lineno - 1] + node.value.end_col_offset
-        replacements.append((start, end, old_values[target.id]))
+        replacements.append((start, end, old_value))
 
+    merged = new_source
     for start, end, value in reversed(replacements):
-        new_source = new_source[:start] + value + new_source[end:]
-    return new_source
+        merged = merged[:start] + value + merged[end:]
+    try:
+        compile(merged, "config.py", "exec")
+    except SyntaxError:
+        print("config: merged settings were invalid; kept new config unchanged")
+        return new_source
+    return merged
 
 
 def _safe_extract(archive_path: Path, destination: Path) -> Path:

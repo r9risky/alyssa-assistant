@@ -267,10 +267,14 @@ class SettingsGuiTests(unittest.TestCase):
         with (
             patch.object(settings_dialog.QMessageBox, "exec", return_value=settings_dialog.QMessageBox.No),
             patch.object(settings_dialog.QMessageBox, "setInformativeText") as set_notes,
+            patch.object(settings_dialog.QMessageBox, "setTextFormat") as set_format,
         ):
             self.dialog._on_update_checked(True, release)
 
-        set_notes.assert_called_once_with("Changes in this release:\n\nA safer updater")
+        set_format.assert_called_once_with(Qt.RichText)
+        set_notes.assert_called_once_with(
+            "<p><b>Changes in this release:</b></p><p>A safer updater</p>"
+        )
         self.assertEqual(
             self.dialog.update_status_label.text(),
             "Update cancelled. No files were changed.",

@@ -1,5 +1,6 @@
 import threading
 
+from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QMessageBox,
 )
@@ -106,7 +107,17 @@ class UpdatesTabMixin:
         prompt.setIcon(QMessageBox.Information)
         prompt.setWindowTitle(f"Alyssa {latest} Update")
         prompt.setText(f"Current Version: {current} | Latest Version: {latest}")
-        prompt.setInformativeText("Changes in this release:\n\n" + detail["notes"])
+        try:
+            rendered_notes = updater.render_release_notes_html(detail["notes"])
+        except Exception:
+            prompt.setTextFormat(Qt.PlainText)
+            informative_text = "Changes in this release:\n\n" + str(detail["notes"])
+        else:
+            prompt.setTextFormat(Qt.RichText)
+            informative_text = (
+                "<p><b>Changes in this release:</b></p>" + rendered_notes
+            )
+        prompt.setInformativeText(informative_text)
         prompt.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
         prompt.setDefaultButton(QMessageBox.No)
         prompt.button(QMessageBox.Yes).setText("Download and Install")

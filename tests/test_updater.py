@@ -9,6 +9,126 @@ import updater
 
 
 class UpdaterTests(unittest.TestCase):
+    def test_render_release_notes_html_renders_header(self):
+        self.assertEqual(
+            updater.render_release_notes_html("## Highlights"),
+            "<h2>Highlights</h2>",
+        )
+
+    def test_render_release_notes_html_renders_bullet_and_ordered_lists(self):
+        rendered = updater.render_release_notes_html(
+            "- First change\n* Second change\n\n1. Download\n2. Restart"
+        )
+
+        self.assertEqual(
+            rendered,
+            "<ul><li>First change</li><li>Second change</li></ul>\n"
+            "<ol><li>Download</li><li>Restart</li></ol>",
+        )
+
+    def test_render_release_notes_html_renders_inline_formatting(self):
+        rendered = updater.render_release_notes_html(
+            "**Bold**, _italic_, and `code <value>`."
+        )
+
+        self.assertEqual(
+            rendered,
+            "<p><b>Bold</b>, <i>italic</i>, and "
+            "<code>code &lt;value&gt;</code>.</p>",
+        )
+
+    def test_render_release_notes_html_renders_link(self):
+        self.assertEqual(
+            updater.render_release_notes_html(
+                "See [the changelog](https://example.com/releases?a=1&b=2)."
+            ),
+            '<p>See <a href="https://example.com/releases?a=1&amp;b=2">'
+            "the changelog</a>.</p>",
+        )
+
+    def test_render_release_notes_html_escapes_html_injection(self):
+        rendered = updater.render_release_notes_html("<script>alert(1)</script>")
+
+        self.assertEqual(
+            rendered,
+            "<p>&lt;script&gt;alert(1)&lt;/script&gt;</p>",
+        )
+        self.assertNotIn("<script>", rendered)
+
+    def test_render_release_notes_html_renders_plain_paragraph(self):
+        self.assertEqual(
+            updater.render_release_notes_html(
+                "A plain release note.\nStill the same paragraph."
+            ),
+            "<p>A plain release note. Still the same paragraph.</p>",
+        )
+
+    def test_merge_config_keeps_new_default_when_old_value_uses_removed_name(self):
+        old_source = (
+            "import os\n"
+            "OPENAI_API_KEY = os.environ.get('OPENAI_API_KEY', '')\n"
+        )
+        new_source = (
+            "import credential_store\n"
+            "OPENAI_API_KEY = credential_store.get_secret('OPENAI_API_KEY')\n"
+        )
+        credential_store = Mock()
+        credential_store.get_secret.return_value = "new-default"
+
+        with patch("builtins.print") as output:
+            merged = updater.merge_config_settings(new_source, old_source)
+
+        namespace = {}
+        with patch.dict("sys.modules", {"credential_store": credential_store}):
+            exec(merged, namespace)
+
+        self.assertEqual(namespace["OPENAI_API_KEY"], "new-default")
+        output.assert_called_once_with(
+            "config: kept new default for OPENAI_API_KEY - old value referenced "
+            "'os', which is no longer imported or defined"
+        )
+
+    def test_merge_config_preserves_plain_literal_value(self):
+        merged = updater.merge_config_settings(
+            "SETTING = 'new-default'\n", 'SETTING = "personal"\n'
+        )
+        namespace = {}
+        exec(merged, namespace)
+        self.assertEqual(namespace["SETTING"], "personal")
+
+    def test_merge_config_preserves_expression_when_import_still_exists(self):
+        old_source = (
+            "import credential_store as _cred\n"
+            "OPENAI_API_KEY = _cred.get_secret('personal-key')\n"
+        )
+        new_source = (
+            "import credential_store as _cred\n"
+            "OPENAI_API_KEY = _cred.get_secret('new-default')\n"
+        )
+        credential_store = Mock()
+        credential_store.get_secret.return_value = "personal-value"
+
+        merged = updater.merge_config_settings(new_source, old_source)
+        namespace = {}
+        with patch.dict("sys.modules", {"credential_store": credential_store}):
+            exec(merged, namespace)
+
+        self.assertEqual(namespace["OPENAI_API_KEY"], "personal-value")
+        credential_store.get_secret.assert_called_once_with("personal-key")
+
+    def test_merge_config_falls_back_when_spliced_source_is_invalid(self):
+        new_source = 'é = "new-default"\n'
+        old_source = 'é = "personal"\n'
+
+        with patch("builtins.print") as output:
+            merged = updater.merge_config_settings(new_source, old_source)
+
+        self.assertEqual(merged, new_source)
+        compile(merged, "config.py", "exec")
+        output.assert_called_once_with(
+            "config: merged settings were invalid; kept new config unchanged"
+        )
+
     def test_apply_release_preserves_personal_data_and_adds_new_files(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
