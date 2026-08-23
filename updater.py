@@ -46,6 +46,15 @@ PRESERVED_FILES = {
     "token.json",
 }
 PRESERVED_DIRS = {".git", ".venv", "__pycache__", "build", "dist"}
+SECRET_CONFIG_FIELDS = frozenset(
+    {
+        "GEMINI_API_KEY", "OPENAI_API_KEY", "ANTHROPIC_API_KEY",
+        "CUSTOM_API_KEY", "ELEVENLABS_API_KEY", "SPOTIFY_CLIENT_ID",
+        "SPOTIFY_CLIENT_SECRET", "YOUTUBE_API_KEY",
+    }
+)
+
+
 MANIFEST_FILE = ".alyssa-manifest.json"
 _LEGACY_V1_0_8_PATHS = frozenset(
     {
@@ -603,7 +612,10 @@ def _assignment_values(source: str) -> dict[str, str]:
 
 def merge_config_settings(new_source: str, old_source: str) -> str:
     """Keep installed config values while retaining the new file structure."""
-    old_values = _assignment_values(old_source)
+    old_values = {
+        name: value for name, value in _assignment_values(old_source).items()
+        if name not in SECRET_CONFIG_FIELDS
+    }
     tree = ast.parse(new_source)
     resolvable_names = set(dir(builtins))
 
@@ -614,7 +626,7 @@ def merge_config_settings(new_source: str, old_source: str) -> str:
             if isinstance(child, ast.Name) and isinstance(child.ctx, ast.Store)
         )
 
-    for node in tree.body:
+    def add_resolvable_names(node: ast.stmt) -> None:
         if isinstance(node, ast.Import):
             resolvable_names.update(
                 alias.asname or alias.name.split(".", 1)[0] for alias in node.names
@@ -643,8 +655,10 @@ def merge_config_settings(new_source: str, old_source: str) -> str:
         elif isinstance(node, ast.AnnAssign):
             target = node.target
         else:
+            add_resolvable_names(node)
             continue
         if not isinstance(target, ast.Name) or target.id not in old_values or node.value is None:
+            add_resolvable_names(node)
             continue
         old_value = old_values[target.id]
         old_value_tree = ast.parse(old_value, mode="eval")
@@ -659,12 +673,16 @@ def merge_config_settings(new_source: str, old_source: str) -> str:
             verb = "is" if len(missing_names) == 1 else "are"
             print(
                 f"config: kept new default for {target.id} - old value referenced "
-                f"{names}, which {verb} no longer imported or defined"
+                f"{names}, which {verb} not yet imported or defined"
             )
+            add_resolvable_names(node)
             continue
         start = offsets[node.value.lineno - 1] + node.value.col_offset
         end = offsets[node.value.end_lineno - 1] + node.value.end_col_offset
         replacements.append((start, end, old_value))
+
+        # Names become available only after their top-level statement runs.
+        add_resolvable_names(node)
 
     merged = new_source
     for start, end, value in reversed(replacements):

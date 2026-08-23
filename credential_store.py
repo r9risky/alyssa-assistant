@@ -30,6 +30,7 @@ upgrading from before this module existed - it moves that value into
 the keyring and blanks the literal in config.py, instead of silently
 leaving the old plaintext copy on disk forever.
 """
+import json
 import os
 import re
 
@@ -110,6 +111,26 @@ def set_secret(name: str, value: str) -> bool:
         return False
 
 
+def get_json_secret(name: str):
+    """Read a JSON value from secure storage, returning None if absent/invalid."""
+    raw = get_secret(name)
+    if not raw:
+        return None
+    try:
+        return json.loads(raw)
+    except (TypeError, ValueError):
+        return None
+
+
+def set_json_secret(name: str, value) -> bool:
+    """Serialize an arbitrary JSON-compatible value into secure storage."""
+    try:
+        encoded = json.dumps(value, ensure_ascii=False, separators=(",", ":"))
+    except (TypeError, ValueError):
+        return False
+    return set_secret(name, encoded)
+
+
 def storage_backend_name() -> str:
     """Human-readable name of the active keyring backend, for the
     Settings window to show ("Stored in: Windows Credential Manager")
@@ -121,7 +142,7 @@ def storage_backend_name() -> str:
     return type(keyring.get_keyring()).__name__
 
 
-_LITERAL_RE_TEMPLATE = r"^{name}\s*=\s*(['\"])(.*)\1\s*$"
+_LITERAL_RE_TEMPLATE = r"^{name}\s*=\s*(['\"])(.*)\1\s*(?:#.*)?$"
 
 
 def migrate_legacy_plaintext_keys(config_path: str) -> "list[str]":

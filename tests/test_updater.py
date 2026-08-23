@@ -80,11 +80,11 @@ class UpdaterTests(unittest.TestCase):
     def test_merge_config_keeps_new_default_when_old_value_uses_removed_name(self):
         old_source = (
             "import os\n"
-            "OPENAI_API_KEY = os.environ.get('OPENAI_API_KEY', '')\n"
+            "SETTING = os.environ.get('SETTING', '')\n"
         )
         new_source = (
             "import credential_store\n"
-            "OPENAI_API_KEY = credential_store.get_secret('OPENAI_API_KEY')\n"
+            "SETTING = credential_store.get_secret('SETTING')\n"
         )
         credential_store = Mock()
         credential_store.get_secret.return_value = "new-default"
@@ -96,10 +96,10 @@ class UpdaterTests(unittest.TestCase):
         with patch.dict("sys.modules", {"credential_store": credential_store}):
             exec(merged, namespace)
 
-        self.assertEqual(namespace["OPENAI_API_KEY"], "new-default")
+        self.assertEqual(namespace["SETTING"], "new-default")
         output.assert_called_once_with(
-            "config: kept new default for OPENAI_API_KEY - old value referenced "
-            "'os', which is no longer imported or defined"
+            "config: kept new default for SETTING - old value referenced "
+            "'os', which is not yet imported or defined"
         )
 
     def test_merge_config_preserves_plain_literal_value(self):
@@ -110,25 +110,36 @@ class UpdaterTests(unittest.TestCase):
         exec(merged, namespace)
         self.assertEqual(namespace["SETTING"], "personal")
 
-    def test_merge_config_preserves_expression_when_import_still_exists(self):
-        old_source = (
-            "import credential_store as _cred\n"
-            "OPENAI_API_KEY = _cred.get_secret('personal-key')\n"
-        )
+    def test_merge_config_never_preserves_known_secret_fields(self):
+        for name in updater.SECRET_CONFIG_FIELDS:
+            with self.subTest(name=name):
+                new_source = f"{name} = 'new-default'\n"
+                old_source = f"{name} = 'legacy-plaintext'\n"
+                self.assertEqual(
+                    updater.merge_config_settings(new_source, old_source),
+                    new_source,
+                )
+
+    def test_merge_config_resolves_names_in_definition_order(self):
         new_source = (
-            "import credential_store as _cred\n"
-            "OPENAI_API_KEY = _cred.get_secret('new-default')\n"
+            "def earlier():\n"
+            "    return 'new-earlier'\n"
+            "EARLIER = earlier()\n"
+            "LATER = 'new-later'\n"
+            "def later():\n"
+            "    return 'new-later'\n"
         )
-        credential_store = Mock()
-        credential_store.get_secret.return_value = "personal-value"
+        old_source = (
+            "EARLIER = earlier() + '-personal'\n"
+            "LATER = later() + '-personal'\n"
+        )
 
         merged = updater.merge_config_settings(new_source, old_source)
         namespace = {}
-        with patch.dict("sys.modules", {"credential_store": credential_store}):
-            exec(merged, namespace)
+        exec(merged, namespace)
 
-        self.assertEqual(namespace["OPENAI_API_KEY"], "personal-value")
-        credential_store.get_secret.assert_called_once_with("personal-key")
+        self.assertEqual(namespace["EARLIER"], "new-earlier-personal")
+        self.assertEqual(namespace["LATER"], "new-later")
 
     def test_merge_config_falls_back_when_spliced_source_is_invalid(self):
         new_source = 'é = "new-default"\n'

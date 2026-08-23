@@ -118,7 +118,13 @@ def speak(text: str, bridge=None):
         return None
 
     with _speak_lock:
-        print(f"{config.ASSISTANT_NAME}: {text}")
+        print(
+            startup_logging.format_content_log(
+                "assistant response received",
+                text,
+                full_text=f"{config.ASSISTANT_NAME}: {text}",
+            )
+        )
         if bridge is not None:
             if config.SPEAK_RESPONSES:
                 bridge.reply_pending_signal.emit()
@@ -227,7 +233,13 @@ def _stream_command_reply(command: str, bridge=None, text_queue=None):
             speaker_finished = True
             visible_reply = clean_reply or streamed_text
             if visible_reply:
-                print(f"{config.ASSISTANT_NAME}: {visible_reply}")
+                print(
+                    startup_logging.format_content_log(
+                        "assistant response received",
+                        visible_reply,
+                        full_text=f"{config.ASSISTANT_NAME}: {visible_reply}",
+                    )
+                )
                 if bridge is not None:
                     bridge.speak_signal.emit(visible_reply)
             return reply, interrupt_result["audio"]
@@ -559,11 +571,23 @@ def run_assistant_loop(bridge=None):
                 text = typed_text.strip()
                 if not text:
                     continue
-                print(f"(Typed: {text!r})")
+                print(
+                    startup_logging.format_content_log(
+                        "typed input received",
+                        text,
+                        full_text=f"(Typed: {text!r})",
+                    )
+                )
             else:
                 text = transcribe.transcribe(audio)
                 if getattr(config, "DEBUG_PRINT_TRANSCRIPTS", True):
-                    print(f"(Whisper heard: {text!r})")
+                    print(
+                        startup_logging.format_content_log(
+                            "speech transcript received",
+                            text,
+                            full_text=f"(Whisper heard: {text!r})",
+                        )
+                    )
                 # Feed word count back so the recorder can adapt the
                 # pause-before-done threshold - see ADAPTIVE_SILENCE_* in config.py.
                 recorder.update_speaking_rate(len(text.split()))
@@ -594,13 +618,27 @@ def run_assistant_loop(bridge=None):
 
                 if not command.strip():
                     # Name said/typed with nothing following - ask what they want.
-                    print(f"{'You typed' if typed_text is not None else 'You said'}: {text}")
+                    source = "typed" if typed_text is not None else "spoken"
+                    print(
+                        startup_logging.format_content_log(
+                            f"{source} command received",
+                            text,
+                            full_text=f"{'You typed' if typed_text is not None else 'You said'}: {text}",
+                        )
+                    )
                     reply = _pause_prompt()
                     speak(reply, bridge)
                     _arm_or_clear_grace_period(reply)
                     continue
 
-            print(f"{'You typed' if typed_text is not None else 'You said'}: {text}")
+            source = "typed" if typed_text is not None else "spoken"
+            print(
+                startup_logging.format_content_log(
+                    f"{source} command received",
+                    text,
+                    full_text=f"{'You typed' if typed_text is not None else 'You said'}: {text}",
+                )
+            )
             if config.LLM_PROVIDER == "gemini":
                 # Visibility into free-quota usage, and for spotting false
                 # name-triggers (background noise/TV misheard as "Alyssa").

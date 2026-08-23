@@ -17,17 +17,20 @@ ONE-TIME SETUP
      client in Google Cloud Console and save it as credentials.json next to
      this plugin (or next to main.py/config.py) so Alyssa can use it.
 
-  3. After you sign in, a token.json is saved locally so you're not asked
-     again until the token expires or is revoked.
+  3. After you sign in, the OAuth token is saved in the OS credential store
+     so you're not asked again until the token expires or is revoked.
 
 Everything below simply no-ops with a clear spoken message if the plugin is
 not yet authenticated, so this plugin is safe to leave installed even before
 setup is complete.
 """
 import datetime
+import json
 import os
 import sys
 import webbrowser
+
+import credential_store
 
 UNTRUSTED_OUTPUTS = {
     "get_next_meeting", "get_todays_schedule", "check_important_emails",
@@ -63,6 +66,7 @@ else:
 
 _CREDENTIALS_PATH = os.path.join(_BASE_DIR, "credentials.json")
 _TOKEN_PATH = os.path.join(_BASE_DIR, "token.json")
+_TOKEN_SECRET_NAME = "GOOGLE_CALENDAR_GMAIL_OAUTH_TOKEN"
 
 # How many minutes before a meeting the proactive "you have a meeting in
 # X minutes" alert fires.
@@ -79,6 +83,57 @@ _NO_CREDENTIALS_MSG = (
 )
 
 _service_cache = {}
+
+
+def _remove_legacy_token_file() -> None:
+    try:
+        os.remove(_TOKEN_PATH)
+    except FileNotFoundError:
+        pass
+    except OSError:
+        pass  # secure copy exists; retry plaintext cleanup next startup
+
+
+def _migrate_legacy_token() -> bool:
+    """Move a legacy token.json into the OS credential store once."""
+    if not os.path.exists(_TOKEN_PATH):
+        return False
+    try:
+        with open(_TOKEN_PATH, "r", encoding="utf-8") as token_file:
+            token_info = json.load(token_file)
+    except (OSError, ValueError, TypeError):
+        return False
+    if not isinstance(token_info, dict):
+        return False
+    if not credential_store.set_json_secret(_TOKEN_SECRET_NAME, token_info):
+        return False
+    _remove_legacy_token_file()
+    return True
+
+
+def _load_token_info():
+    token_info = credential_store.get_json_secret(_TOKEN_SECRET_NAME)
+    if isinstance(token_info, dict):
+        # A prior migration may have stored the secure copy but failed to
+        # remove the legacy file. Keep retrying cleanup without reimporting it.
+        _remove_legacy_token_file()
+        return token_info
+    if _migrate_legacy_token():
+        token_info = credential_store.get_json_secret(_TOKEN_SECRET_NAME)
+        if isinstance(token_info, dict):
+            return token_info
+    return None
+
+
+def _store_credentials(creds) -> bool:
+    try:
+        token_info = json.loads(creds.to_json())
+    except (AttributeError, TypeError, ValueError):
+        return False
+    return (
+        isinstance(token_info, dict)
+        and credential_store.set_json_secret(_TOKEN_SECRET_NAME, token_info)
+    )
 
 
 def _find_credentials_path():
@@ -106,13 +161,18 @@ def _get_credentials():
     credentials_path = _find_credentials_path()
 
     creds = None
-    if os.path.exists(_TOKEN_PATH):
-        creds = Credentials.from_authorized_user_file(_TOKEN_PATH, _SCOPES)
+    token_info = _load_token_info()
+    if token_info:
+        try:
+            creds = Credentials.from_authorized_user_info(token_info, _SCOPES)
+        except (TypeError, ValueError):
+            creds = None
 
     if not creds or not creds.valid:
         if creds and creds.expired and creds.refresh_token:
             try:
                 creds.refresh(Request())
+                _store_credentials(creds)
             except Exception:
                 creds = None
 
@@ -125,8 +185,7 @@ def _get_credentials():
             except Exception:
                 return None
 
-            with open(_TOKEN_PATH, "w", encoding="utf-8") as f:
-                f.write(creds.to_json())
+            _store_credentials(creds)
 
     return creds
 
@@ -162,7 +221,7 @@ def _prompt_authentication() -> str:
 def _availability_check():
     if not _GOOGLE_LIBS_AVAILABLE:
         return _LIBS_MISSING_MSG
-    if not os.path.exists(_TOKEN_PATH) and _find_credentials_path() is None:
+    if _load_token_info() is None and _find_credentials_path() is None:
         return _NO_CREDENTIALS_MSG
     return None
 

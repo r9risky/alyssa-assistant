@@ -29,7 +29,7 @@ class SettingsGuiTests(unittest.TestCase):
         self.assistant_apply_patch = patch.object(
             overlay.ConfigDialog, "_apply_assistant_live"
         )
-        self.assistant_apply_patch.start()
+        self.assistant_apply_mock = self.assistant_apply_patch.start()
         settings = dict(overlay.DEFAULT_OVERLAY_SETTINGS)
         settings.update({"pos_x": 120, "pos_y": 140, "scale": 1.25})
         self.companion = overlay.CompanionWindow(settings, overlay.Bridge())
@@ -41,6 +41,40 @@ class SettingsGuiTests(unittest.TestCase):
         self.app.processEvents()
         self.assistant_apply_patch.stop()
         self.save_patch.stop()
+
+    def test_credential_text_changes_wait_for_explicit_commit(self):
+        self.dialog._assistant_apply_timer.stop()
+        self.assistant_apply_mock.reset_mock()
+
+        edit = self.dialog.openai_key_edit
+        edit.setText("sk-part-one")
+        edit.setText("sk-part-one-two")
+        edit.setText("sk-complete-value")
+        self.app.processEvents()
+
+        self.assertFalse(self.dialog._assistant_apply_timer.isActive())
+        self.assistant_apply_mock.assert_not_called()
+        self.assertIn(
+            "Unsaved", self.dialog.openai_key_status_label.text()
+        )
+
+        edit.editingFinished.emit()
+        self.assistant_apply_mock.assert_called_once_with()
+
+        self.assistant_apply_mock.reset_mock()
+        self.dialog.anthropic_key_edit.setText("anthropic-complete-value")
+        self.dialog.apply_btn.click()
+        self.assistant_apply_mock.assert_called_once_with()
+
+        self.assistant_apply_mock.reset_mock()
+        youtube = self.dialog.youtube_key_edit
+        youtube.setText("youtube-complete-value")
+        youtube._verified_value = youtube.text().strip()
+        self.dialog._on_key_verification_result(
+            "youtube", True, "", []
+        )
+        self.assistant_apply_mock.assert_called_once_with()
+
 
     def test_non_scale_companion_controls_preserve_geometry(self):
         self.companion.resize(333, 472)
