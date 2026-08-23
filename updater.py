@@ -18,7 +18,7 @@ from urllib.parse import urlsplit
 import requests
 
 LATEST_RELEASE_URL = "https://api.github.com/repos/r9risky/alyssa-assistant/releases/latest"
-CURRENT_VERSION = "v1.1.10"
+CURRENT_VERSION = "v1.1.11"
 MAX_DOWNLOAD_BYTES = 250 * 1024 * 1024
 MAX_EXTRACTED_BYTES = 500 * 1024 * 1024
 MAX_ARCHIVE_FILES = 10_000
