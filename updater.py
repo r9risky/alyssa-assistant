@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ast
+import builtins
 import hashlib
 import json
 import os
@@ -323,6 +324,32 @@ def merge_config_settings(new_source: str, old_source: str) -> str:
     """Keep installed config values while retaining the new file structure."""
     old_values = _assignment_values(old_source)
     tree = ast.parse(new_source)
+    resolvable_names = set(dir(builtins))
+
+    def add_assignment_names(target: ast.expr) -> None:
+        resolvable_names.update(
+            child.id
+            for child in ast.walk(target)
+            if isinstance(child, ast.Name) and isinstance(child.ctx, ast.Store)
+        )
+
+    for node in tree.body:
+        if isinstance(node, ast.Import):
+            resolvable_names.update(
+                alias.asname or alias.name.split(".", 1)[0] for alias in node.names
+            )
+        elif isinstance(node, ast.ImportFrom):
+            resolvable_names.update(
+                alias.asname or alias.name for alias in node.names if alias.name != "*"
+            )
+        elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            resolvable_names.add(node.name)
+        elif isinstance(node, ast.Assign):
+            for target in node.targets:
+                add_assignment_names(target)
+        elif isinstance(node, (ast.AnnAssign, ast.AugAssign)):
+            add_assignment_names(node.target)
+
     lines = new_source.splitlines(keepends=True)
     offsets = [0]
     for line in lines:
@@ -338,13 +365,35 @@ def merge_config_settings(new_source: str, old_source: str) -> str:
             continue
         if not isinstance(target, ast.Name) or target.id not in old_values or node.value is None:
             continue
+        old_value = old_values[target.id]
+        old_value_tree = ast.parse(old_value, mode="eval")
+        referenced_names = {
+            child.id
+            for child in ast.walk(old_value_tree)
+            if isinstance(child, ast.Name) and isinstance(child.ctx, ast.Load)
+        }
+        missing_names = sorted(referenced_names - resolvable_names)
+        if missing_names:
+            names = ", ".join(repr(name) for name in missing_names)
+            verb = "is" if len(missing_names) == 1 else "are"
+            print(
+                f"config: kept new default for {target.id} - old value referenced "
+                f"{names}, which {verb} no longer imported or defined"
+            )
+            continue
         start = offsets[node.value.lineno - 1] + node.value.col_offset
         end = offsets[node.value.end_lineno - 1] + node.value.end_col_offset
-        replacements.append((start, end, old_values[target.id]))
+        replacements.append((start, end, old_value))
 
+    merged = new_source
     for start, end, value in reversed(replacements):
-        new_source = new_source[:start] + value + new_source[end:]
-    return new_source
+        merged = merged[:start] + value + merged[end:]
+    try:
+        compile(merged, "config.py", "exec")
+    except SyntaxError:
+        print("config: merged settings were invalid; kept new config unchanged")
+        return new_source
+    return merged
 
 
 def _safe_extract(archive_path: Path, destination: Path) -> Path:

@@ -9,6 +9,72 @@ import updater
 
 
 class UpdaterTests(unittest.TestCase):
+    def test_merge_config_keeps_new_default_when_old_value_uses_removed_name(self):
+        old_source = (
+            "import os\n"
+            "OPENAI_API_KEY = os.environ.get('OPENAI_API_KEY', '')\n"
+        )
+        new_source = (
+            "import credential_store\n"
+            "OPENAI_API_KEY = credential_store.get_secret('OPENAI_API_KEY')\n"
+        )
+        credential_store = Mock()
+        credential_store.get_secret.return_value = "new-default"
+
+        with patch("builtins.print") as output:
+            merged = updater.merge_config_settings(new_source, old_source)
+
+        namespace = {}
+        with patch.dict("sys.modules", {"credential_store": credential_store}):
+            exec(merged, namespace)
+
+        self.assertEqual(namespace["OPENAI_API_KEY"], "new-default")
+        output.assert_called_once_with(
+            "config: kept new default for OPENAI_API_KEY - old value referenced "
+            "'os', which is no longer imported or defined"
+        )
+
+    def test_merge_config_preserves_plain_literal_value(self):
+        merged = updater.merge_config_settings(
+            "SETTING = 'new-default'\n", 'SETTING = "personal"\n'
+        )
+        namespace = {}
+        exec(merged, namespace)
+        self.assertEqual(namespace["SETTING"], "personal")
+
+    def test_merge_config_preserves_expression_when_import_still_exists(self):
+        old_source = (
+            "import credential_store as _cred\n"
+            "OPENAI_API_KEY = _cred.get_secret('personal-key')\n"
+        )
+        new_source = (
+            "import credential_store as _cred\n"
+            "OPENAI_API_KEY = _cred.get_secret('new-default')\n"
+        )
+        credential_store = Mock()
+        credential_store.get_secret.return_value = "personal-value"
+
+        merged = updater.merge_config_settings(new_source, old_source)
+        namespace = {}
+        with patch.dict("sys.modules", {"credential_store": credential_store}):
+            exec(merged, namespace)
+
+        self.assertEqual(namespace["OPENAI_API_KEY"], "personal-value")
+        credential_store.get_secret.assert_called_once_with("personal-key")
+
+    def test_merge_config_falls_back_when_spliced_source_is_invalid(self):
+        new_source = 'é = "new-default"\n'
+        old_source = 'é = "personal"\n'
+
+        with patch("builtins.print") as output:
+            merged = updater.merge_config_settings(new_source, old_source)
+
+        self.assertEqual(merged, new_source)
+        compile(merged, "config.py", "exec")
+        output.assert_called_once_with(
+            "config: merged settings were invalid; kept new config unchanged"
+        )
+
     def test_apply_release_preserves_personal_data_and_adds_new_files(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
