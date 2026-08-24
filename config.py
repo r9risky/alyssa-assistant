@@ -127,7 +127,7 @@ LOCATION_CACHE_MINUTES = 60
 REMINDER_UPCOMING_WINDOW_HOURS = 24
 
 ENABLE_COMPANION_GUI = True
-HIDE_CONSOLE_WINDOW = True  # Keep startup diagnostics visible by default
+HIDE_CONSOLE_WINDOW = False  # Keep startup diagnostics visible by default
 
 # --- Caveman Mode (runtime-toggled via plugins/caveman_mode.py) ---
 # None = off. Otherwise "lite" / "full" / "ultra" - shrinks Alyssa's own

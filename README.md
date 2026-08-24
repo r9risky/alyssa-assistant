@@ -280,42 +280,6 @@ TOOLS = [
 Add a `check_watch() -> str | None` function (plus an optional
 `WATCH_INTERVAL_SECONDS`) if you want it to proactively speak up on its own.
 
-### Giving a plugin its own Settings tab
-
-A plugin isn't limited to `FUNCTIONS`/`TOOLS` — it can add a whole tab to the
-Settings window too, the same way the built-in Assistant/Engine/Audio/etc.
-tabs work. Define `GUI_PANEL_TITLE` (the tab's label) and `build_gui_panel`
-(returns any PySide6 `QWidget`):
-
-```python
-from PySide6.QtWidgets import QWidget, QVBoxLayout, QLabel, QPushButton
-
-GUI_PANEL_TITLE = "Dice"
-
-
-def build_gui_panel(parent):
-    # `parent` is the Settings dialog itself - parent._t() gets its
-    # current theme dict if you want to match colors, for example.
-    w = QWidget()
-    layout = QVBoxLayout(w)
-    result = QLabel("Roll to see a result.")
-    layout.addWidget(result)
-    roll_btn = QPushButton("Roll a d6")
-    roll_btn.clicked.connect(lambda: result.setText(f"You rolled: {roll_die()}"))
-    layout.addWidget(roll_btn)
-    layout.addStretch(1)
-    return w
-```
-
-It shows up after the built-in tabs, and disappears/updates the moment the
-plugin is saved, enabled/disabled, or deleted from Settings > Plugins — no
-restart needed. If `build_gui_panel` raises, that plugin gets a small inline
-error tab instead of taking the rest of Settings down with it. By default the
-tab is wrapped in a scroll area like the other tabs; set
-`GUI_PANEL_SCROLLABLE = False` at module level if your panel manages its own
-scrolling. The "+ New Plugin" template in Settings > Plugins includes a
-commented-out example of this.
-
 ## What's stored locally
 
 | File | What's in it |
