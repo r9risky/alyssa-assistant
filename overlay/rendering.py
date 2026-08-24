@@ -109,7 +109,7 @@ def _resolve_character_path(settings: dict, mouth_open: bool) -> str:
 
     mouth_open: talk_path → BUNDLED_TALK_IMAGE → idle_path → BUNDLED_IDLE_IMAGE.
     idle: idle_path → BUNDLED_IDLE_IMAGE.
-    First existing path wins; else \"\".
+    First existing path wins; else empty string.
     """
     idle_path = settings.get("character_image") or ""
     talk_path = settings.get("character_image_talking") or ""
