@@ -661,7 +661,21 @@ def merge_config_settings(new_source: str, old_source: str) -> str:
             add_resolvable_names(node)
             continue
         old_value = old_values[target.id]
-        old_value_tree = ast.parse(old_value, mode="eval")
+        try:
+            # Wrap in parentheses: get_source_segment() returns the value's
+            # source text without any enclosing parens from the original
+            # assignment, so a multi-line value (e.g. implicit string
+            # concatenation across lines) can look like invalid indentation
+            # when re-parsed on its own. Parentheses restore that context
+            # without changing what the expression evaluates to.
+            old_value_tree = ast.parse(f"({old_value})", mode="eval")
+        except SyntaxError:
+            print(
+                f"config: kept new default for {target.id} - old value could "
+                "not be re-parsed on its own"
+            )
+            add_resolvable_names(node)
+            continue
         referenced_names = {
             child.id
             for child in ast.walk(old_value_tree)
