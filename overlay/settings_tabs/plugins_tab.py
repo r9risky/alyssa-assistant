@@ -32,7 +32,9 @@ class PluginsTabMixin:
         outer.setSpacing(10)
 
         intro = self._help_label(
-            "Edit plugins or create one from the template."
+            "Edit plugins or create one from the template. A plugin can also "
+            "add its own Settings tab (GUI_PANEL_TITLE + build_gui_panel) - "
+            "see the template for an example."
         )
         intro.setWordWrap(True)
         intro.setStyleSheet(f"color: {self._t()['subtext']}; font-size: 11px;")
@@ -269,12 +271,16 @@ class PluginsTabMixin:
     def _reload_plugins_backend(self):
         """Re-scans plugins/ and pushes the result into the already-running
         session - actions.FUNCTIONS/PLUGIN_TOOLS and brain.TOOLS - so a
-        save in this tab is usable immediately without restarting Alyssa."""
+        save in this tab is usable immediately without restarting Alyssa.
+        Also re-syncs any plugin-contributed Settings tabs (see
+        ConfigDialog._rebuild_plugin_gui_tabs) so a plugin's own GUI panel
+        appears, updates, or disappears in this same open dialog."""
         try:
             actions.reload_plugins()
             brain.reload_plugin_tools()
         except Exception as e:
             self.plugin_status_label.setText(f"⚠ Saved, but reload hit an error: {e}")
+        self._rebuild_plugin_gui_tabs()
 
     def _on_reload_plugins(self):
         if self._current_plugin_file and self._plugin_dirty:
@@ -334,6 +340,27 @@ TOOLS = [
         }},
     }},
 ]
+
+
+# Optional: give this plugin its own tab in Settings, right alongside
+# Assistant/Engine/Audio/etc. Uncomment both lines below and fill in
+# build_gui_panel to add one - it can be any PySide6 QWidget (buttons,
+# lists, a form, a whole mini-app). `parent` is the Settings dialog
+# itself, in case you need its theme via parent._t() or want to read a
+# config value it exposes.
+#
+# GUI_PANEL_TITLE = "{safe.title()}"
+#
+# def build_gui_panel(parent):
+#     from PySide6.QtWidgets import QWidget, QVBoxLayout, QLabel, QPushButton
+#     w = QWidget()
+#     layout = QVBoxLayout(w)
+#     layout.addWidget(QLabel("Hello from the {safe} plugin's own tab!"))
+#     btn = QPushButton("Click me")
+#     btn.clicked.connect(lambda: QLabel("Clicked!"))
+#     layout.addWidget(btn)
+#     layout.addStretch(1)
+#     return w
 '''
         try:
             os.makedirs(plugin_loader.PLUGINS_DIR, exist_ok=True)
