@@ -1,0 +1,57 @@
+@echo off
+REM Makes Alyssa start automatically as the current, non-elevated user every
+REM time you log in to Windows via a Task Scheduler task.
+REM Prerequisite: run scripts\start_alyssa.bat at least once first, so the
+REM virtual environment and dependencies already exist.
+
+setlocal enabledelayedexpansion
+for %%I in ("%~dp0..") do set "PROJECT_DIR=%%~fI\"
+cd /d "%PROJECT_DIR%"
+set "TASK_NAME=AlyssaAssistant"
+
+REM --- Decide what the task should actually launch ---
+REM Use console Python so startup behaves exactly like a manual launch and
+REM errors remain visible. File logging in main.py remains available too.
+if exist "%PROJECT_DIR%.venv\Scripts\python.exe" (
+    set "ACTION_EXE=%PROJECT_DIR%.venv\Scripts\python.exe"
+    set "ACTION_ARGS=main.py"
+) else (
+    echo ERROR: Alyssa hasn't been set up yet.
+    echo Run scripts\start_alyssa.bat once first to install dependencies,
+    echo then run this script again.
+    echo.
+    pause
+    exit /b 1
+)
+
+echo Registering "%TASK_NAME%" to start Alyssa at login with normal user rights...
+
+REM One PowerShell block does the whole registration - New-ScheduledTask*
+REM lets us set the working directory directly (schtasks.exe's /Create
+REM has no equivalent flag), which matters here since Alyssa looks for
+REM config.py/plugins/assets relative to its working directory.
+powershell -NoProfile -ExecutionPolicy Bypass -Command ^
+    "$ErrorActionPreference = 'Stop';" ^
+    "$action = New-ScheduledTaskAction -Execute '%ACTION_EXE%' -Argument '%ACTION_ARGS%' -WorkingDirectory '%PROJECT_DIR%';" ^
+    "$trigger = New-ScheduledTaskTrigger -AtLogOn -User \"$env:USERDOMAIN\$env:USERNAME\";" ^
+    "$trigger.Delay = 'PT15S';" ^
+    "$principal = New-ScheduledTaskPrincipal -UserId \"$env:USERDOMAIN\$env:USERNAME\" -LogonType Interactive -RunLevel Limited;" ^
+    "$settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable;" ^
+    "Register-ScheduledTask -TaskName '%TASK_NAME%' -Action $action -Trigger $trigger -Principal $principal -Settings $settings -Force | Out-Null"
+
+if errorlevel 1 (
+    echo.
+    echo ERROR: Failed to register the scheduled task - see the message above.
+    pause
+    exit /b 1
+)
+
+echo.
+echo Done. Alyssa will now start automatically with normal user rights the
+echo next time you log in to Windows.
+echo.
+echo To test it right now without logging out: open Task Scheduler,
+echo find "%TASK_NAME%", right-click it, and choose Run.
+echo To undo this later, run scripts\uninstall_startup.bat.
+echo.
+pause

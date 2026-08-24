@@ -27,6 +27,17 @@ _load_errors = []
 # watcher loop starts, this is ready without a second plugin scan.
 _watchers = []
 
+# GUI panels (title + a build(parent) -> QWidget callable) collected by the
+# most recent load_plugins() call - see get_gui_panels() and the module
+# docstring above. A plugin opts into a Settings tab of its own by
+# defining GUI_PANEL_TITLE and build_gui_panel() at module level, same
+# spirit as FUNCTIONS/TOOLS for actions and check_watch() for proactive
+# checks. Nothing in this file imports Qt - the widget only gets built
+# when overlay/settings_dialog.py actually calls "build", so a headless
+# run (tests, --no-gui) never pays for PySide6 just because a plugin
+# defines a panel.
+_gui_panels = []
+
 
 def get_load_errors():
     return _load_errors
@@ -36,14 +47,19 @@ def get_watchers():
     return _watchers
 
 
+def get_gui_panels():
+    return _gui_panels
+
+
 def load_plugins():
     """Returns (functions, tools) merged from every .py file in plugins/.
     functions is a dict of {name: callable}; tools is a list of tool-schema
     dicts. Files starting with '_' (including __init__.py) are skipped -
     rename a plugin to start with '_' to disable it without deleting it."""
-    global _load_errors, _watchers
+    global _load_errors, _watchers, _gui_panels
     _load_errors = []
     _watchers = []
+    _gui_panels = []
     functions = {}
     tools = []
 
@@ -120,5 +136,30 @@ def load_plugins():
                 interval = 120
             _watchers.append({"name": filename, "func": watch_func, "interval": interval})
             print(f"[plugins] '{filename}' registered a background watcher (every {interval}s)")
+
+        panel_title = getattr(module, "GUI_PANEL_TITLE", None)
+        panel_builder = getattr(module, "build_gui_panel", None)
+        if panel_title or panel_builder is not None:
+            if not panel_title or not callable(panel_builder):
+                print(
+                    f"[plugins] '{filename}' has GUI_PANEL_TITLE/build_gui_panel but "
+                    "not both - skipping its Settings tab."
+                )
+                _load_errors.append(
+                    f"'{filename}': needs both GUI_PANEL_TITLE (str) and a callable "
+                    "build_gui_panel(parent) to register a Settings tab"
+                )
+            else:
+                _gui_panels.append({
+                    "name": filename,
+                    "title": str(panel_title),
+                    "build": panel_builder,
+                    # A plugin panel that manages its own scrolling (e.g. an
+                    # embedded list + editor like the built-in Plugins tab)
+                    # can set GUI_PANEL_SCROLLABLE = False to opt out of the
+                    # QScrollArea wrapper settings_dialog.py adds by default.
+                    "scrollable": bool(getattr(module, "GUI_PANEL_SCROLLABLE", True)),
+                })
+                print(f"[plugins] '{filename}' registered a Settings tab: {panel_title}")
 
     return functions, tools
