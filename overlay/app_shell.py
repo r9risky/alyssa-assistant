@@ -1,4 +1,5 @@
 import math
+import os
 import sys
 import threading
 
@@ -96,6 +97,60 @@ def _build_tray_icon(window: CompanionWindow, app: QApplication) -> QSystemTrayI
 _console_window_handle = None
 
 
+def _find_windows_terminal_hwnd():
+    """Best-effort lookup of the actual on-screen Windows Terminal window
+    hosting this process, or None if we're not running under Windows
+    Terminal (or can't determine it).
+
+    Under Windows Terminal, this process's console is served over ConPTY:
+    GetConsoleWindow() returns a real but *invisible* conhost.exe window,
+    not the WindowsTerminal.exe window the user actually sees - so
+    showing/hiding that handle has no visible effect. There's no direct
+    Win32 API from a console process to its ConPTY frontend, so instead
+    we walk up the process tree (python.exe -> cmd.exe from
+    start_alyssa.bat -> OpenConsole.exe -> WindowsTerminal.exe) with
+    psutil (already a dependency) looking for a WindowsTerminal.exe
+    ancestor, then find that process's top-level window by its known
+    class name."""
+    try:
+        import psutil
+
+        proc = psutil.Process(os.getpid())
+        wt_pid = None
+        for _ in range(10):  # bounded walk - never loop indefinitely
+            parent = proc.parent()
+            if parent is None:
+                break
+            if (parent.name() or "").lower() == "windowsterminal.exe":
+                wt_pid = parent.pid
+                break
+            proc = parent
+        if wt_pid is None:
+            return None
+
+        import ctypes
+        from ctypes import wintypes
+
+        user32 = ctypes.windll.user32
+        found = []
+
+        @ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
+        def _enum_proc(hwnd, _lparam):
+            pid = wintypes.DWORD()
+            user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+            if pid.value == wt_pid:
+                class_name = ctypes.create_unicode_buffer(64)
+                user32.GetClassNameW(hwnd, class_name, len(class_name))
+                if class_name.value == "CASCADIA_HOSTING_WINDOW_CLASS":
+                    found.append(hwnd)
+            return True  # keep enumerating
+
+        user32.EnumWindows(_enum_proc, 0)
+        return found[0] if found else None
+    except Exception:
+        return None  # best-effort - fall back to the conhost heuristic
+
+
 def _set_console_visible(visible: bool):
     """On Windows, shows or hides the console window this process is
     attached to - the cmd.exe window opened by scripts\\start_alyssa.bat (or
@@ -136,6 +191,14 @@ def _set_console_visible(visible: bool):
             if user32.IsWindowVisible(console_hwnd):
                 _console_window_handle = console_hwnd
             else:
+                # console_hwnd is invisible - most likely we're under
+                # Windows Terminal's ConPTY. Find its real window by
+                # process ancestry rather than guessing from whatever
+                # happens to be focused right now.
+                _console_window_handle = _find_windows_terminal_hwnd()
+            if _console_window_handle is None:
+                # Fall back to the old foreground-window heuristic for
+                # any terminal we don't have a direct lookup for.
                 foreground = user32.GetForegroundWindow()
                 class_name = ctypes.create_unicode_buffer(64)
                 user32.GetClassNameW(foreground, class_name, len(class_name))
