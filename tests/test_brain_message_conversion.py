@@ -1,10 +1,6 @@
-"""Unit tests for brain.py's pure message-format converters and
-text-cleanup helpers - no network or OS calls involved. See
-plans/004-establish-test-baseline-pure-logic-modules.md.
+"""Pure message-format / text-cleanup tests (no network or OS).
 
-Precondition: requirements.txt must be installed (`pip install -r
-requirements.txt`) for `import brain` to succeed, since brain.py imports
-actions.py, which requires pyautogui/pyperclip/requests/send2trash.
+`import brain` needs requirements.txt (brain → actions → pyautogui etc.).
 """
 import os
 import sys
