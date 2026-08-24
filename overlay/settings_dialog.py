@@ -93,6 +93,21 @@ class _SidebarTabs(QWidget):
         if self.navigation.currentRow() < 0:
             self.navigation.setCurrentRow(0)
 
+    def removeTab(self, index: int):
+        """Undoes one addTab() - used to drop plugin-contributed tabs
+        before rebuilding them on a plugin reload (see
+        ConfigDialog._rebuild_plugin_gui_tabs)."""
+        item = self.navigation.takeItem(index)
+        if item is not None:
+            del item
+        page = self.pages.widget(index)
+        if page is not None:
+            self.pages.removeWidget(page)
+            page.deleteLater()
+
+    def count(self) -> int:
+        return self.pages.count()
+
     def setCurrentIndex(self, index: int):
         self.navigation.setCurrentRow(index)
 
@@ -337,6 +352,11 @@ class ConfigDialog(QDialog, AssistantTabMixin, EngineTabMixin, AudioTabMixin,
         # shrink to content size inside a QScrollArea.
         self.tabs.addTab(self._build_plugins_tab(), "Plugins")
         self.tabs.addTab(self._wrap_in_scroll_area(self._build_updates_tab()), "Updates")
+        # Any plugin can contribute its own Settings tab (GUI_PANEL_TITLE +
+        # build_gui_panel()) alongside its FUNCTIONS/TOOLS - added last so
+        # built-in tabs always come first. See _add_plugin_gui_tabs.
+        self._plugin_gui_tab_count = 0
+        self._add_plugin_gui_tabs()
         self._configure_credential_commit_behavior()
 
 
@@ -494,6 +514,70 @@ class ConfigDialog(QDialog, AssistantTabMixin, EngineTabMixin, AudioTabMixin,
         content.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
         scroll.setWidget(content)
         return scroll
+
+    def _add_plugin_gui_tabs(self):
+        """Adds one Settings tab per plugin that registers a GUI panel
+        (plugin_loader.get_gui_panels()) - the GUI counterpart to a
+        plugin's FUNCTIONS/TOOLS: a plugin can ship buttons, lists,
+        forms, whatever it needs, as a normal QWidget, and it shows up
+        here like any built-in tab. Always appended after the built-in
+        tabs (see __init__) so the app's own tabs stay in a stable
+        position regardless of what plugins are installed. Each panel is
+        built inside try/except - a plugin that raises while building
+        its widget gets a small inline error tab instead of taking the
+        whole Settings dialog down."""
+        added = 0
+        for panel in plugin_loader.get_gui_panels():
+            try:
+                widget = panel["build"](self)
+                if not isinstance(widget, QWidget):
+                    raise TypeError(
+                        f"build_gui_panel() must return a QWidget, got "
+                        f"{type(widget).__name__!r}"
+                    )
+            except Exception as e:
+                widget = self._build_plugin_panel_error_tab(panel["name"], e)
+            else:
+                if panel.get("scrollable", True):
+                    widget = self._wrap_in_scroll_area(widget)
+            self.tabs.addTab(widget, panel["title"])
+            added += 1
+        self._plugin_gui_tab_count = added
+
+    def _build_plugin_panel_error_tab(self, plugin_filename: str, error: Exception) -> QWidget:
+        """Stand-in tab shown in place of a plugin's Settings panel when
+        build_gui_panel() raised, so the error is visible in-app (with
+        the failing filename) instead of only in the console."""
+        w = QWidget()
+        w.setObjectName("tabPage")
+        layout = QVBoxLayout(w)
+        layout.setContentsMargins(16, 16, 16, 16)
+        layout.setSpacing(8)
+        label = self._help_label(
+            f"⚠ '{plugin_filename}' couldn't build its Settings tab:\n{error}"
+        )
+        label.setVisible(True)
+        label.setWordWrap(True)
+        label.setStyleSheet(f"color: {self._t()['warning']}; font-size: 11px;")
+        layout.addWidget(label)
+        layout.addStretch(1)
+        return w
+
+    def _rebuild_plugin_gui_tabs(self):
+        """Re-syncs the plugin-contributed Settings tabs after a plugin
+        reload (Settings > Plugins > Save / Reload / enable-toggle / New /
+        Delete all call actions.reload_plugins(), which repopulates
+        plugin_loader.get_gui_panels()) - so a plugin's tab appears,
+        updates, or disappears immediately without closing and reopening
+        this dialog. Removes exactly the tabs _add_plugin_gui_tabs added
+        last time, then adds them again from scratch."""
+        current_row = self.tabs.navigation.currentRow()
+        built_in_count = self.tabs.count() - self._plugin_gui_tab_count
+        for _ in range(self._plugin_gui_tab_count):
+            self.tabs.removeTab(built_in_count)
+        self._add_plugin_gui_tabs()
+        if 0 <= current_row < self.tabs.count():
+            self.tabs.setCurrentIndex(current_row)
 
     def _add_row(self, form, label, field):
         """Adds a row to `form` and returns (label_widget, field_widget) so

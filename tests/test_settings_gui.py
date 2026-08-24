@@ -9,7 +9,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QApplication, QFormLayout
+from PySide6.QtWidgets import QApplication, QFormLayout, QLabel
 
 import overlay
 from overlay import settings_dialog, widgets
@@ -313,6 +313,86 @@ class SettingsGuiTests(unittest.TestCase):
             self.dialog.update_status_label.text(),
             "Update cancelled. No files were changed.",
         )
+
+
+    def _reload_with_plugin_source(self, temp_dir: str, filename: str, source: str):
+        """Writes `source` to temp_dir/filename, points plugin_loader at
+        temp_dir, reloads, and rebuilds this dialog's plugin GUI tabs -
+        the same sequence Settings > Plugins > Save triggers for real."""
+        with open(os.path.join(temp_dir, filename), "w", encoding="utf-8") as f:
+            f.write(source)
+        settings_dialog.actions.reload_plugins()
+        self.dialog._rebuild_plugin_gui_tabs()
+
+    def test_plugin_can_register_its_own_settings_tab(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            with patch.object(settings_dialog.plugin_loader, "PLUGINS_DIR", temp_dir):
+                self._reload_with_plugin_source(
+                    temp_dir, "hello_gui.py",
+                    "from PySide6.QtWidgets import QWidget, QVBoxLayout, QLabel\n"
+                    "GUI_PANEL_TITLE = 'Hello GUI'\n"
+                    "def build_gui_panel(parent):\n"
+                    "    w = QWidget()\n"
+                    "    layout = QVBoxLayout(w)\n"
+                    "    label = QLabel('hi')\n"
+                    "    label.setObjectName('helloGuiLabel')\n"
+                    "    layout.addWidget(label)\n"
+                    "    return w\n",
+                )
+                try:
+                    labels = [
+                        self.dialog.tabs.navigation.item(i).text()
+                        for i in range(self.dialog.tabs.navigation.count())
+                    ]
+                    self.assertIn("Hello GUI", labels)
+                    self.assertEqual(self.dialog._plugin_gui_tab_count, 1)
+                    label_widget = self.dialog.findChild(QLabel, "helloGuiLabel")
+                    self.assertIsNotNone(label_widget)
+                    self.assertEqual(label_widget.text(), "hi")
+
+                    # Disabling the plugin (rename to _hello_gui.py, the
+                    # same convention the Plugins tab's Enable toggle
+                    # uses) and reloading should drop its tab again.
+                    os.rename(
+                        os.path.join(temp_dir, "hello_gui.py"),
+                        os.path.join(temp_dir, "_hello_gui.py"),
+                    )
+                    settings_dialog.actions.reload_plugins()
+                    self.dialog._rebuild_plugin_gui_tabs()
+                    labels = [
+                        self.dialog.tabs.navigation.item(i).text()
+                        for i in range(self.dialog.tabs.navigation.count())
+                    ]
+                    self.assertNotIn("Hello GUI", labels)
+                    self.assertEqual(self.dialog._plugin_gui_tab_count, 0)
+                finally:
+                    settings_dialog.actions.reload_plugins()
+                    self.dialog._rebuild_plugin_gui_tabs()
+
+    def test_broken_plugin_panel_shows_inline_error_instead_of_crashing(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            with patch.object(settings_dialog.plugin_loader, "PLUGINS_DIR", temp_dir):
+                self._reload_with_plugin_source(
+                    temp_dir, "broken_gui.py",
+                    "GUI_PANEL_TITLE = 'Broken Panel'\n"
+                    "def build_gui_panel(parent):\n"
+                    "    raise RuntimeError('boom')\n",
+                )
+                try:
+                    labels = [
+                        self.dialog.tabs.navigation.item(i).text()
+                        for i in range(self.dialog.tabs.navigation.count())
+                    ]
+                    self.assertIn("Broken Panel", labels)
+                    self.assertEqual(self.dialog._plugin_gui_tab_count, 1)
+                    page = self.dialog.tabs.pages.widget(
+                        self.dialog.tabs.count() - 1
+                    )
+                    error_label = page.findChild(settings_dialog._StatusLabel)
+                    self.assertIn("boom", error_label.text())
+                finally:
+                    settings_dialog.actions.reload_plugins()
+                    self.dialog._rebuild_plugin_gui_tabs()
 
 
 if __name__ == "__main__":
