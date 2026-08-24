@@ -11,13 +11,11 @@ from ..common import _HTTP_SESSION, _iter_sse_json, is_api_key_transport_secure
 from ..tool_registry import TOOLS
 
 def _messages_to_openai(messages):
-    """Converts our internal OpenAI-style message list into the exact wire
-    format the OpenAI chat-completions endpoint (and anything that mimics
-    it - Groq, OpenRouter, Together, etc.) expects. Our internal shape is
-    already very close to this (it's modeled on it), the only real
-    differences being: tool_calls need string-encoded JSON arguments (not
-    a dict), and tool results are addressed by "tool_call_id" rather than
-    the "id"/"name" pair Ollama/Gemini use."""
+    """Internal messages -> OpenAI chat-completions wire format.
+
+    - tool_calls arguments: JSON string, not dict
+    - tool results: `tool_call_id` (not Ollama/Gemini `id`/`name`)
+    """
     out = []
     for m in messages:
         role = m.get("role")
@@ -60,11 +58,7 @@ def _call_openai_compatible(
     cancel_event=None,
     tools=None,
 ):
-    """Shared implementation for any provider that speaks the OpenAI
-    chat-completions format - used directly for "openai" and
-    "custom_openai", since they're wire-compatible aside from the base URL/
-    key/model. api_key may be blank (e.g. a local LM Studio server that
-    doesn't check one)."""
+    """OpenAI chat-completions call (also `custom_openai`). `api_key` may be blank."""
     if not is_api_key_transport_secure(base_url, api_key):
         raise RuntimeError(
             f"{provider_label} requires HTTPS when an API key is configured; "

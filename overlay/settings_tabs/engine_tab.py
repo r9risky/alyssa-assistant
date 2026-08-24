@@ -82,12 +82,7 @@ class EngineTabMixin:
         restart_note.setStyleSheet(f"color: {self._t()['subtext']}; font-size: 11px;")
         form.addRow("", restart_note)
 
-        # -- Live status: what's actually running right now -----------------
-        # Picking "Force NVIDIA GPU (CUDA)" patches config.py and kicks off
-        # a background reload (see _apply_assistant_live()), but a forced
-        # GPU load that fails to find CUDA quietly falls back to CPU. This
-        # label shows transcribe.py's live status, which distinguishes
-        # "configured for CPU" from "GPU was tried and failed".
+        # Live status: forced CUDA that fails quietly falls back to CPU; this shows transcribe's actual state.
         self.engine_status_label = QLabel("Checking current status…")
         self.engine_status_label.setWordWrap(True)
         self.engine_status_label.setMinimumHeight(44)
@@ -98,10 +93,7 @@ class EngineTabMixin:
         refresh_status_btn.clicked.connect(self._refresh_engine_status)
         form.addRow("", refresh_status_btn)
         self._refresh_engine_status()
-        # A reload triggered by changing a combo above happens on a
-        # background thread and isn't instant - poll for a few seconds
-        # afterward so the label updates itself once it's done, instead of
-        # only updating when you happen to click Refresh.
+        # Reload is async; poll a few seconds so the label updates without a manual Refresh.
         self._engine_status_poll_timer = QTimer(self)
         self._engine_status_poll_timer.setInterval(1000)
         self._engine_status_poll_timer.timeout.connect(self._on_engine_status_poll_tick)

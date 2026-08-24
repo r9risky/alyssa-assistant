@@ -1,9 +1,6 @@
-"""Download and install Alyssa releases with bounded extraction and rollback.
-
-Archive SHA-256 values come from GitHub's release API asset digest or from a
-checksum asset published with that release. This verifies that the downloaded
-archive matches what GitHub reports over HTTPS; it is not a maintainer signature
-and does not protect against a compromised maintainer or GitHub account.
+"""Download/install releases: bounded extraction, rollback, SHA-256 from
+GitHub's release API (asset digest or checksum asset). HTTPS match only —
+not a maintainer signature.
 """
 
 from __future__ import annotations
@@ -1044,7 +1041,7 @@ def check_latest(install_root: str | os.PathLike[str]) -> dict[str, object]:
 def install_release(
     install_root: str | os.PathLike[str], release: dict[str, object]
 ) -> str:
-    """Download, authenticate, and journal-install a release from check_latest."""
+    """Download, verify SHA-256, and journal-install a release from check_latest."""
     install_root = Path(install_root).resolve()
     _recover_incomplete_update(install_root)
     try:

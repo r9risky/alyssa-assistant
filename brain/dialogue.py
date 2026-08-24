@@ -113,20 +113,15 @@ def _handle_pending_power_confirmation(user_text: str):
                     raw_output = func(**pending["arguments"])
         except Exception as e:
             return f"Error running {pending['name']}: {e}"
-        # Console visibility, matching the normal tool-call path in
-        # handle_command below - without this, an approved action was
-        # invisible in the console log.
+        # Same console log as handle_command's tool path.
         print(startup_logging.format_tool_log(pending["name"], pending["arguments"], raw_output))
         _record_recent_action(pending["name"], pending["arguments"], raw_output)
-        # Route through the same natural-phrasing step every other tool
-        # result goes through, instead of speaking the raw return value -
-        # what previously let a 15-line taskkill dump get read out in full.
+        # Phrase via _natural_fast_reply; do not speak the raw return value.
         return _natural_fast_reply(pending["name"], pending["arguments"], raw_output, user_text)
     return None
 
 
-# Installed once during import, so confirmation works the same whether the
-# desktop companion is enabled or Alyssa is running in console mode.
+# Import-time: confirmation works in companion and console modes.
 actions.set_power_confirmation_callback(_request_voice_confirmation)
 actions.set_critical_confirmation_callback(_request_voice_confirmation)
 
@@ -204,8 +199,7 @@ _CAVEMAN_INSTRUCTIONS = {
 
 
 def _build_system_prompt(user_text: str = "") -> str:
-    """Adds any remembered facts to the base system prompt so the model has
-    them as context on every single request, without needing to be asked."""
+    """Base prompt plus remembered facts (injected every request)."""
     base = _compact_system_prompt()
     caveman_level = getattr(ui_config, "CAVEMAN_MODE", None)
     if caveman_level in _CAVEMAN_INSTRUCTIONS:
@@ -263,12 +257,7 @@ def _recent_action_prompt() -> str:
 
 
 def _summarize_for_speech(output: str, max_chars: int = 140) -> str:
-    """Condenses possibly-long, possibly-multi-line command output into
-    something brief enough to actually say out loud - e.g. 15 lines of
-    'SUCCESS: process X terminated' becomes 'that finished (15 lines) -
-    first: SUCCESS: ...'. The full text is still what's printed to the
-    console and fed back to the model in the tool-result message; this is
-    only for what gets spoken/shown in the speech bubble."""
+    """Condense multi-line output for speech only; full text still goes to console and the model."""
     lines = [line for line in output.splitlines() if line.strip()]
     if not lines:
         return output
@@ -282,13 +271,7 @@ def _summarize_for_speech(output: str, max_chars: int = 140) -> str:
 
 
 def _natural_fast_reply(name: str, arguments: dict, output: str, user_text: str) -> str:
-    """Keeps fast replies conversational without needing another model call.
-
-    Picks randomly from a few natural phrasings per action instead of a
-    single fixed template, so replies don't all open with the same stock
-    word - hearing "Certainly." on literally every single reply is exactly
-    what the system prompt tells the model itself to avoid, but this fast
-    path bypasses the model entirely, so it needs its own variety."""
+    """Spoken fast-path reply after a tool runs; no extra model call. Random phrasing per action."""
     output = str(output).strip()
     lowered_request = user_text.casefold()
     if any(word in output.casefold() for word in ("couldn't", "error", "cancelled", "failed", "blocked")):
@@ -329,9 +312,7 @@ def _natural_fast_reply(name: str, arguments: dict, output: str, user_text: str)
     if name == "delete_file" and output.startswith("Moved "):
         return random.choice(["Moved to the Recycle Bin.", "Done - that's in the Recycle Bin.", "Sent it to the Recycle Bin."])
     if name == "remember_fact":
-        # memory.remember() returns "Got it, I'll remember that: {fact}" -
-        # fine to log, but reading the colon-and-restate out loud every
-        # time is what makes this feel like a script rather than a reply.
+        # Do not speak memory.remember()'s "I'll remember that: {fact}" verbatim.
         fact = str(arguments.get("fact", "")).strip().rstrip(".")
         if not fact:
             return output
@@ -343,10 +324,7 @@ def _natural_fast_reply(name: str, arguments: dict, output: str, user_text: str)
             ])
         return random.choice(["Got it, I'll remember that.", "Noted, that's saved.", "Done - I've saved that."])
     if name == "forget_fact":
-        # memory.forget() can match and remove more than one stored fact
-        # for a single snippet (e.g. "name" matching two facts that both
-        # mention it), which is why the raw output sometimes lists several
-        # facts comma-joined - not something worth reading out verbatim.
+        # forget() may remove multiple comma-joined facts; do not read them verbatim.
         if output.startswith("Forgot: "):
             forgotten = [f.strip() for f in output[len("Forgot: "):].split(",") if f.strip()]
             if len(forgotten) == 1 and len(forgotten[0].rstrip(".")) <= 50:
@@ -394,21 +372,11 @@ _SKIP_ANNOUNCE_TOOLS = {"get_datetime", "read_clipboard", "run_diagnostics", "re
 
 
 def _sanitize_tool_arguments(arguments: dict) -> dict:
-    """Strips the internal-only "confirmed" flag from a *first-round* tool
-    call's arguments before they reach a tool function.
+    """Drop `confirmed` from model-supplied tool args.
 
-    "confirmed" is not declared in any tool's schema in _BASE_TOOLS above -
-    it's purely an internal signal that a human already approved the action,
-    set by _handle_pending_power_confirmation() when resuming an approved
-    call (see that function's own arguments dict, which it builds itself
-    from a trusted literal, never from raw model JSON). Without this
-    stripping step, a model's tool call could include "confirmed": true in
-    its own arguments and skip delete_file()/run_command()'s confirmation
-    check entirely - including when that tool call was prompted by
-    untrusted content the model was asked to read, e.g. a page fetched by
-    summarize_webpage(). Applied unconditionally to every tool call, not
-    just the four in _CONFIRMATION_GATED_TOOLS, since no tool's schema ever
-    legitimately includes "confirmed"."""
+    - Internal-only; `_handle_pending_power_confirmation` sets it from trusted literals, never model JSON.
+    - Strip every first-round call (not just gated tools) or the model can skip confirmation.
+    """
     if "confirmed" in arguments:
         arguments = dict(arguments)
         del arguments["confirmed"]
@@ -416,12 +384,10 @@ def _sanitize_tool_arguments(arguments: dict) -> dict:
 
 
 def _natural_announce_reply(name: str, arguments: dict):
-    """A short present-tense phrase said BEFORE a tool actually runs, so you
-    hear her start responding immediately instead of only once everything's
-    already done - e.g. "Opening Chrome..." before open_app actually fires,
-    not "Chrome's open." only after. Returns None for tools that shouldn't
-    be pre-announced (see the two sets above), in which case the caller
-    just runs the tool exactly as it did before this existed."""
+    """Present-tense pre-run phrase, or None to skip announce and run immediately.
+
+    None for `_CONFIRMATION_GATED_TOOLS` and `_SKIP_ANNOUNCE_TOOLS`.
+    """
     if name == "proactive_alert":
         return str(arguments.get("message", "")).strip() or None
 
@@ -545,8 +511,7 @@ _CREATOR_QUESTION_RE = re.compile(
 
 
 def _handle_creator_question(user_text: str):
-    """Returns the creator-attribution reply if `user_text` is asking who
-    made/created/built the assistant, otherwise None."""
+    """Creator-attribution reply, or None if `user_text` is not that question."""
     creator = getattr(ui_config, "CREATOR_NAME", "")
     if not creator or not _CREATOR_QUESTION_RE.search(user_text or ""):
         return None
@@ -564,10 +529,7 @@ _MODEL_QUESTION_RE = re.compile(
 
 
 def _current_model_description() -> str:
-    """A short, spoken-friendly description of whichever LLM is actually
-    configured in the provider settings - always reflects live
-    Settings changes since it reads config fresh on every call, rather than
-    being baked in once at import time."""
+    """Spoken description of the live-configured LLM (reads config each call)."""
     provider = provider_config.LLM_PROVIDER
     if provider == "ollama":
         return f"I'm running on {provider_config.OLLAMA_MODEL}, a local model through Ollama."
@@ -584,8 +546,7 @@ def _current_model_description() -> str:
 
 
 def _handle_model_question(user_text: str):
-    """Returns the current-model reply if `user_text` is asking what LLM/
-    model Alyssa is running on right now, otherwise None."""
+    """Current-model reply, or None if `user_text` is not that question."""
     if not _MODEL_QUESTION_RE.search(user_text or ""):
         return None
     return _current_model_description()
@@ -603,13 +564,10 @@ _ENGINE_QUESTION_RE = re.compile(
 
 
 def _handle_engine_question(user_text: str):
-    """Returns the current speech-recognition engine status if `user_text`
-    is asking about it (GPU vs CPU, which Whisper model, etc), otherwise
-    None."""
+    """Speech-engine status reply, or None if `user_text` is not that question."""
     if not _ENGINE_QUESTION_RE.search(user_text or ""):
         return None
-    # Speech recognition is infrastructure; import it only for this explicit
-    # status question so text-only reasoning does not depend on Whisper.
+    # Import transcribe only here so text-only reasoning does not depend on Whisper.
     import transcribe
     return transcribe.get_engine_status()
 
@@ -626,9 +584,7 @@ def _get_strip_filler_patterns(assistant_name: str):
 
 
 def _strip_leading_filler(text: str) -> str:
-    """Strips polite/filler prefixes ('can you', 'please', 'um', a spoken
-    name) so a command like 'can you please say pineapple' matches the same
-    way as the bare 'say pineapple' underneath it."""
+    """Strip polite/filler prefixes so 'can you please say X' matches 'say X'."""
     result = (text or "").strip()
     changed = True
     while changed:
@@ -665,9 +621,7 @@ _SAY_PHRASE_EXCLUSIONS_RE = re.compile(
 
 
 def _handle_echo_request(user_text: str):
-    """Returns a direct spoken echo if `user_text` is asking Alyssa to say,
-    repeat, or spell specific content, otherwise None (falls through to the
-    normal model/tool path for anything more complex)."""
+    """Echo/spell reply, or None to fall through to the model."""
     text = _strip_leading_filler(user_text)
     if not text:
         return None
@@ -690,8 +644,7 @@ def _handle_echo_request(user_text: str):
         phrase = say_match.group(1).strip().strip("\"'")
         if not phrase or _SAY_PHRASE_EXCLUSIONS_RE.search(phrase):
             return None
-        # The trailing "?" from STT usually belongs to the wrapper ("can you
-        # say X?"), not to X itself - restate as a plain statement.
+        # Trailing "?" is usually from the wrapper ("can you say X?"), not X.
         phrase = re.sub(r"[?.!]+$", "", phrase).strip()
         if not phrase:
             return None
@@ -742,11 +695,10 @@ def _call_model_with_error_handling(
     cancel_event=None,
     tools=None,
 ):
-    """Calls the model and translates transport/auth/rate-limit errors into
-    a short spoken reply. Returns (result, None) on success, or
-    (None, reply) if the call failed and the caller should return `reply`
-    directly - keeps this error handling in one place instead of
-    duplicated for every attempt within a single turn."""
+    """Call the model; map transport/auth/rate-limit errors to a spoken reply.
+
+    Returns `(result, None)` on success, or `(None, reply)` for the caller to return.
+    """
     try:
         _t0 = time.time()
         from .providers import _call_model
@@ -788,8 +740,7 @@ def _call_model_with_error_handling(
         if provider == "ollama":
             return None, f"Ollama returned an error: {e}"
         status = e.response.status_code if e.response is not None else "?"
-        # Print the real error body to the console so it can actually
-        # be diagnosed - the spoken reply stays short on purpose.
+        # Log full error body; spoken reply stays short.
         if e.response is not None:
             print(
                 startup_logging.format_content_log(

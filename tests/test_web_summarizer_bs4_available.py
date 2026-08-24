@@ -1,8 +1,4 @@
-"""Regression test ensuring beautifulsoup4 is an installed, importable
-dependency, so plugins/web_summarizer.py takes its intended parsing path
-instead of silently degrading to the regex fallback. See
-plans/003-add-missing-beautifulsoup4-dependency.md.
-"""
+"""beautifulsoup4 must import so web_summarizer does not silently fall back to regex."""
 import os
 import sys
 import unittest

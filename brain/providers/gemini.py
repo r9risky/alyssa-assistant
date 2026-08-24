@@ -18,9 +18,7 @@ _GEMINI_STREAM_URL_TEMPLATE = "https://generativelanguage.googleapis.com/v1beta/
 
 
 def _tools_to_gemini_declarations(tools=None):
-    """Converts our OpenAI-style TOOLS list into Gemini's functionDeclarations
-    format. The parameters schema itself (JSON Schema) is compatible as-is.
-    Cached - see _gemini_tools_cache above."""
+    """OpenAI-style tools -> Gemini `functionDeclarations`. Cached on `_gemini_tools_cache`."""
     global _gemini_tools_cache
     tool_list = TOOLS if tools is None else tools
     key = tuple(t["function"]["name"] for t in tool_list)
@@ -39,8 +37,7 @@ def _tools_to_gemini_declarations(tools=None):
 
 
 def _messages_to_gemini(messages):
-    """Converts our internal OpenAI-style message list into Gemini's
-    (systemInstruction, contents) shape."""
+    """OpenAI-style messages -> Gemini `(systemInstruction, contents)`."""
     system_text = None
     contents = []
 
@@ -76,9 +73,7 @@ def _messages_to_gemini(messages):
                 "response": {"result": m.get("content", "")},
             }
             if m.get("id"):
-                # Field name Gemini expects here is "id" (matching the
-                # functionCall part above), not "call_id" - the API 400s
-                # ("Unknown name \"call_id\"") if it's wrong.
+                # Gemini field is "id", not "call_id" (400s otherwise).
                 function_response["id"] = m["id"]
             contents.append(
                 {
@@ -102,27 +97,15 @@ def _call_gemini(messages, force_tools: bool = False, on_text_delta=None, cancel
     body = {
         "contents": contents,
         "tools": [{"functionDeclarations": _tools_to_gemini_declarations(tools)}],
-        # Gemini 3.x models prefer thinkingLevel ("minimal"/"low"/"medium"/
-        # "high") over the older numeric thinkingBudget, which Google's docs
-        # call unpredictable on 3.x. "minimal" keeps this fixed-vocabulary
-        # "pick a tool + args" task fast and cheap - fires on every voice
-        # command, up to handle_command()'s max_turns=6 times per command.
+        # Gemini 3.x: thinkingLevel not thinkingBudget. Do not add temperature/top_p/top_k (400 on 3.6-flash+).
         "generationConfig": {
             "thinkingConfig": {"thinkingLevel": "minimal"},
             "maxOutputTokens": getattr(config, "LLM_MAX_OUTPUT_TOKENS", 256),
         },
-        # temperature/top_p/top_k are deprecated for gemini-3.6-flash+ and
-        # 400 if present - don't add them back.
     }
 
-    # Gemini's function calling defaults to AUTO (model decides whether to
-    # call a tool), left alone so small talk/trivia get a plain text reply
-    # with no tool call. The catch: smaller/faster models sometimes take
-    # the lazy path even on a real command ("Certainly." with no tool
-    # call). Rather than forcing every first turn into a tool call (which
-    # broke plain questions and "say X"), the caller retries just this one
-    # turn with force_tools=True only if AUTO came back with no tool call
-    # and a reply that looks like that exact dodge (see _is_degenerate_reply).
+    # Default AUTO so small talk needs no tool. Caller sets force_tools only on
+    # retry after a lazy/degenerate no-tool reply — do not force on first turn.
     if force_tools:
         body["toolConfig"] = {"functionCallingConfig": {"mode": "ANY"}}
 
@@ -207,12 +190,7 @@ def _describe_image_gemini(image_bytes: bytes, mime_type: str, prompt: str) -> s
                 ],
             }
         ],
-        # Keep this cheap: it's a plain "describe what you see" call, not a
-        # reasoning task, so no reason to spend thinking tokens (billed as
-        # output tokens). maxOutputTokens caps the reply to 1-2 sentences,
-        # since handle_command() re-phrases this into the final spoken reply.
-        # thinkingLevel "minimal" (not the older numeric thinkingBudget,
-        # which 400s here on Gemini 3.x) is the documented, reliable choice.
+        # thinkingLevel "minimal" not thinkingBudget (400s on Gemini 3.x).
         "generationConfig": {
             "maxOutputTokens": 200,
             "thinkingConfig": {"thinkingLevel": "minimal"},
@@ -264,12 +242,10 @@ def _describe_image_gemini(image_bytes: bytes, mime_type: str, prompt: str) -> s
 
 
 def _describe_gemini_429(response) -> str:
-    """Gemini returns HTTP 429 for two different situations needing
-    different advice: a short-lived rate limit (clears on its own) vs. a
-    fully exhausted daily quota (doesn't clear until midnight Pacific, so
-    "wait a moment" is misleading). Google's error body includes a quotaId
-    like 'GenerateRequestsPerDayPerProjectPerModel-FreeTier' for the daily
-    case - the one reliable signal, since retryDelay can't be trusted alone."""
+    """Gemini 429: short rate limit vs daily quota (quotaId contains 'PerDay').
+
+    Daily quota resets midnight Pacific; retryDelay is not a reliable signal.
+    """
     is_daily_quota = False
     try:
         body = response.json()

@@ -10,8 +10,7 @@ from PySide6.QtWidgets import (
 )
 
 def _load_color_themes() -> dict:
-    """Load themes from color_themes.json next to this file, converting
-    bubble_top/bottom/border/shadow from JSON arrays back to tuples."""
+    """Load repo-root color_themes.json; bubble_* lists → tuples. Hardcoded dark/light on error."""
     json_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "color_themes.json")
     _TUPLE_KEYS = ("bubble_top", "bubble_bottom", "bubble_border", "bubble_shadow")
     try:
@@ -23,7 +22,6 @@ def _load_color_themes() -> dict:
                     theme[k] = tuple(theme[k])
         return raw
     except (OSError, json.JSONDecodeError):
-        # Hardcoded minimal fallback so the app still starts.
         return {
             "dark": {
                 "name": "Dark Indigo",
@@ -70,9 +68,7 @@ TYPE_SCALE = {
 
 
 def _rgba(hex_color: str, alpha: float) -> str:
-    """'#RRGGBB' -> 'rgba(r, g, b, alpha)'. Lets the glass surfaces in
-    ConfigDialog._build_style dial in translucency straight from the
-    existing hex theme palette instead of hand-picking new colors."""
+    """'#RRGGBB' → 'rgba(r, g, b, alpha)'."""
     hex_color = hex_color.lstrip("#")
     r, g, b = int(hex_color[0:2], 16), int(hex_color[2:4], 16), int(hex_color[4:6], 16)
     return f"rgba({r}, {g}, {b}, {alpha})"
@@ -95,13 +91,7 @@ def _theme(val) -> dict:
 
 
 def _apply_elevation(widget: QWidget, blur: int = 28, y: int = 6, alpha: int = 110) -> QGraphicsDropShadowEffect:
-    """Gives one widget its own soft drop shadow so it reads as a raised
-    card instead of a flat glass panel. QSS has no box-shadow equivalent,
-    so this has to happen in Python per-widget (Qt also only allows one
-    QGraphicsEffect per widget - don't call this twice on the same one).
-    The dialog itself already gets a bigger/softer version of this in
-    ConfigDialog.__init__; this is for the cards *inside* it (tab pane,
-    plugin list) that currently have a border but no depth of their own."""
+    """Per-widget drop shadow (QSS has no box-shadow). One QGraphicsEffect per widget — do not call twice on the same widget."""
     shadow = QGraphicsDropShadowEffect(widget)
     shadow.setBlurRadius(blur)
     shadow.setOffset(0, y)
@@ -111,16 +101,7 @@ def _apply_elevation(widget: QWidget, blur: int = 28, y: int = 6, alpha: int = 1
 
 
 class _HoverPress(QObject):
-    """Soft micro-interaction for a single QPushButton: a quick opacity
-    dip on press, eased back on release. QSS :hover/:pressed selectors
-    (already used throughout _build_style) snap instantly - there's no
-    QSS transition property in Qt - so this is the lightweight way to add
-    the "soft" feel that was asked for without hand-animating every
-    widget. Installed as an event filter rather than subclassing
-    QPushButton, so it can be dropped onto any existing button in one
-    line: `_HoverPress(btn)` (keep a reference, e.g. `btn._press_fx =
-    _HoverPress(btn)`, or it gets garbage-collected and stops working).
-    """
+    """Press opacity dip on a QPushButton (QSS has no transitions). Event filter; keep a ref (`btn._press_fx = _HoverPress(btn)`) or GC stops it. Sets the widget's only QGraphicsEffect."""
 
     def __init__(self, button: QPushButton, floor: float = 0.82, ms: int = 90):
         super().__init__(button)
@@ -194,10 +175,6 @@ def _build_messagebox_style(val) -> str:
 
 def build_voice_browser_style(dark: bool) -> str:
     t = _theme(dark)
-    # Reused radii/opacity so every surface reads as one material
-    # instead of each block picking its own numbers. Kept modest
-    # (not pill-shaped) and near-opaque (solid cards, not see-through
-    # glass) per the flat/cute redesign.
     r_xl, r_lg, r_md, r_sm = _DIALOG_RADIUS, 6, 4, 3
     f_eyebrow, f_hint, f_body = (
         TYPE_SCALE["eyebrow"], TYPE_SCALE["hint"], TYPE_SCALE["body"],

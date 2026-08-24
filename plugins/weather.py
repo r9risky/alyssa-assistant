@@ -1,14 +1,8 @@
 """
-Weather plugin - gives Alyssa a "get_weather" ability, e.g. "Alyssa, what's
-the weather like" or "Alyssa, what's the weather in Tokyo".
+Weather via Open-Meteo (free, no key). get_weather(location).
 
-Uses Open-Meteo (https://open-meteo.com) for both geocoding (turning a city
-name into coordinates) and the forecast itself - free, no API key, no
-account, same "no cost" spirit as the rest of this project.
-
-No location given -> tries, in order: WEATHER_DEFAULT_LOCATION in
-config.py if set, then auto-detecting your city from your IP address (see
-_shared_location.py) if AUTO_DETECT_LOCATION is on, then finally just asks.
+No location: WEATHER_DEFAULT_LOCATION, then IP detect if
+AUTO_DETECT_LOCATION, else ask.
 """
 import requests
 
@@ -20,8 +14,7 @@ UNTRUSTED_OUTPUTS = {"get_weather"}
 _GEOCODE_ENDPOINT = "https://geocoding-api.open-meteo.com/v1/search"
 _FORECAST_ENDPOINT = "https://api.open-meteo.com/v1/forecast"
 
-# WMO weather codes -> short human description.
-# https://open-meteo.com/en/docs#weathervariables
+# WMO weather codes (https://open-meteo.com/en/docs#weathervariables).
 _WEATHER_CODES = {
     0: "clear skies", 1: "mostly clear", 2: "partly cloudy", 3: "overcast",
     45: "foggy", 48: "foggy with frost", 51: "light drizzle", 53: "drizzle",
@@ -66,8 +59,7 @@ def get_weather(location: str = "") -> str:
         location = getattr(config, "WEATHER_DEFAULT_LOCATION", "")
 
     if not location:
-        # Nothing named and no default set - try auto-detecting from the IP
-        # address before giving up and asking.
+        # No name and no default → IP detect, then ask.
         detected = get_ip_location()
         if detected:
             place = detected

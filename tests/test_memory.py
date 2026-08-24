@@ -1,6 +1,4 @@
-"""Unit tests for memory.py's compaction and its file-backed operations. See
-plans/004-establish-test-baseline-pure-logic-modules.md.
-"""
+"""memory.py compaction and file-backed operations."""
 import os
 import sys
 import tempfile

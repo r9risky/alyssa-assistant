@@ -1,12 +1,9 @@
 import re
 
 def _strip_fake_tool_call(text: str) -> str:
-    """Removes any stray JSON-looking tool-call text the model wrote out as
-    plain text instead of actually calling the tool. Small local models
-    occasionally do this, and it should never reach speech.
+    """Strip fake JSON tool-call text so it never reaches speech.
 
-    Uses brace-counting rather than a simple regex so it correctly handles
-    nested JSON, e.g. {"name": "x", "parameters": {"command": "y"}}.
+    Brace-counts nested JSON; a regex would truncate inner objects.
     """
     result = []
     i = 0
@@ -35,10 +32,7 @@ def _strip_fake_tool_call(text: str) -> str:
 
 
 def _is_degenerate_reply(text: str) -> bool:
-    """True if text is empty, or contains nothing but brackets/braces/quotes/
-    punctuation/whitespace - i.e. the model tried to write a tool call (or an
-    empty one, like '[]') as plain text instead of actually calling a tool,
-    and there's no real sentence left to say out loud."""
+    """True if empty or only brackets/braces/quotes/punctuation/whitespace."""
     stripped = text.strip()
     if not stripped:
         return True

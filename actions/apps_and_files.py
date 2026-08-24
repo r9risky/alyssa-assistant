@@ -87,14 +87,9 @@ def relaunch_alyssa():
 
 
 def _launch_without_stealing_focus(path_or_url: str) -> bool:
-    """Opens a file/app/URL via ShellExecuteW with SW_SHOWNOACTIVATE, so it
-    appears without stealing focus from whatever's on screen. Returns True
-    on success so callers can fall back to os.startfile()/webbrowser.open().
-
-    Caveat: some apps (Electron apps, some browsers on first launch) call
-    SetForegroundWindow() on themselves regardless. Also, since focus isn't
-    guaranteed, a same-breath follow-up ("open Discord and type hello")
-    won't land in it - ask her to switch to it first."""
+    """ShellExecuteW + SW_SHOWNOACTIVATE (no focus steal). True on success;
+    else os.startfile()/webbrowser.open(). Some apps still foreground
+    themselves. Same-breath follow-up won't land — switch first."""
     if _shell32 is None:
         return False
     try:
@@ -102,20 +97,16 @@ def _launch_without_stealing_focus(path_or_url: str) -> bool:
     except Exception as e:
         print(f"[background-launch] ShellExecuteW failed for {path_or_url!r}: {e}")
         return False
-    # ShellExecuteW's restype is a pointer type (HINSTANCE), and ctypes
-    # auto-converts a returned 0/NULL - one of ShellExecute's own documented
-    # failure codes - into Python None, which int() can't take directly.
+    # HINSTANCE 0/NULL becomes Python None; int(None) would fail.
     value = 0 if result is None else int(result)
-    if value <= 32:  # ShellExecute's own success convention: >32 means it worked
+    if value <= 32:  # ShellExecute: >32 = success
         print(f"[background-launch] ShellExecuteW returned failure code {value} for {path_or_url!r}")
         return False
     return True
 
 
 def _post_syscommand_to_foreground(syscommand: int) -> bool:
-    """Posts a WM_SYSCOMMAND (minimize/maximize) straight to the current
-    foreground window instead of simulating the Win+Down/Win+Up hotkey.
-    Returns True on success so callers can fall back to the hotkey."""
+    """Post WM_SYSCOMMAND (min/max) to foreground window. True → skip hotkey fallback."""
     if _user32 is None:
         return False
     hwnd = _user32.GetForegroundWindow()
@@ -125,9 +116,7 @@ def _post_syscommand_to_foreground(syscommand: int) -> bool:
 
 
 def _close_foreground_window() -> bool:
-    """Posts WM_CLOSE straight to the current foreground window instead of
-    simulating Alt+F4. Returns True on success so the caller can fall back
-    to the hotkey."""
+    """Post WM_CLOSE to foreground window. True → skip hotkey fallback."""
     if _user32 is None:
         return False
     hwnd = _user32.GetForegroundWindow()
@@ -147,18 +136,15 @@ _APP_EXE_ALIASES = {
     "vscode": "code.exe", "vs code": "code.exe", "visual studio code": "code.exe",
     "word": "winword.exe", "excel": "excel.exe", "powerpoint": "powerpnt.exe",
     "calculator": "calc.exe",
-    # "discord" -> "discord.exe" already falls out of the default rule
-    # below; only the PTB/Canary variants need an entry.
+    # discord.exe is the default rule; PTB/Canary need explicit entries.
     "discord ptb": "discordptb.exe", "discordptb": "discordptb.exe",
     "discord canary": "discordcanary.exe", "discordcanary": "discordcanary.exe",
     "epic games": "epicgameslauncher.exe", "epic games launcher": "epicgameslauncher.exe",
     "obs": "obs64.exe", "obs studio": "obs64.exe",
-    # No official YouTube Music desktop app - points at the most common
-    # unofficial client (th-ch/youtube-music). Otherwise play_music() falls
-    # back to the browser for YouTube Music.
+    # Unofficial client (th-ch/youtube-music); else play_music() uses the browser.
     "youtube music": "youtube music.exe", "ytmusic": "youtube music.exe",
     "ytm": "youtube music.exe",
-    # Extra common apps whose real .exe name doesn't match "name + .exe".
+    # .exe name != spoken name + ".exe"
     "irfanview": "i_view64.exe", "irfanview64": "i_view64.exe",
     "revo uninstaller": "revounin.exe",
     "7-zip": "7zfm.exe", "7zip": "7zfm.exe",
@@ -190,8 +176,8 @@ _KNOWN_APP_PATHS = {
         r"%ProgramFiles(x86)%\Mozilla Firefox\firefox.exe",
     ],
     "spotify.exe": [
-        r"%AppData%\Spotify\Spotify.exe",  # the normal per-user installer location
-        r"%ProgramFiles%\Spotify\Spotify.exe",  # older/enterprise per-machine installs
+        r"%AppData%\Spotify\Spotify.exe",  # per-user
+        r"%ProgramFiles%\Spotify\Spotify.exe",  # per-machine
         r"%ProgramFiles(x86)%\Spotify\Spotify.exe",
     ],
     "slack.exe": [
@@ -249,9 +235,7 @@ _VERSIONED_APP_PATHS = {
 
 @lru_cache(maxsize=128)
 def _resolve_versioned_app_path(base_dir_template: str, exe_name: str):
-    """Finds the highest-numbered 'app-X.Y.Z' subfolder under a base
-    install directory and returns the path to exe_name inside it, or None
-    if the base folder doesn't exist or has no matching subfolder yet."""
+    """Highest-numbered app-X.Y.Z under base_dir; path to exe_name, or None."""
     base_dir = os.path.expandvars(base_dir_template)
     if not os.path.isdir(base_dir):
         return None
@@ -281,10 +265,8 @@ _UNINSTALL_KEY_ROOTS = [
 
 
 def _search_uninstall_registry(app_name: str):
-    """Fuzzy-matches app_name against installed programs' DisplayName in
-    the Windows Uninstall registry, then looks for a matching .exe in that
-    program's InstallLocation (or its DisplayIcon's folder). Returns a
-    resolved .exe path, or None if nothing matched well enough."""
+    """Fuzzy-match app_name to Uninstall DisplayName; .exe from InstallLocation
+    or DisplayIcon folder, else None."""
     if winreg is None:
         return None
 
@@ -314,7 +296,7 @@ def _search_uninstall_registry(app_name: str):
             display_words = set(re.split(r"[^a-z0-9]+", display_name.lower()))
             score = sum(1 for w in name_words if w in display_words)
             if score == 0 or score < len(name_words):
-                continue  # require every spoken word to match to avoid false positives
+                continue  # every spoken word must match
 
             install_dir = None
             try:
@@ -328,7 +310,7 @@ def _search_uninstall_registry(app_name: str):
                     icon, _ = winreg.QueryValueEx(sub_key, "DisplayIcon")
                     icon = icon.split(",")[0].strip('"')
                     if icon.lower().endswith(".exe") and os.path.exists(icon):
-                        # DisplayIcon often points straight at the exe already
+                        # DisplayIcon may already be the exe
                         if score > best_score:
                             best_score, best_path = score, icon
                         continue
@@ -339,9 +321,7 @@ def _search_uninstall_registry(app_name: str):
             if not install_dir or not os.path.isdir(install_dir):
                 continue
 
-            # Look for a plausible .exe in the install folder (and one
-            # level deep), preferring one whose filename overlaps the
-            # spoken name, skipping obvious uninstaller/helper exes.
+            # Walk install dir (depth <= 1); prefer filename overlap; skip uninstall/setup.
             candidates = []
             for dirpath, _dirnames, filenames in os.walk(install_dir):
                 depth = dirpath[len(install_dir):].count(os.sep)
@@ -371,17 +351,11 @@ def _search_uninstall_registry(app_name: str):
 
 @lru_cache(maxsize=128)
 def _resolve_app_path(app_name: str):
-    """Tries to resolve a spoken app name straight to a real .exe path,
-    using the same 'App Paths' registry Windows itself uses to resolve a
-    bare name like 'chrome' typed into the Run box - so we can launch it
-    directly instead of typing into Start-menu search and hoping the top
-    result is right (search timing/indexing/best-match order is exactly
-    what was making Chrome launches flaky). Falls back to a short list of
-    known common install locations (including version-folder scanning for
-    apps like Discord that update into a new folder each time), then a
-    PATH lookup. Returns None if nothing is found, so callers can fall
-    back to the old search-typing method for anything not covered here
-    (e.g. Store apps, or an install location this doesn't know about)."""
+    """Resolve spoken app name to an .exe path.
+
+    Order: App Paths registry (same as the Run box) → known install paths
+    (incl. versioned folders e.g. Discord) → PATH → Uninstall DisplayName
+    fuzzy match. Returns None if not found."""
     name = app_name.strip().lower()
     exe = _APP_EXE_ALIASES.get(name)
     if exe is None:
@@ -415,19 +389,13 @@ def _resolve_app_path(app_name: str):
     if found:
         return found
 
-    # Last resort: fuzzy-match the spoken name against every installed
-    # program's registered DisplayName - covers the long tail without
-    # needing a hardcoded entry for each one.
+    # Last resort: Uninstall DisplayName fuzzy match.
     return _search_uninstall_registry(app_name)
 
 
 def open_app(app_name: str) -> str:
-    """Opens an application by name via direct launch only - the Windows
-    App Paths registry, a short list of known common install locations, and
-    a generic scan of the Windows Uninstall registry for anything else
-    installed on this PC. Never falls back to typing into Windows search:
-    if no real install of the app can be found, this reports that instead
-    of guessing at a search result."""
+    """Direct-launch by name (App Paths, known paths, Uninstall registry).
+    Never types into Windows search — reports not found rather than guess."""
     if not app_name or not str(app_name).strip():
         return "I need an app name before I can open anything."
 
@@ -443,13 +411,10 @@ def open_app(app_name: str) -> str:
             if getattr(config, "LAUNCH_APPS_IN_BACKGROUND", True):
                 launched_quietly = _launch_without_stealing_focus(resolved)
             if not launched_quietly:
-                os.startfile(resolved)  # steals focus, but always works - the fallback
+                os.startfile(resolved)  # steals focus; always-works fallback
             print(f"[open_app] launched {'quietly' if launched_quietly else 'directly'}: {resolved}")
-            # Give the window a moment to appear before returning, so a
-            # same-command follow-up (e.g. type_text right after opening
-            # Discord) doesn't fire too early. Note: a quiet launch doesn't
-            # take focus, so that follow-up would land wherever focus
-            # already was - ask her to switch to it first if needed.
+            # Settle so a same-command follow-up isn't too early. Quiet
+            # launch does not take focus — switch to the app first if needed.
             time.sleep(settle)
             return f"Opened {app_name}."
         except OSError as e:
@@ -477,10 +442,7 @@ _FRIENDLY_SITE_NAMES = {
 
 
 def _friendly_site_name(url: str) -> str:
-    """Turns a URL into a short name worth saying out loud instead of
-    reading the whole address, e.g. 'https://www.youtube.com/watch?v=xyz'
-    -> 'YouTube'. Falls back to the raw url if it can't be parsed at all,
-    since that's still more useful than staying silent about what opened."""
+    """Short spoken name for a URL (e.g. youtube.com → YouTube). Raw url if unparseable."""
     try:
         netloc = urllib.parse.urlparse(url).netloc.lower()
     except ValueError:
@@ -506,7 +468,7 @@ def open_url(url: str) -> str:
     if getattr(config, "LAUNCH_APPS_IN_BACKGROUND", True):
         launched_quietly = _launch_without_stealing_focus(url)
     if not launched_quietly:
-        webbrowser.open(url)  # steals focus, but always works - the fallback
+        webbrowser.open(url)  # steals focus; always-works fallback
     return f"Opened {_friendly_site_name(url)} for you."
 
 
@@ -547,12 +509,9 @@ def _resolve_placeholder_user_path(path: str) -> str:
 
 
 def _friendly_file_name(path: str) -> str:
-    """Returns just the file/folder name for speaking out loud instead of
-    the full path, e.g. 'C:\\Users\\Alex\\Desktop\\report_final_v2.docx'
-    -> 'report_final_v2.docx' - same idea as _friendly_site_name() above,
-    just for files instead of URLs."""
+    """Basename for speech; full path if empty (e.g. drive root)."""
     name = os.path.basename(os.path.normpath(path))
-    return name or path  # fall back to the full path for an edge case like a bare drive root
+    return name or path  # drive root
 
 
 def open_file(path: str) -> str:
@@ -567,7 +526,7 @@ def open_file(path: str) -> str:
         if getattr(config, "LAUNCH_APPS_IN_BACKGROUND", True):
             launched_quietly = _launch_without_stealing_focus(path)
         if not launched_quietly:
-            os.startfile(path)  # steals focus, but always works - the fallback
+            os.startfile(path)  # steals focus; always-works fallback
         return f"Opened {_friendly_file_name(path)}."
     except Exception as e:
         return f"Couldn't open {_friendly_file_name(path)}: {e}"

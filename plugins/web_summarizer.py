@@ -1,8 +1,4 @@
-"""
-Web & Article Summarizer plugin for Alyssa.
-
-Gives Alyssa ability to fetch and summarize web pages or articles by URL ('summarize_webpage').
-"""
+"""Fetch a URL and extract page text (summarize_webpage)."""
 import ipaddress
 import re
 import socket

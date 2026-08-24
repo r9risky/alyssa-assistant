@@ -1,24 +1,10 @@
 """
-Web search plugin - gives Alyssa a "search_web" ability, e.g. "Alyssa,
-search the web for the release date of the new iPhone". Returns a short
-list of results (title / snippet / URL) so the model can cite sources
-instead of guessing from what it already knows.
+Web search: title / snippet / URL list for the model to cite.
 
-Two providers, picked automatically:
+Provider precedence: Brave Search API if BRAVE_SEARCH_API_KEY is set;
+else DuckDuckGo lite HTML scrape (no key, more fragile).
 
-  - Brave Search API (better results, structured JSON) - used if you set
-    a BRAVE_SEARCH_API_KEY environment variable. Free tier available at
-    https://brave.com/search/api/:
-        setx BRAVE_SEARCH_API_KEY "your-key-here"      (Windows, permanent)
-        $env:BRAVE_SEARCH_API_KEY = "your-key-here"    (this session only)
-    then restart Alyssa.
-
-  - DuckDuckGo's lite HTML endpoint - used if no Brave key is set. No
-    key/account/cost, but a lighter-weight HTML scrape rather than an
-    official API, so a bit more fragile and less precise than Brave.
-
-search_web() returns a string that gets both spoken out loud and fed back
-to the model as its tool result, as source material for its reply.
+search_web() return string is both spoken and fed back as the tool result.
 """
 import os
 import re
@@ -79,10 +65,7 @@ def _search_duckduckgo(query: str, num_results: int) -> list[dict]:
     response.raise_for_status()
     page = response.text
 
-    # lite.duckduckgo.com's markup is plain HTML tables: each result is a
-    # "result-link" anchor followed by a "result-snippet" cell. A scrape
-    # of their public lite page, not an official API - update these two
-    # patterns if DuckDuckGo changes the markup.
+    # DDG lite: result-link + result-snippet table cells. Update if markup changes.
     link_pattern = re.compile(
         r'class="result-link"[^>]*href="([^"]+)"[^>]*>(.*?)</a>', re.DOTALL
     )
@@ -95,9 +78,7 @@ def _search_duckduckgo(query: str, num_results: int) -> list[dict]:
 
     results = []
     for i, (url, title) in enumerate(links[:num_results]):
-        # DuckDuckGo's lite results wrap the destination in a redirect URL
-        # like //duckduckgo.com/l/?uddg=<encoded target>&... - unwrap it so
-        # the real source URL is shown/spoken.
+        # Unwrap //duckduckgo.com/l/?uddg=<encoded> to the real destination URL.
         match = re.search(r"uddg=([^&]+)", url)
         if match:
             url = urllib.parse.unquote(match.group(1))

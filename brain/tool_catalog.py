@@ -1,8 +1,4 @@
-"""Static built-in tool schemas exposed to language-model providers.
-
-Keeping schemas separate from dialogue orchestration makes the reasoning module
-smaller and lets tooling evolve without mixing it with conversation state.
-"""
+"""Static built-in tool schemas exposed to language-model providers."""
 
 BASE_TOOLS = [
     {

@@ -32,10 +32,7 @@ def close_window() -> str:
         return "Cancelled by user."
     if _close_foreground_window():
         return "Closed the window."
-    # Fallback (non-Windows, or no foreground window found): simulate
-    # Alt+F4. Not pyautogui.hotkey() - some apps don't register a hotkey()
-    # burst as a real Alt+F4 unless Alt is actually held a moment first.
-    # switch_window() below uses the same hold-tap-release pattern.
+    # Fallback Alt+F4: hold-tap-release, not hotkey() (some apps ignore a burst).
     pyautogui.keyDown("alt")
     pyautogui.press("f4")
     time.sleep(0.3)
@@ -44,9 +41,7 @@ def close_window() -> str:
 
 
 def switch_window() -> str:
-    """Switches focus to the previously active window (alt+tab). Left as a
-    real Alt+Tab simulation on purpose - there's no quieter version that
-    still brings something else to the screen."""
+    """Alt+Tab to the previous window. Must be a real key simulation."""
     if not _confirm("switch to the previous window"):
         return "Cancelled by user."
     pyautogui.keyDown("alt")
@@ -57,9 +52,7 @@ def switch_window() -> str:
 
 
 def snap_window(side: str) -> str:
-    """Snaps the currently focused window to one side of the screen. side:
-    'left' or 'right'. Left as a real Win+Left/Right simulation - same
-    reasoning as switch_window() above, the visible move IS the result."""
+    """Snap focused window: side is 'left' or 'right' (Win+Left/Right)."""
     side = side.strip().lower()
     if side not in ("left", "right"):
         return f"'{side}' isn't a side I recognize - use 'left' or 'right'."
@@ -70,8 +63,7 @@ def snap_window(side: str) -> str:
 
 
 def show_desktop() -> str:
-    """Minimizes all windows to show the desktop. Left as a real Win+D
-    simulation - same reasoning as switch_window() above."""
+    """Minimize all windows (Win+D)."""
     if not _confirm("show the desktop"):
         return "Cancelled by user."
     pyautogui.hotkey("win", "d")

@@ -1,29 +1,20 @@
 """
-News/research digest plugin - built on top of plugins/web_search.py (same
-Brave/DuckDuckGo lookup, no extra API key needed beyond what web_search.py
-already uses). Gives Alyssa:
+News digest via web_search.py (Brave/DDG, no extra key).
 
-  - get_news_digest(topics): on-demand summary, e.g. "Alyssa, catch me up
-    on the news" / "what's new in AI research".
-  - check_watch(): once a day, unprompted, she gives you a short briefing
-    on the topics you configured below - the "morning briefing" pattern,
-    without you having to ask first.
-
-Configure DIGEST_TOPICS and DIGEST_HOUR below (24h, local time). Leave
-DIGEST_TOPICS empty to disable the proactive daily briefing while keeping
-the on-demand get_news_digest ability.
+- get_news_digest(topics): on-demand
+- check_watch(): once per day at DIGEST_HOUR (local 24h) on DIGEST_TOPICS
+- Empty DIGEST_TOPICS disables the proactive briefing only
 """
 import datetime
 
-# plugin_loader.py adds plugins/ to sys.path, so this sibling import works
-# the same way plugins/_shared_location.py does for plugins/weather.py.
+# plugins/ is on sys.path (plugin_loader); sibling import of web_search is OK.
 import web_search
 
-# --- Configure your daily briefing here -------------------------------------
+# --- Daily briefing: DIGEST_TOPICS empty = on-demand only ---------------------
 DIGEST_TOPICS = []  # e.g. ["AI research", "world news", "your favorite team"]
 DIGEST_HOUR = 8      # 24h local time the daily briefing fires (once per day)
 
-WATCH_INTERVAL_SECONDS = 900  # only needs to check "has DIGEST_HOUR passed yet" a few times an hour
+WATCH_INTERVAL_SECONDS = 900  # only needs to notice DIGEST_HOUR a few times/hour
 UNTRUSTED_OUTPUTS = {"get_news_digest"}
 
 _last_digest_date = None
@@ -33,9 +24,7 @@ def _summarize(topic: str, num_results: int = 3) -> str:
     raw = web_search.search_web(topic, num_results=num_results)
     if raw.startswith("I couldn't") or raw.startswith("I didn't") or raw.startswith("Something went wrong"):
         return f"{topic}: {raw}"
-    # search_web()'s raw output is "Web search results for 'x':\n1. title - snippet (url)\n...".
-    # Drop the header line and URLs for a briefing - titles/snippets read
-    # out loud, without a spoken URL.
+    # Drop search_web header + URLs; speak titles/snippets only.
     lines = raw.split("\n")[1:]
     cleaned = []
     for line in lines:
@@ -46,8 +35,7 @@ def _summarize(topic: str, num_results: int = 3) -> str:
 
 
 def get_news_digest(topics: str = "") -> str:
-    """topics: comma-separated list, or blank to use the configured
-    DIGEST_TOPICS from this file."""
+    """topics: comma-separated, or blank to use DIGEST_TOPICS."""
     topic_list = [t.strip() for t in topics.split(",") if t.strip()] or list(DIGEST_TOPICS)
     if not topic_list:
         return "I don't have any digest topics configured - ask me about a specific topic, or set DIGEST_TOPICS in plugins/news_digest.py."

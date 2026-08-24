@@ -316,9 +316,7 @@ class SettingsGuiTests(unittest.TestCase):
 
 
     def _reload_with_plugin_source(self, temp_dir: str, filename: str, source: str):
-        """Writes `source` to temp_dir/filename, points plugin_loader at
-        temp_dir, reloads, and rebuilds this dialog's plugin GUI tabs -
-        the same sequence Settings > Plugins > Save triggers for real."""
+        """Write plugin source, reload, rebuild GUI tabs (same as Settings > Plugins > Save)."""
         with open(os.path.join(temp_dir, filename), "w", encoding="utf-8") as f:
             f.write(source)
         settings_dialog.actions.reload_plugins()

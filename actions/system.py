@@ -23,8 +23,7 @@ def system_power_action(action: str, confirmed: bool = False) -> str:
     if action not in ("lock", "sleep", "signout", "restart", "shutdown"):
         return f"'{action}' isn't a power action I recognize - use lock, sleep, signout, restart, or shutdown."
 
-    # Every action that changes the current session is approved by voice,
-    # never by blocking on input() in the launch terminal.
+    # Non-lock actions: voice confirm, never input() in the launch terminal.
     if action != "lock" and not confirmed:
         if confirmation._power_confirmation_callback is None:
             return "Confirmation required: please ask the user to confirm this power action."
@@ -63,10 +62,7 @@ def system_power_action(action: str, confirmed: bool = False) -> str:
 
 
 def reset_conversation() -> str:
-    """Clears short-term conversation memory (what's been discussed so far
-    this session) - use when the user asks to start fresh, change the
-    subject, or forget the current conversation. Does NOT touch anything
-    saved with remember_fact - that permanent memory is untouched."""
+    """Clear short-term session memory. Does not touch remember_fact persistence."""
     if not bridges.clear_conversation():
         return "I couldn't clear the conversation because the brain service is not initialized."
     return "Starting fresh - I've cleared what we were just discussing."
@@ -110,15 +106,10 @@ def _file_contains_text(path: str, query: str, max_bytes: int) -> tuple[bool, in
 
 
 def search_files(query: str, location: str = "", search_contents: bool = False) -> str:
-    """Searches for files by name (substring match) under a folder, defaulting
-    to the user's home folder if no location is given. Skips noisy/system
-    folders. Capped at 25 results and a few thousand files scanned so it
-    can't hang searching an entire drive.
+    """Substring filename search under `location` (default: home).
 
-    If search_contents is True, also searches inside small text files
-    (under 2MB) for the query text, not just filenames - slower, so only
-    use it when the user specifically wants to search file contents/text,
-    not just find a file by name."""
+    Skips noisy dirs. Caps: 25 results, 5000 files. search_contents=True:
+    also scan text files ≤2MB (25MB total); slower."""
     query = (query or "").strip()
     if not query:
         return "Tell me part of the file name or text to search for."
@@ -191,9 +182,7 @@ def search_files(query: str, location: str = "", search_contents: bool = False) 
         return result
 
     result = f"Found {len(matches)} match(es) for '{query}' under {root}:\n"
-    # Relative to the search root rather than the full absolute path - still
-    # enough to tell same-named files in different subfolders apart, but a
-    # lot less to read out loud than the whole machine path each time.
+    # Paths relative to search root (disambiguates same names, shorter to speak).
     result += "\n".join(os.path.relpath(m, root) for m in matches)
     if len(matches) >= max_results:
         result += "\n(stopped at 25 results - narrow your search for more precise results.)"
@@ -203,21 +192,13 @@ def search_files(query: str, location: str = "", search_contents: bool = False) 
 
 
 def run_diagnostics() -> str:
-    """Runs a self-check across every subsystem Alyssa depends on - the
-    configured LLM connection, speech recognition (Whisper), the
-    microphone, text-to-speech (Edge TTS), persistent memory, and
-    plugins - and reports which are healthy and which (if any) have a
-    problem. Use this whenever the user asks Alyssa to run diagnostics
-    or a self-test on herself, check her own systems, or asks something
-    like 'is everything working?', 'are you okay?', or 'run a health
-    check'."""
-    # Imported here (not at module load time) to avoid a circular import
-    # (brain.py itself imports this module) - same reasoning as
-    # describe_screen()/reset_conversation() above.
+    """Self-check LLM, Whisper, mic, TTS, memory, plugins, and background
+    watcher; report healthy vs problems."""
+    # Late import: avoid circular import with brain.py.
     import transcribe
     import voice
 
-    checks = []  # (label, ok, detail) - detail is a short plain-English status
+    checks = []  # (label, ok, detail)
 
     def _append_check(label: str, ok: bool, detail: str):
         checks.append((label, ok, str(detail).strip() or "no details"))
@@ -278,10 +259,7 @@ def run_diagnostics() -> str:
             _append_check(f"LLM connection ({label})", False, f"{key_attr} isn't set in config.py")
 
     # --- Speech recognition (Whisper) ---
-    # get_engine_status() reports what's REALLY running (GPU vs CPU,
-    # precision) rather than just what config.py requests, since "auto"
-    # settings resolve differently per machine and a GPU load can silently
-    # fall back to CPU - see transcribe.py.
+    # Actual engine (GPU/CPU/precision), not just config; "auto" can fall back to CPU.
     try:
         _append_check("Speech recognition", True, transcribe.get_engine_status())
     except Exception as e:
@@ -327,7 +305,7 @@ def run_diagnostics() -> str:
     # --- Persistent memory ---
     try:
         current = memory.load_memories()
-        memory.save_memories(current)  # round-trip write, confirms the database is actually writable too
+        memory.save_memories(current)  # round-trip write to confirm writable
         _append_check("Memory", True, f"local memory database is readable and writable ({len(current)} fact(s) saved)")
     except Exception as e:
         _append_check("Memory", False, f"couldn't read/write the memory database ({e})")

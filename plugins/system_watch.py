@@ -62,9 +62,7 @@ def get_system_status() -> str:
 
 
 def _top_cpu_process():
-    """Returns 'name (X%)' for the single busiest process, or None. A
-    second psutil.cpu_percent pass is needed for per-process numbers to be
-    meaningful (the first call after psutil import is always 0.0)."""
+    """Busiest process as 'name (X%)', or None. Second cpu_percent pass required (first after import is 0.0)."""
     if psutil is None:
         return None
     try:

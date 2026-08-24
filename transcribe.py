@@ -1,6 +1,4 @@
-"""
-Speech-to-text module using faster-whisper.
-"""
+"""Speech-to-text via faster-whisper."""
 
 import base64
 import difflib
@@ -172,7 +170,7 @@ def _consume_streaming_transcript():
 
 
 def _add_nvidia_dll_dirs():
-    """Adds pip-installed NVIDIA DLL directories to DLL search path on Windows."""
+    """Add pip-installed NVIDIA DLL directories to the Windows DLL search path."""
     global _dll_diagnostics
     _dll_diagnostics = []
     if os.name != "nt":
@@ -192,8 +190,7 @@ def _add_nvidia_dll_dirs():
                 f"isn't installed in this environment. Run: pip install {pip_name}"
             )
             continue
-        # These nvidia-*-cu12 wheels ship as PEP 420 namespace packages (no
-        # __init__.py), so pkg.__file__ is None - use __path__ instead.
+        # nvidia-*-cu12 wheels are PEP 420 namespace packages (__file__ is None); use __path__.
         pkg_dirs = []
         if getattr(pkg, "__file__", None):
             pkg_dirs.append(os.path.dirname(pkg.__file__))
@@ -222,13 +219,12 @@ def _add_nvidia_dll_dirs():
                 f"{pkg_name}: found {bin_dir}, but os.add_dll_directory() itself "
                 f"failed ({e})"
             )
-        # Belt-and-suspenders for anything still using PATH search instead
-        # of add_dll_directory.
+        # Also prepend PATH for anything still using PATH search.
         if bin_dir not in os.environ.get("PATH", ""):
             os.environ["PATH"] = bin_dir + os.pathsep + os.environ.get("PATH", "")
 
 
-_add_nvidia_dll_dirs()  # once at import time, before anything touches ctranslate2/CUDA
+_add_nvidia_dll_dirs()  # once at import, before anything touches ctranslate2/CUDA
 if any("couldn't import it" in line or "no 'bin'" in line or "failed (" in line for line in _dll_diagnostics):
     # Only print if something actually looks wrong.
     print("[transcribe] NVIDIA DLL setup check found a problem:")
@@ -237,9 +233,8 @@ if any("couldn't import it" in line or "no 'bin'" in line or "failed (" in line 
 
 
 def _resolve_device_and_compute_type():
-    """Works out (device, compute_type) to hand to WhisperModel from
-    config.WHISPER_DEVICE/WHISPER_COMPUTE_TYPE (default "auto"). Detects an
-    NVIDIA GPU via ctranslate2 directly, no torch dependency needed."""
+    """(device, compute_type) for WhisperModel from WHISPER_DEVICE/COMPUTE_TYPE
+    (default "auto"). Detects NVIDIA GPU via ctranslate2; no torch needed."""
     device = str(getattr(config, "WHISPER_DEVICE", "auto") or "auto").lower()
     compute_type = str(getattr(config, "WHISPER_COMPUTE_TYPE", "auto") or "auto").lower()
 
@@ -259,17 +254,15 @@ def _resolve_device_and_compute_type():
 
 def _get_model():
     global _model, _model_is_on_gpu, _model_device, _model_compute_type, _gpu_fallback_reason
-    # Lock rather than "check, then set": preload() runs on a background
-    # thread at startup, and without this a real command arriving before
-    # that finishes could race it into building a second WhisperModel.
+    # Lock: preload() is on a background thread; a command arriving first
+    # could race into a second WhisperModel.
     if _model is None:
         with _model_lock:
             if _model is None:
                 print("Loading Whisper model (first run only, may take a moment)...")
-                _gpu_fallback_reason = None  # clear any stale reason from a previous attempt
+                _gpu_fallback_reason = None
                 device, compute_type = _resolve_device_and_compute_type()
-                # 0 = auto: use most of the CPU's cores, leaving a little
-                # headroom for the LLM call, GUI, etc. Only matters on CPU.
+                # 0 = auto: most CPU cores, leave a little headroom. CPU only.
                 cpu_threads = int(getattr(config, "WHISPER_CPU_THREADS", 0) or 0)
                 if cpu_threads <= 0:
                     cpu_threads = max(4, (os.cpu_count() or 4) - 1)
@@ -287,11 +280,9 @@ def _get_model():
                     _model_compute_type = compute_type
                 except Exception as e:
                     if device == "cuda":
-                        # Broken/missing CUDA or cuDNN is the most common
-                        # cause - fall back to CPU instead of crashing on
-                        # startup. Note: ctranslate2 sometimes doesn't touch
-                        # those DLLs until the first real transcription
-                        # rather than here - see the retry in transcribe().
+                        # Broken/missing CUDA/cuDNN — fall back to CPU.
+                        # ctranslate2 may not touch those DLLs until first
+                        # transcription; see the retry in transcribe().
                         print(f"[transcribe] GPU load failed ({e}); falling back to CPU")
                         _gpu_fallback_reason = str(e) or e.__class__.__name__
                         _model = WhisperModel(
@@ -306,18 +297,16 @@ def _get_model():
                         _model_compute_type = "int8"
                     else:
                         raise
-                # Use the tracked globals, not the local device/compute_type
-                # vars - those still hold the originally attempted values
-                # even after a fallback to CPU above.
+                # Use tracked globals, not locals — those still hold the
+                # originally attempted values after a CPU fallback.
                 print(f"Whisper model loaded ({config.WHISPER_MODEL_SIZE} on {_model_device}/{_model_compute_type}).")
     return _model
 
 
 def _force_reload_on_cpu():
-    """Drops the current (GPU) model and forces every future _get_model()
-    call this run to load fresh on CPU. Used when a GPU model loads fine
-    but fails on its first actual transcription (ctranslate2 sometimes only
-    touches CUDA/cuBLAS/cuDNN lazily, at that point rather than construction)."""
+    """Drop the GPU model; future _get_model() loads on CPU this run.
+    Used when GPU construction succeeds but first transcription fails
+    (ctranslate2 sometimes touches CUDA/cuBLAS/cuDNN lazily)."""
     global _model, _model_is_on_gpu, _model_device, _model_compute_type, _gpu_fallback_reason
     with _model_lock:
         _model = None
@@ -325,21 +314,16 @@ def _force_reload_on_cpu():
         _model_device = None
         _model_compute_type = None
         _gpu_fallback_reason = "GPU failed during transcription (see console log)"
-        config.WHISPER_DEVICE = "cpu"  # stop _get_model() from retrying (and failing) the GPU
+        config.WHISPER_DEVICE = "cpu"  # stop _get_model() from retrying GPU
 
 
 def reload_model():
-    """Drops whatever Whisper model is loaded so the next _get_model() call
-    rebuilds from config.py's current WHISPER_MODEL_SIZE/DEVICE/COMPUTE_TYPE.
+    """Drop the loaded Whisper model so the next _get_model() rebuilds from
+    current WHISPER_MODEL_SIZE/DEVICE/COMPUTE_TYPE.
 
-    Needed because _get_model() caches its model for the process lifetime -
-    without this, changing the model/device/compute type live in Settings
-    would patch config.py but have no effect until a full restart. See
-    overlay.py's _apply_assistant_live(), which calls this via
-    reload_model_async() below.
-
-    Also undoes any config.WHISPER_DEVICE = "cpu" override left by
-    _force_reload_on_cpu(), so choosing GPU again in Settings actually retries it."""
+    _get_model() caches for process lifetime; Settings live changes need this.
+    Also undoes any WHISPER_DEVICE = "cpu" override from _force_reload_on_cpu
+    so choosing GPU again actually retries."""
     global _model, _model_is_on_gpu, _model_device, _model_compute_type, _gpu_fallback_reason
     with _model_lock:
         _model = None
@@ -350,9 +334,7 @@ def reload_model():
 
 
 def reload_model_async():
-    """Same as reload_model(), but also starts loading the new model on a
-    background thread, so the next command doesn't pay the load time inline.
-    Never blocks - safe to call from the GUI thread."""
+    """reload_model() then preload on a background thread. Never blocks; GUI-safe."""
     def reload_and_preload():
         reload_model()
         _get_model()
@@ -361,22 +343,19 @@ def reload_model_async():
 
 
 def preload():
-    """Loads the Whisper model now instead of lazily on first use. Call on
-    a background thread at startup (see main.py) so it's already warm by
-    your first command. Safe to call more than once - only the first load does anything."""
+    """Load Whisper now instead of lazily. Call on a background thread at startup.
+    Idempotent — only the first load does anything."""
     if start_streaming() is None:
         _get_model()
 
 
 def get_engine_status() -> str:
-    """Human-readable description of the speech-recognition engine actually
-    in use: model size, device, precision. Reflects what's really running,
-    since WHISPER_DEVICE/COMPUTE_TYPE can be "auto" and a GPU load can
-    silently fall back to CPU. Safe to call before the model has loaded."""
+    """Human-readable STT engine in use (model, device, precision).
+    Reflects reality: "auto" and GPU→CPU fallback. Safe before the model has loaded."""
     model_size = getattr(config, "WHISPER_MODEL_SIZE", "?")
 
     if _model is None:
-        # Not loaded yet - report what it would resolve to without triggering the load.
+        # Not loaded yet — report what it would resolve to without triggering the load.
         device, compute_type = _resolve_device_and_compute_type()
         where = "GPU (CUDA)" if device == "cuda" else "CPU"
         return (
@@ -404,12 +383,10 @@ def get_engine_status() -> str:
 
 
 def _apply_vocabulary_corrections(text: str) -> str:
-    """Fixes known mishearings (game names, app names, etc.) using
-    config.py's VOCABULARY_CORRECTIONS list. Two passes per entry:
-      1. Exact substring match against the listed mishearings.
-      2. Fuzzy match: slides a word-window roughly the correct phrase's
-         phrase across the text and swaps in the correct phrase wherever it's
-         a close match - this catches mishearings you haven't listed yet."""
+    """Fix known mishearings via VOCABULARY_CORRECTIONS. Per entry:
+    1. Exact substring match against listed mishearings.
+    2. Fuzzy: slide a word-window over the text and swap in the correct phrase
+       on a close match (catches unlisted mishearings)."""
     corrections = getattr(config, "VOCABULARY_CORRECTIONS", [])
 
     for correct, mishearings in corrections:
@@ -455,8 +432,8 @@ def transcribe(audio) -> str:
 
 
 def _transcribe_impl(audio) -> str:
-    # Keep the cached model and its device metadata on the same generation
-    # until inference and any GPU fallback finish. Settings reloads wait here.
+    # Hold the cached model + device metadata until inference and any GPU
+    # fallback finish. Settings reloads wait here.
     with _model_lock:
         return _transcribe_impl_locked(audio)
 
@@ -467,32 +444,22 @@ def _transcribe_impl_locked(audio) -> str:
         segments, _ = model.transcribe(
             audio,
             language="en",
-            beam_size=1,  # greedy on the first pass - fast; low-confidence segments
-                          # automatically retry at higher quality via temperature below
+            beam_size=1,  # greedy first pass; low-confidence retries via temperature
             temperature=(0.0, 0.2, 0.4, 0.6, 0.8, 1.0),
             compression_ratio_threshold=2.4,
-            # faster-whisper's default. Was tried at a stricter -0.85 so
-            # borderline mishearings retry, but on always-listening mic
-            # clips (which often have room noise) that tripped the retry
-            # path constantly - a much bigger speed cost than model size.
+            # Don't tighten: room-noise clips retried constantly (big speed cost).
             log_prob_threshold=getattr(config, "WHISPER_LOG_PROB_THRESHOLD", -1.0),
-            # Stops one uncertain segment from dragging down the next one's
-            # decoding (each segment normally biases the one after it) - no
-            # speed cost, avoids an error-cascade on accented speech.
+            # Don't let one uncertain segment bias the next (accented speech).
             condition_on_previous_text=False,
-            # Trims silence/noise before decoding - usually a wash or slight
-            # speedup, and stops dead air from getting hallucinated into junk text.
+            # Trim silence/noise; stops dead air from hallucinating into junk.
             vad_filter=True,
             initial_prompt=getattr(config, "WHISPER_INITIAL_PROMPT", None),
         )
-        segments = list(segments)  # force evaluation now, inside the try - faster-whisper
-                                    # decodes lazily, so a GPU DLL failure can surface here
+        segments = list(segments)  # evaluate now — faster-whisper decodes lazily; GPU DLL failure can surface here
     except Exception as e:
         if _model_is_on_gpu:
-            # Likely a missing/broken CUDA, cuBLAS, or cuDNN DLL -
-            # ctranslate2 often only touches those on the first real
-            # transcription rather than at load time. Recover by reloading
-            # on CPU and retrying, instead of taking down the listening loop.
+            # Missing/broken CUDA/cuBLAS/cuDNN — often only on first real
+            # transcription. Reload on CPU and retry instead of crashing the loop.
             print(f"[transcribe] GPU transcription failed ({e}); reloading on CPU and retrying")
             for line in _dll_diagnostics:
                 print(f"[transcribe]   {line}")
@@ -500,9 +467,8 @@ def _transcribe_impl_locked(audio) -> str:
                 "couldn't import it" in line or "no 'bin'" in line or "failed (" in line
                 for line in _dll_diagnostics
             ):
-                # All 3 packages look fine, so it's likely a CUDA-major-
-                # version mismatch: cublas64_12.dll needs CUDA 12
-                # specifically.
+                # Packages look fine → likely CUDA major-version mismatch
+                # (cublas64_12.dll needs CUDA 12).
                 print(
                     "[transcribe]   All 3 nvidia-*-cu12 packages look correctly "
                     "installed, so this is likely a CUDA version mismatch, not a "
@@ -527,9 +493,7 @@ def _transcribe_impl_locked(audio) -> str:
         else:
             raise
 
-    # Whisper is prone to hallucinating short filler words ("You", "Bye",
-    # "Thanks for watching") on mostly-silent/noisy audio - drop segments
-    # that look like this rather than treating them as a real command.
+    # Drop Whisper filler hallucinations on silent/noisy audio.
     kept = []
     for segment in segments:
         text = segment.text.strip()

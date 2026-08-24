@@ -1,28 +1,12 @@
 """
-Calendar/email integration - "what's my next meeting", "any important
-emails", and a proactive "you have a meeting in 10 minutes" via
-check_watch(). Uses your own Google account (Calendar + Gmail read-only),
-via OAuth - Alyssa never sees your password, and only ever reads mail/
-calendar, never sends or deletes anything.
+Read-only Google Calendar + Gmail (OAuth). Next meeting, today's schedule,
+unread inbox, and a check_watch() alert MEETING_WARNING_MINUTES before an event.
 
-ONE-TIME SETUP
+Setup: `pip install google-auth-oauthlib google-api-python-client`; put a
+Desktop OAuth `credentials.json` next to this plugin or main.py. First use
+opens a browser; token is saved in the OS credential store.
 
-  1. Make sure the Google auth libraries are installed:
-     pip install google-auth-oauthlib google-api-python-client
-
-  2. First time you ask Alyssa about your calendar/email, a browser tab
-     opens for you to sign in and approve read-only access. If Google asks
-     for a client ID/secret, it means the built-in sign-in flow hasn't been
-     configured yet for this install; in that case, create a Desktop OAuth
-     client in Google Cloud Console and save it as credentials.json next to
-     this plugin (or next to main.py/config.py) so Alyssa can use it.
-
-  3. After you sign in, the OAuth token is saved in the OS credential store
-     so you're not asked again until the token expires or is revoked.
-
-Everything below simply no-ops with a clear spoken message if the plugin is
-not yet authenticated, so this plugin is safe to leave installed even before
-setup is complete.
+Unauthenticated: spoken error / no-op. Never sends or deletes.
 """
 import datetime
 import json
@@ -52,8 +36,7 @@ except Exception:
     Request = Credentials = InstalledAppFlow = build = None
     _GOOGLE_LIBS_AVAILABLE = False
 
-# Read-only scopes on purpose - this plugin only ever reads, never sends/
-# deletes/modifies anything in your calendar or inbox.
+# Read-only: never send/delete/modify calendar or inbox.
 _SCOPES = [
     "https://www.googleapis.com/auth/calendar.readonly",
     "https://www.googleapis.com/auth/gmail.readonly",
@@ -68,8 +51,7 @@ _CREDENTIALS_PATH = os.path.join(_BASE_DIR, "credentials.json")
 _TOKEN_PATH = os.path.join(_BASE_DIR, "token.json")
 _TOKEN_SECRET_NAME = "GOOGLE_CALENDAR_GMAIL_OAUTH_TOKEN"
 
-# How many minutes before a meeting the proactive "you have a meeting in
-# X minutes" alert fires.
+# Minutes-before threshold for the check_watch() meeting alert.
 MEETING_WARNING_MINUTES = 10
 WATCH_INTERVAL_SECONDS = 60
 
@@ -114,8 +96,7 @@ def _migrate_legacy_token() -> bool:
 def _load_token_info():
     token_info = credential_store.get_json_secret(_TOKEN_SECRET_NAME)
     if isinstance(token_info, dict):
-        # A prior migration may have stored the secure copy but failed to
-        # remove the legacy file. Keep retrying cleanup without reimporting it.
+        # Secure copy already stored; retry leftover-file cleanup, don't reimport.
         _remove_legacy_token_file()
         return token_info
     if _migrate_legacy_token():
@@ -191,8 +172,7 @@ def _get_credentials():
 
 
 def _get_service(name: str, version: str):
-    """Cached per-API service client, since building one talks to Google's
-    discovery endpoint - not something to redo on every single request."""
+    """Cached Google API client; building hits the discovery endpoint."""
     key = f"{name}:{version}"
     if key in _service_cache:
         return _service_cache[key]
@@ -302,8 +282,7 @@ def get_todays_schedule() -> str:
 
 
 def check_important_emails(max_results: int = 5) -> str:
-    """Reports unread emails currently in the inbox (Gmail's own 'unread
-    in inbox' view, not a custom importance model)."""
+    """Unread INBOX messages (Gmail's unread view, not a custom importance model)."""
     error = _availability_check()
     if error:
         if error == _NO_CREDENTIALS_MSG:
@@ -343,11 +322,11 @@ _warned_event_ids = set()
 
 def check_watch():
     if _availability_check():
-        return None  # not set up / libs missing - stay silent, not a repeated nag
+        return None  # not set up: stay silent
     try:
         events = _fetch_upcoming_events(max_results=5)
     except Exception:
-        return None  # transient network/API hiccup - don't alert on our own errors
+        return None  # don't alert on fetch errors
 
     now = datetime.datetime.now().astimezone()
     for event in events:

@@ -1,9 +1,4 @@
-"""Regression test for the confirmation-bypass fix in brain.py.
-
-Ensures a model-supplied tool call cannot self-approve a
-confirmation-gated action by including "confirmed": true in its own
-arguments JSON. See plans/001-strip-confirmed-from-llm-tool-arguments.md.
-"""
+"""Model tool args must not self-approve via `"confirmed": true`."""
 import os
 import sys
 import unittest

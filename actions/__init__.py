@@ -80,21 +80,14 @@ _PLUGIN_LOAD_PROBLEMS = []
 
 
 def reload_plugins():
-    """(Re)loads every plugin from plugins/ and rebuilds FUNCTIONS,
-    PLUGIN_FUNCTIONS, PLUGIN_TOOLS, and _PLUGIN_LOAD_PROBLEMS from scratch.
-    Safe to call repeatedly - e.g. from the Settings > Plugins editor after
-    a save, enable/disable, add, or delete - since it always starts back
-    from _BUILTIN_FUNCTIONS rather than mutating the previous state.
-    Callers that also need brain.TOOLS to reflect the change should call
-    brain.reload_plugin_tools() right after this."""
+    """Reload plugins/; rebuild FUNCTIONS, PLUGIN_FUNCTIONS, PLUGIN_TOOLS,
+    _PLUGIN_LOAD_PROBLEMS from _BUILTIN_FUNCTIONS (not prior state).
+    Repeatable. Then brain.reload_plugin_tools() if TOOLS must update."""
     global FUNCTIONS, PLUGIN_FUNCTIONS, PLUGIN_TOOLS, _PLUGIN_LOAD_PROBLEMS
 
     plugin_functions, plugin_tools = plugin_loader.load_plugins()
 
-    # Plugins are intentionally unable to replace a built-in action. Aside
-    # from matching the documented contract, this prevents a stray plugin
-    # file from silently changing core behavior such as delete_file or
-    # run_command.
+    # Plugins cannot replace built-in actions.
     problems = []
     for plugin_name in list(plugin_functions):
         if plugin_name in _BUILTIN_FUNCTIONS:

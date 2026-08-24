@@ -19,11 +19,8 @@ except ImportError:  # Existing installs keep file-based playback until updated.
 from config import AUDIO_SETTINGS as config
 
 async def _synthesize(text: str, out_path: str):
-    """Dispatches to whichever provider TTS_PROVIDER (config.py) selects.
-    Runs on the shared background loop either way - the ElevenLabs path is
-    a blocking `requests` call under the hood, so it's handed to a thread
-    pool executor rather than awaited directly, same effect as `await
-    communicate.save()` below from the caller's point of view."""
+    """Dispatch to TTS_PROVIDER. Runs on the shared background loop.
+    ElevenLabs is a blocking requests call, so it's run_in_executor'd."""
     provider = getattr(config, "TTS_PROVIDER", "edge")
     if provider == "elevenlabs":
         loop = asyncio.get_running_loop()
@@ -42,24 +39,16 @@ async def _synthesize_edge(text: str, out_path: str):
     await communicate.save(out_path)
 
 
-# Reused across every ElevenLabs call instead of opening a fresh
-# requests.post() each time. requests.Session() keeps the underlying
-# TCP/TLS connection to api.elevenlabs.io alive (HTTP keep-alive) and
-# pools it, so back-to-back sentences (see _speak_pipelined above) skip
-# the ~100-300ms handshake that a brand-new connection pays every time -
-# this alone was a big chunk of the "laggy" feeling versus Edge TTS,
-# which edge_tts pools internally already.
+# Reused Session: keep-alive to api.elevenlabs.io so pipelined sentences
+# skip the ~100-300ms handshake a fresh connection pays each time.
 _eleven_session = requests.Session()
 
 
 def _synthesize_elevenlabs(text: str, out_path: str):
-    """Blocking call - only ever run via run_in_executor above, never
-    directly on the shared event loop thread.
+    """Blocking — only via run_in_executor, never on the shared event-loop thread.
 
-    Uses ElevenLabs' streaming endpoint and writes chunks as they arrive.
-    pygame still requires a completed file before playback, so this is not
-    end-to-end audio streaming; short first sentences are what reduce
-    time-to-first-audio through _speak_pipelined().
+    Streaming endpoint, writes chunks as they arrive. pygame still needs a
+    completed file; short first sentences cut time-to-first-audio via pipelining.
     """
     api_key = getattr(config, "ELEVENLABS_API_KEY", "")
     voice_id = getattr(config, "ELEVENLABS_VOICE_ID", "")
@@ -76,9 +65,7 @@ def _synthesize_elevenlabs(text: str, out_path: str):
             "text": text,
             "model_id": getattr(config, "ELEVENLABS_MODEL", "eleven_multilingual_v2"),
         },
-        # (connect timeout, per-chunk read timeout) - streaming responses
-        # are read incrementally below, so the timeout has to apply per
-        # chunk rather than to the whole response like the old call.
+        # (connect timeout, per-chunk read timeout) — streaming is read incrementally.
         timeout=(10, 30),
         stream=True,
     )
@@ -95,10 +82,8 @@ def _synthesize_elevenlabs(text: str, out_path: str):
                 f.write(chunk)
 
 
-# Cache of the full Edge voice catalog (~400 voices) - fetched once per
-# process since it's a real network call and the catalog itself rarely
-# changes within a session. Only populated on demand (the Settings
-# "Browse all voices" picker), never at startup.
+# Full Edge voice catalog, fetched once per process. Populated on demand
+# (Settings picker), never at startup.
 _edge_voices_cache = None
 
 
@@ -107,15 +92,10 @@ async def _fetch_edge_voices_async():
 
 
 def list_edge_voices(force_refresh: bool = False) -> list:
-    """Returns the full Microsoft Edge neural voice catalog - hundreds of
-    voices across roughly 140 locales - as a list of dicts (ShortName,
-    Locale, Gender, FriendlyName, ...). Cached after the first call; pass
-    force_refresh=True to bypass that and hit the network again. Runs a
-    blocking network call the first time (or on a forced refresh), so
-    callers driving a GUI should call this from a background thread, not
-    the GUI thread. Raises on failure - deliberately not swallowed here,
-    since a silently-empty list would look like Edge TTS itself has no
-    voices rather than "the request failed"."""
+    """Microsoft Edge neural voice catalog as dicts (ShortName, Locale, Gender, ...).
+    Cached after first call; force_refresh=True hits the network again.
+    Blocking — call from a background thread, not the GUI thread.
+    Raises on failure (empty list would look like "no voices")."""
     global _edge_voices_cache
     if _edge_voices_cache is not None and not force_refresh:
         return _edge_voices_cache
@@ -126,13 +106,8 @@ def list_edge_voices(force_refresh: bool = False) -> list:
 
 
 def list_elevenlabs_voices(api_key: str) -> list:
-    """Fetches the given account's available ElevenLabs voices - both
-    ElevenLabs' premade library and any voices the account has cloned or
-    designed itself. A blocking network call; run off the GUI thread.
-    Returns a list of {"voice_id", "name", "category"} dicts. Raises on
-    failure (bad key, network error, etc.) - callers should catch and
-    report that rather than showing an empty list as if the account just
-    has no voices."""
+    """Account's ElevenLabs voices (premade + cloned/designed). Blocking; run off GUI thread.
+    Returns [{"voice_id", "name", "category"}, ...]. Raises on failure."""
     resp = requests.get(
         "https://api.elevenlabs.io/v1/voices",
         headers={"xi-api-key": api_key},
@@ -156,11 +131,8 @@ def list_elevenlabs_voices(api_key: str) -> list:
     ]
 
 
-# A single background event loop, reused for every synthesis call instead of
-# spinning one up and tearing it down each time (asyncio.run() does this
-# under the hood). Creating/closing a loop per sentence adds up across a
-# pipelined reply and is pure overhead on top of the actual network request,
-# so it's worth keeping one alive for the life of the program.
+# One background event loop for the process lifetime; asyncio.run() per
+# sentence is pure overhead on pipelined replies.
 _loop = None
 _loop_lock = threading.Lock()
 
@@ -276,8 +248,8 @@ class _ElevenRealtimeTTS:
 _eleven_realtime_tts = _ElevenRealtimeTTS()
 
 def _synthesize_to_temp_file(text: str) -> str:
-    """Synthesizes *text* to a new temp .mp3 file and returns its path.
-    Raises on failure, cleaning up the temp file itself first."""
+    """Synthesize *text* to a new temp .mp3 and return its path.
+    Raises on failure after cleaning up the temp file."""
     fd, path = tempfile.mkstemp(suffix=".mp3")
     os.close(fd)
     try:

@@ -1,6 +1,4 @@
-"""Unit tests for nameutil.py's name-detection logic. See
-plans/004-establish-test-baseline-pure-logic-modules.md.
-"""
+"""nameutil.py name-detection tests."""
 import os
 import sys
 import unittest

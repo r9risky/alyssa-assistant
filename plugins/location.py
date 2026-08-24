@@ -1,7 +1,4 @@
-"""
-Location plugin - gives Alyssa a "get_my_location" ability, e.g. "where am I".
-Uses IP-based geolocation via ipapi.co.
-"""
+"""IP geolocation via ipapi.co. get_my_location / get_ip_location."""
 import time
 import requests
 import config

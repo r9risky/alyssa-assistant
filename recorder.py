@@ -14,46 +14,29 @@ from config import AUDIO_SETTINGS as config
 import nameutil
 import transcribe
 
-# How much longer than MAX_RECORD_SECONDS to wait before deciding the mic
-# read itself has hung (device unplugged, driver stall, etc).
+# Extra wait past MAX_RECORD_SECONDS before treating a mic read as hung.
 _WATCHDOG_GRACE_SECONDS = 5.0
 
-# Serializes PortAudio re-init recovery across reaper threads (see _reap_and_recover).
+# Serializes PortAudio re-init across reaper threads (see _reap_and_recover).
 _recovery_lock = threading.Lock()
 
-# Counts InputStreams currently open on ANY thread (a normal listen pass, a
-# barge-in listener, or a fresh pass started right after a stall). A stalled
-# worker's stream doesn't decrement this until stream.read() actually
-# returns, so as long as it's stuck, its stream still counts as "open."
-# _reap_and_recover waits for this to hit zero before resetting PortAudio -
-# see _open_stream() and the docstring below for why that matters.
+# Open InputStream count across all threads. A stalled worker's stream
+# stays counted until stream.read() returns. _reap_and_recover waits for
+# zero before resetting PortAudio.
 _active_streams = 0
 _active_streams_lock = threading.Lock()
 
 
-# How long to keep retrying for the configured microphone on the very
-# first lookup before giving up. Covers USB/Bluetooth mics that haven't
-# finished reconnecting yet when Alyssa is launched automatically at
-# Windows login (scripts/install_startup.bat's Task Scheduler task fires
-# right at logon - much earlier than a manual double-click of
-# start_alyssa.bat typically would, before such a device has re-paired).
-# Only the first lookup waits like this; a mic that disappears later
-# (unplugged mid-session) still fails immediately instead of hanging
-# every subsequent call.
+# First lookup only: retry the configured mic for this long (USB/BT may
+# not have re-paired yet at logon). Later disappearances fail immediately.
 _STARTUP_DEVICE_WAIT_SECONDS = 20.0
 _startup_device_wait_used = False
 
 
 def _find_configured_device(needle):
-    """Return the sounddevice index of the first input whose name matches
-    needle. Prefers an entry that passes check_input_settings(), but falls
-    back to the first name match even if that check fails - the same
-    device name is often listed once per Windows host API (MME,
-    DirectSound, WASAPI, WDM-KS), and check_input_settings() rejecting one
-    of those variants doesn't mean the device itself can't record; it can
-    end up rejecting every single matching entry for a mic that plays
-    perfectly fine in other apps, which used to mean Alyssa silently never
-    listened at all whenever anything but "Default" was picked."""
+    """First input index whose name matches *needle*. Prefers
+    check_input_settings() success; falls back to the first name match if
+    every variant fails (Windows lists the same device per host API)."""
     fallback = None
     for index, device in enumerate(sd.query_devices()):
         if device["max_input_channels"] <= 0 or needle not in device["name"].lower():
@@ -94,11 +77,8 @@ def _configured_input_device():
         )
         while time.time() < deadline:
             time.sleep(1.0)
-            # Re-scan PortAudio's device list - a Bluetooth/USB mic that
-            # reconnects after this process started otherwise never shows
-            # up, since sd.query_devices() alone only reflects devices
-            # seen at PortAudio init. Safe here: no InputStream is open
-            # yet (this runs before _open_stream ever opens one).
+            # Re-scan PortAudio's device list — query_devices() alone only
+            # reflects devices seen at init. Safe: no InputStream open yet.
             with _recovery_lock:
                 try:
                     sd._terminate()
@@ -119,8 +99,7 @@ def _configured_input_device():
 
 @contextlib.contextmanager
 def _open_stream(**kwargs):
-    """sd.InputStream(**kwargs), tracked so _reap_and_recover can tell
-    whether any stream - not just the one that stalled - is still live."""
+    """sd.InputStream(**kwargs), tracked so _reap_and_recover knows if any stream is live."""
     global _active_streams
     kwargs.setdefault("device", _configured_input_device())
     with sd.InputStream(**kwargs) as stream:
@@ -132,10 +111,8 @@ def _open_stream(**kwargs):
             with _active_streams_lock:
                 _active_streams -= 1
 
-# --- Adaptive silence timeout (fast/slow talkers) ---
-# See ADAPTIVE_SILENCE_* in config.py. Tracks a running words-per-second
-# estimate to shrink/stretch the "pause before done" threshold per person.
-# In-memory/session-only - resets to the config default on restart.
+# Adaptive silence (ADAPTIVE_SILENCE_* in config). Session-only WPS EMA;
+# resets to the config default on restart.
 _rate_lock = threading.Lock()
 _words_per_second_ema = None  # None until we have at least one real sample
 _FRAME_MS = 30  # must match the frame_ms used in _record_command_blocking
@@ -143,10 +120,8 @@ _last_speech_frames = 0  # from the most recent recording; read by update_speaki
 
 
 def _current_silence_seconds() -> float:
-    """The silence-before-done threshold to use for the NEXT recording,
-    based on the running speaking-rate estimate. Falls back to the flat
-    config.SILENCE_SECONDS if adaptive timing is disabled or we don't have
-    a sample yet."""
+    """Silence-before-done threshold for the next recording, from the WPS EMA.
+    Falls back to config.SILENCE_SECONDS if adaptive is off or no sample yet."""
     if not getattr(config, "ADAPTIVE_SILENCE_ENABLED", True):
         return config.SILENCE_SECONDS
 
@@ -173,9 +148,8 @@ def _current_silence_seconds() -> float:
 
 
 def update_speaking_rate(word_count: int) -> None:
-    """Call after transcribing a command, passing Whisper's word count, to
-    refine the running speaking-rate estimate via an exponential moving
-    average. Safe to call even when adaptive timing is disabled (no-op)."""
+    """After transcribing, pass Whisper's word count to refine the WPS EMA.
+    No-op if adaptive timing is disabled."""
     global _words_per_second_ema
 
     with _rate_lock:
@@ -188,8 +162,7 @@ def update_speaking_rate(word_count: int) -> None:
         return  # too short a sample to trust (e.g. a bare "yes")
 
     sample_wps = word_count / speech_seconds
-    # Clamp obviously-bogus samples (VAD noise, a Whisper hallucination)
-    # so they can't wildly swing the average in one shot.
+    # Clamp bogus samples (VAD noise / hallucination) so one shot can't swing the EMA.
     sample_wps = max(0.3, min(sample_wps, 6.0))
 
     alpha = getattr(config, "ADAPTIVE_SILENCE_EMA_ALPHA", 0.3)
@@ -201,14 +174,10 @@ def update_speaking_rate(word_count: int) -> None:
 
 
 def _record_command_blocking(result_q: "queue.Queue", text_queue: "Optional[queue.Queue]" = None) -> None:
-    """The actual (blocking) recording work. Runs on a worker thread so the
-    caller can enforce a timeout - see record_command() below. Puts an
-    (audio_or_None, error_or_None) tuple on result_q when done, or never
-    returns if stream.read() itself hangs.
+    """Blocking record on a worker so the caller can timeout (see record_command).
+    Puts (audio_or_None, error_or_None) on result_q, or never returns if stream.read() hangs.
 
-    If text_queue is given (the desktop companion's typed-chat box), this
-    checks it every ~30ms and abandons the recording pass early the moment
-    a typed message shows up."""
+    If text_queue is given (typed chat), abandon the pass as soon as a message arrives."""
     try:
         vad = webrtcvad.Vad(getattr(config, "VAD_AGGRESSIVENESS", 2))
         frame_ms = _FRAME_MS
@@ -217,8 +186,7 @@ def _record_command_blocking(result_q: "queue.Queue", text_queue: "Optional[queu
         silence_seconds = _current_silence_seconds()
         silence_frames_needed = int(silence_seconds * 1000 / frame_ms)
         max_frames = int(config.MAX_RECORD_SECONDS * 1000 / frame_ms)
-        # Require a short sustained run of speech frames (not just one) to
-        # filter out stray noise blips (click, cough, chair creak).
+        # Require a short run of speech frames, not one blip (click/cough).
         min_speech_frames = max(
             1, int(getattr(config, "MIN_SPEECH_MS", 120) / frame_ms)
         )
@@ -242,9 +210,7 @@ def _record_command_blocking(result_q: "queue.Queue", text_queue: "Optional[queu
         ) as stream:
             for _ in range(max_frames):
                 if text_queue is not None and not text_queue.empty():
-                    # Typed message arrived - stop now (heard_speech stays
-                    # False, like an ordinary "nothing said" pass); partial
-                    # audio is dropped.
+                    # Typed message — stop now (heard_speech stays False); drop partial audio.
                     print("Typed message arrived - pausing mic listen.")
                     break
 
@@ -333,13 +299,10 @@ def listen_for_barge_in(
             dtype="int16",
             blocksize=frame_size,
         ) as stream:
-            # Attempt loop: with BARGE_IN_REQUIRE_NAME on, a burst of speech
-            # that turns out not to contain her name doesn't stop her - we
-            # just go back to watching the mic for another attempt, as long
-            # as she's still talking.
+            # With BARGE_IN_REQUIRE_NAME, speech without her name doesn't
+            # stop her — retry while she's still talking.
             while not playback_done_event.is_set():
-                # Phase 1: wait for enough sustained speech to count as a
-                # real attempt (not a cough, chair creak, or speaker bleed).
+                # Phase 1: wait for enough sustained speech (not a cough / speaker bleed).
                 frames = []
                 speech_run = 0
                 triggered = False
@@ -356,20 +319,18 @@ def listen_for_barge_in(
                         if speech_run >= min_speech_frames:
                             triggered = True
                             if not require_name:
-                                # Old behavior: any sustained speech stops
-                                # her immediately, no name check needed.
+                                # Any sustained speech stops her immediately.
                                 stop_speaking_event.set()
                                 print("(Interrupted - listening...)")
                             break
                     else:
                         speech_run = 0
-                        frames = []  # discard - just a blip, not the start of real speech
+                        frames = []  # discard blip
 
                 if not triggered:
                     return None  # she finished speaking (or a typed msg arrived) before you cut in
 
-                # Phase 2: keep recording the rest of what you're saying, same
-                # shape as _record_command_blocking's own loop, until you pause.
+                # Phase 2: keep recording until pause, same shape as _record_command_blocking.
                 streaming_stt = transcribe.start_streaming()
                 if streaming_stt is not None:
                     try:
@@ -411,10 +372,8 @@ def listen_for_barge_in(
                         _last_speech_frames = total_speech_frames
                     return audio
 
-                # Phrase-gated: transcribe what you said and only actually
-                # interrupt her if both her name and "stop" were said. This
-                # means she keeps talking through the transcription round trip;
-                # the phrase cannot be checked before it is transcribed.
+                # Phrase-gated: only interrupt if name + "stop" were said.
+                # She keeps talking through the transcription round trip.
                 heard = transcribe.transcribe(audio)
                 if nameutil.is_stop_request(heard):
                     stop_speaking_event.set()
@@ -433,19 +392,13 @@ def listen_for_barge_in(
 
 
 def _reap_and_recover(worker: threading.Thread) -> None:
-    """Runs on its own daemon thread after a stalled mic read is abandoned.
+    """After a stalled mic read is abandoned. Daemon thread.
 
-    Must NOT call sd._terminate()/_initialize() while ANY stream is open -
-    not just `worker`'s own. The outer loop doesn't wait around for a stall
-    to resolve; it moves on and opens fresh InputStreams for the next listen
-    pass (and for barge-in) right away. If one of those later streams is
-    live on another thread when this fires, racing a global PortAudio
-    teardown/rebuild against it corrupts the heap and crashes the whole
-    process - silently, with no traceback, often minutes after the stall
-    that caused it. So this waits for the stuck worker to finish, then for
-    _active_streams to actually hit zero, before touching global state. If
-    the device is gone forever, this waits forever too, harmlessly, in the
-    background."""
+    Must NOT call sd._terminate()/_initialize() while ANY stream is open —
+    the outer loop opens fresh streams immediately. Racing PortAudio teardown
+    against a live stream corrupts the heap. Wait for the worker to finish,
+    then _active_streams == 0, before touching global state. If the device is
+    gone forever this waits forever, harmlessly, in the background."""
     worker.join()
     while True:
         with _active_streams_lock:
@@ -461,21 +414,15 @@ def _reap_and_recover(worker: threading.Thread) -> None:
 
 
 def record_command(text_queue: "Optional[queue.Queue]" = None) -> Optional[np.ndarray]:
-    """Records audio and returns it as a float32 numpy array for Whisper,
-    or None if no real speech was heard, the mic hung, or a typed message
-    arrived on text_queue and interrupted the listen.
+    """Record audio as float32 for Whisper, or None if no speech / mic hung /
+    a typed message arrived on text_queue.
 
-    Runs on a worker thread with a timeout, since sd.InputStream.read() can
-    block forever if the audio device stalls (previously this froze Alyssa
-    silently with no recovery short of a restart). If the read doesn't
-    return within a grace period past MAX_RECORD_SECONDS, this gives up and
-    hands control back to the outer loop; a background thread separately
-    waits for the stalled read to finish before nudging PortAudio to
-    re-scan devices - see _reap_and_recover() for why that can't happen
-    immediately.
+    Worker-thread timeout: sd.InputStream.read() can block forever. If it
+    doesn't return within MAX_RECORD_SECONDS + grace, give up; a reaper
+    thread waits for the stalled read before PortAudio re-scan
+    (see _reap_and_recover — must not happen while any stream is open).
 
-    text_queue, when given, is the desktop companion's typed-chat queue -
-    lets a typed message interrupt an in-progress mic listen."""
+    text_queue: typed-chat queue; a message interrupts an in-progress listen."""
     timeout = config.MAX_RECORD_SECONDS + _WATCHDOG_GRACE_SECONDS
 
     result_q: "queue.Queue" = queue.Queue(maxsize=1)
@@ -494,9 +441,8 @@ def record_command(text_queue: "Optional[queue.Queue]" = None) -> Optional[np.nd
             "PortAudio gives no safe way to force it to stop mid-read. "
             "Device recovery will happen once that thread actually finishes."
         )
-        # Do NOT touch PortAudio's global state here - the worker may still
-        # be blocked inside stream.read(); hand recovery to a reaper thread
-        # that waits for it to finish first (see _reap_and_recover).
+        # Do NOT touch PortAudio here — worker may still be in stream.read();
+        # hand recovery to a reaper that waits first (see _reap_and_recover).
         threading.Thread(
             target=_reap_and_recover, args=(worker,), daemon=True
         ).start()

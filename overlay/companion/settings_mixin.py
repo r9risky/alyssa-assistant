@@ -12,8 +12,7 @@ from ..theming import _build_messagebox_style, _theme
 
 class SettingsMixin:
     def open_settings(self, focus_gemini: bool = False):
-        # If Settings is already open, just bring it to front instead of
-        # spawning a second one on top of it.
+        # Reuse an already-open Settings instead of spawning a second.
         existing = getattr(self, "_settings_dialog", None)
         if existing is not None:
             try:
@@ -39,18 +38,13 @@ class SettingsMixin:
                     existing.gemini_key_edit.setFocus()
                 return
             except RuntimeError:
-                # The underlying C++ object was already destroyed (closed
-                # since we last checked, e.g. via WA_DeleteOnClose) -
-                # fall through and open a fresh one below.
+                # C++ object already destroyed (WA_DeleteOnClose) — open a fresh one.
                 self._settings_dialog = None
 
         from ..settings_dialog import ConfigDialog
 
         dialog = ConfigDialog(self, focus_gemini=focus_gemini)
-        # Keep a reference on self so Python doesn't garbage-collect the
-        # dialog the moment this method returns - unlike exec()'s blocking
-        # local event loop, show() returns immediately, so nothing else
-        # would otherwise keep it alive.
+        # Keep a ref: show() returns immediately, unlike exec().
         self._settings_dialog = dialog
         dialog.finished.connect(self._on_settings_dialog_finished)
         dialog.ensurePolished()
@@ -70,9 +64,7 @@ class SettingsMixin:
         self._settings_dialog = None
 
     def prompt_gemini_key_setup(self):
-        """Friendly, beginner-guided version of 'you need an API key' -
-        shown instead of a scary error box when Gemini is selected but no
-        key is set yet, e.g. on first launch."""
+        """First-launch Gemini key prompt (not a scary error box)."""
         if self.bubble:
             self.bubble.show_message(
                 "I need a free Gemini API key before I can think! "

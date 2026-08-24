@@ -24,9 +24,7 @@ from .companion.settings_mixin import SettingsMixin
 from .companion.talk_state_mixin import TalkStateMixin
 
 class Bridge(QObject):
-    """Thread-safe signal bus: the assistant loop runs on a background
-    thread and talks to the GUI (which lives on the main thread) only
-    through these signals."""
+    """Thread-safe bus: assistant loop (background) → GUI (main thread) via these signals only."""
 
     speak_signal = Signal(str)
     error_signal = Signal(str)
@@ -38,10 +36,7 @@ class Bridge(QObject):
 
     def __init__(self):
         super().__init__()
-        # Messages typed into the chat box (ChatInputBar). A plain
-        # queue.Queue rather than a Signal because the consumer
-        # (main.run_assistant_loop, background thread) just polls it
-        # alongside the mic and never touches a Qt object.
+        # ChatInputBar → main.run_assistant_loop (background poll, not a Qt Signal).
         self.text_queue = queue.Queue()
 
 
@@ -97,17 +92,11 @@ class SpeechBubble(_TopmostWindowMixin, QWidget):
         self.label.setStyleSheet(f"QLabel {{ background: transparent; color: {_t0['bubble_text']}; }}")
         self.label.move(_BUBBLE_PAD_X, _BUBBLE_PAD_Y)
 
-        # Talk-synced visibility: rather than a fixed "show for N seconds"
-        # timer, the bubble watches her actual talk_start/talk_end signals
-        # and only starts its short linger-then-fade countdown once she's
-        # done speaking. bubble_seconds in Settings is that linger, not a
-        # hard total display time.
+        # Linger starts on talk_end; bubble_seconds is linger, not total display time.
         self._hide_timer = QTimer(self)
         self._hide_timer.setSingleShot(True)
         self._hide_timer.timeout.connect(self._fade_out)
-        # Absolute safety net in case talk_end somehow never arrives (e.g.
-        # SPEAK_RESPONSES/voice playback throws before the finally block -
-        # shouldn't happen, but a stuck-forever bubble would be worse).
+        # Safety net if talk_end never arrives (e.g. TTS throws before finally).
         self._safety_timer = QTimer(self)
         self._safety_timer.setSingleShot(True)
         self._safety_timer.timeout.connect(self._fade_out)
@@ -117,20 +106,14 @@ class SpeechBubble(_TopmostWindowMixin, QWidget):
         self._show_group = QParallelAnimationGroup(self)
         self._show_group.addAnimation(self._opacity_anim)
         self._show_group.addAnimation(self._pos_anim)
-        # PySide warns when disconnect() is called with no matching slot.
-        # Keep track of our one temporary fade-out callback so we disconnect
-        # it only when it is actually attached.
+        # Track the one-shot fade-out callback; disconnect only when attached (PySide warns otherwise).
         self._hide_on_fade_finished = False
 
         self._talking = False
         self.setWindowOpacity(0.0)
         self.hide()
 
-        # -- "Thinking..." indicator ---------------------------------
-        # Shown while a command has been captured but the model hasn't
-        # replied yet (see show_thinking / bridge.thinking_signal). Its
-        # own timer animates the dots; it's cleared the moment a real
-        # message comes in via show_message.
+        # Thinking dots until show_message; driven by thinking_signal.
         self._thinking = False
         self._thinking_dots = 0
         self._thinking_timer = QTimer(self)
@@ -180,9 +163,7 @@ class SpeechBubble(_TopmostWindowMixin, QWidget):
         self._pos_anim.setEasingCurve(QEasingCurve.OutCubic)
         self._show_group.start()
 
-        # No linger/hide timer here - she stays "thinking" until the real
-        # reply arrives via show_message() (which clears self._thinking).
-        # Only a generous safety net in case something upstream hangs.
+        # Stay until show_message clears _thinking; long safety net if upstream hangs.
         self._thinking_timer.start(450)
         seconds = max(1, int(self.settings.get("bubble_seconds", 7)))
         self._safety_timer.start(max(20, seconds * 6) * 1000)
@@ -200,9 +181,6 @@ class SpeechBubble(_TopmostWindowMixin, QWidget):
         try:
             self._show_message_impl(text)
         except Exception:
-            # Guaranteed to print regardless of how Qt's queued-slot
-            # dispatch handles (or swallows) exceptions - don't rely on
-            # sys.excepthook alone for this.
             import traceback
             print("[bubble ERROR] show_message raised an exception:")
             traceback.print_exc()
@@ -231,9 +209,6 @@ class SpeechBubble(_TopmostWindowMixin, QWidget):
         self._resize_to_content()
         target_pos = self._compute_position()
 
-        # Slide in from a little below/above its resting spot (matching
-        # whichever side the tail is on) while fading in - a lot livelier
-        # than just popping into existence.
         start_offset = -14 if self._tail_on_top else 14
         self.move(target_pos.x(), target_pos.y() + start_offset)
         self.setWindowOpacity(0.0)
@@ -241,10 +216,7 @@ class SpeechBubble(_TopmostWindowMixin, QWidget):
         self.raise_()
 
         self._opacity_anim.stop()
-        # _opacity_anim is reused for both fade-in (here) and fade-out
-        # (_fade_out, below), which connects `finished` to self.hide().
-        # Clear that connection before every fade-in, or this fade-in's
-        # own completion would immediately re-trigger hide().
+        # _opacity_anim is also used for fade-out; drop hide-on-finished before fade-in or this completion would hide immediately.
         self._clear_fade_hide_callback()
         self._opacity_anim.setDuration(220)
         self._opacity_anim.setStartValue(0.0)
@@ -258,34 +230,28 @@ class SpeechBubble(_TopmostWindowMixin, QWidget):
         self._pos_anim.setEasingCurve(QEasingCurve.OutCubic)
         self._show_group.start()
 
-        # Safety net: hide no matter what at most ~4x the linger setting
-        # past the normal minimum, even if talk_end never fires.
+        # Hide by ~4x linger even if talk_end never fires.
         seconds = max(1, int(self.settings.get("bubble_seconds", 7)))
         self._safety_timer.start(max(8, seconds * 4) * 1000)
 
-        # If she isn't actually mid-talk right now (SPEAK_RESPONSES off, or
-        # shown outside the normal speak() flow), fall back to a timed hide
-        # so the bubble doesn't linger forever.
+        # Not mid-talk (SPEAK_RESPONSES off / shown outside speak()): timed hide so it doesn't linger forever.
         if not self._talking:
             self._hide_timer.start(seconds * 1000)
 
     def on_talk_start(self):
-        """Wired to bridge.talk_start_signal - keeps the bubble on screen
-        for as long as she's actually speaking."""
+        """Keep the bubble up for the duration of speech."""
         self._talking = True
         self._hide_timer.stop()
         self._safety_timer.stop()
 
     def on_reply_pending(self):
-        """Keeps a newly shown reply visible while TTS is being prepared."""
+        """Keep a newly shown reply visible while TTS is being prepared."""
         self._talking = True
         self._hide_timer.stop()
         self._safety_timer.stop()
 
     def on_talk_end(self):
-        """Wired to bridge.talk_end_signal - starts the short linger before
-        fading the bubble out, timed to when she actually finished talking
-        rather than a fixed guess from when the text first appeared."""
+        """Start linger → fade, timed from actual talk_end (not from when text first appeared)."""
         self._talking = False
         seconds = max(1, int(self.settings.get("bubble_seconds", 7)))
         self._hide_timer.start(seconds * 1000)
@@ -314,21 +280,13 @@ class SpeechBubble(_TopmostWindowMixin, QWidget):
         x = cw.x() + cw.width() // 2 - self.width() // 2
         y = cw.y() - self.height() - 4
 
-        # QGuiApplication.screenAt()/primaryScreen() can both momentarily
-        # return None (a display was just unplugged, a DPI change is in
-        # progress, etc.) - previously this fell through to
-        # availableGeometry() and raised AttributeError, which Qt swallows
-        # silently on a queued slot, so the bubble just never appeared with
-        # no error printed. Fall back to any available screen instead.
         screen = (
             QGuiApplication.screenAt(cw.pos())
             or QGuiApplication.primaryScreen()
             or (QGuiApplication.screens()[0] if QGuiApplication.screens() else None)
         )
         if screen is None:
-            # No screens reported at all - nothing sensible to clamp
-            # against, just use her own position unclamped rather than
-            # crashing the slot.
+            # No screens: unclamped companion position rather than crashing the slot.
             self._tail_on_top = True
             self._tail_x = max(_BUBBLE_RADIUS + 6, self.width() // 2)
             self.label.move(_BUBBLE_PAD_X, _BUBBLE_PAD_Y)
@@ -337,13 +295,11 @@ class SpeechBubble(_TopmostWindowMixin, QWidget):
         geo = screen.availableGeometry()
         x = max(geo.left(), min(x, geo.right() - self.width()))
 
-        # Keep the bubble above her at all times instead of switching to a
-        # below-her placement when there isn't enough room above.
+        # Always above her (no below-her flip). Clamp y to screen top.
         self._tail_on_top = True
         y = max(geo.top() + 4, y)
 
-        # Tail tip aligns with her horizontal center, clamped so it never
-        # points outside the rounded corners of the bubble.
+        # Tail at her horizontal center, clamped inside the rounded body.
         target_center = cw.x() + cw.width() // 2
         self._tail_x = max(
             _BUBBLE_RADIUS + 6, min(target_center - x, self.width() - _BUBBLE_RADIUS - 6)
@@ -352,9 +308,7 @@ class SpeechBubble(_TopmostWindowMixin, QWidget):
         return QPoint(x, y)
 
     def reposition(self):
-        """Re-anchors the bubble to the companion's current position
-        without restarting the fade/slide animation - used while dragging
-        or resizing her."""
+        """Re-anchor to the companion without restarting fade/slide (drag/resize)."""
         if not self.isVisible():
             return
         pos = self._compute_position()
@@ -392,9 +346,7 @@ class SpeechBubble(_TopmostWindowMixin, QWidget):
         tail.closeSubpath()
         full = path.united(tail)
 
-        # Soft layered "shadow" (cheap manual blur -- a few translucent
-        # copies offset slightly downward, since QGraphicsEffect doesn't
-        # play well with a translucent, frameless, always-on-top window).
+        # Manual layered shadow: QGraphicsEffect fights translucent frameless always-on-top windows.
         shadow_r, shadow_g, shadow_b = t["bubble_shadow"]
         for i, alpha in ((6, 12), (4, 18), (2, 26)):
             shadow_path = QPainterPath()
@@ -457,8 +409,7 @@ class ChatInputBar(_TopmostWindowMixin, QWidget):
         self.edit.setPlaceholderText(f"Type to {name}...")
 
     def apply_theme(self):
-        """Re-applies light/dark styling - called on creation and whenever
-        Settings changes dark_mode (see CompanionWindow.apply_companion_settings)."""
+        """Re-apply light/dark styling (creation + Settings dark_mode change)."""
         t = _theme(self.settings)
         self.edit.setStyleSheet(f"""
             QLineEdit {{
@@ -483,14 +434,10 @@ class ChatInputBar(_TopmostWindowMixin, QWidget):
         if not text:
             return
         self.edit.clear()
-        # Thread-safe hand-off to main.run_assistant_loop, which polls this
-        # queue on its own background thread alongside the mic - see
-        # Bridge.__init__ for why this is a plain queue.Queue.
         self.bridge.text_queue.put(text)
 
     def apply_enabled(self):
-        """Shows/hides the bar per settings["chatbox_enabled"] - called on
-        creation and whenever Settings changes that checkbox."""
+        """Show/hide per settings['chatbox_enabled']."""
         if self.settings.get("chatbox_enabled", True):
             self.reposition()
             self.show()
@@ -498,17 +445,11 @@ class ChatInputBar(_TopmostWindowMixin, QWidget):
             self.hide()
 
     def reposition(self):
-        """Re-anchors the bar next to the companion's current
-        position/size, on whichever side settings["chatbox_position"] says
-        ("bottom" / "left" / "right") - called any time she's moved or
-        resized (see CompanionWindow.mouseMoveEvent), same as
-        SpeechBubble.reposition()."""
+        """Re-anchor to companion: chatbox_position is bottom/left/right. Clamp to screen; do not flip sides."""
         cw = self.companion
         side = self.settings.get("chatbox_position", "bottom")
 
-        # Same screen-edge fallback as SpeechBubble._compute_position -
-        # fall back to any available screen rather than letting a None
-        # screen silently swallow this move.
+        # Same None-screen fallback as SpeechBubble._compute_position.
         screen = (
             QGuiApplication.screenAt(cw.pos())
             or QGuiApplication.primaryScreen()
@@ -526,11 +467,7 @@ class ChatInputBar(_TopmostWindowMixin, QWidget):
             x = cw.x() + cw.width() // 2 - self.width() // 2
             y = cw.y() + cw.height() + _CHATBAR_GAP
 
-        # Clamp to the screen instead of flipping sides when there's not
-        # enough room - she can sit close enough to an edge that flipping
-        # would be surprising, and "bottom" flipping above her would land
-        # the chat box on top of the speech bubble, which also lives above her.
-
+        # Clamp to screen; do not flip sides (would overlap the speech bubble above her).
         if avail is not None:
             x = max(avail.left(), min(x, avail.right() - self.width()))
             y = max(avail.top(), min(y, avail.bottom() - self.height()))
@@ -574,9 +511,7 @@ class CompanionWindow(
         else:
             self._reset_position_only()
 
-        # -- animated GIF playback (real frame-by-frame, not a frozen
-        # first frame) - QMovie instances, keyed by path, created lazily
-        # and only the currently-shown one actually playing. --
+        # QMovie per path, lazy; only the shown GIF plays (not a frozen first frame).
         self._movies: dict = {}
         self._active_movie_path = None
 
@@ -587,9 +522,7 @@ class CompanionWindow(
         self._talk_anim_timer = QTimer(self)
         self._talk_anim_timer.timeout.connect(self._on_talk_tick)
 
-        # Bounce: eases up when talking starts, holds while talking, eases
-        # back down when it stops - runs on its own timer so it keeps
-        # animating the settle-back-down after the mouth-flap timer stops.
+        # Bounce eases independently so settle-down continues after mouth-flap timer stops.
         self._bounce_target = 0.0
         self._bounce_anim_timer = QTimer(self)
         self._bounce_anim_timer.timeout.connect(self._on_bounce_anim_tick)

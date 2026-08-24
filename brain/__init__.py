@@ -11,8 +11,7 @@ from .dialogue import (
 from .tool_registry import TOOLS
 from .vision import describe_screen_with_vision, locate_screen_element_with_vision
 
-# Compose the one-way bridge from reasoning -> actions after both brain
-# services are available.  Action modules never import brain directly.
+# One-way bridge: brain -> actions. Actions never import brain.
 import actions as _actions
 
 _actions.configure_brain_services(

@@ -37,10 +37,8 @@ def set_clipboard(text: str) -> str:
 
 
 def take_screenshot() -> str:
-    """Takes a screenshot of the whole screen and saves it to the Pictures
-    folder. Uses Pillow's ImageGrab directly rather than
-    pyautogui.screenshot(), which routes through pyscreeze and has a known
-    import failure on some Python/Pillow combos."""
+    """Full-screen shot to Pictures via ImageGrab, not pyautogui.screenshot
+    (pyscreeze import can fail on some Python/Pillow combos)."""
     if ImageGrab is None:
         return "Couldn't take a screenshot: Pillow isn't installed (pip install Pillow)."
     if not _confirm("take a screenshot"):
@@ -57,24 +55,15 @@ def take_screenshot() -> str:
 
 
 def describe_screen(question: str = "") -> str:
-    """Looks at what's currently on screen and describes it, or answers a
-    specific question about it, using a vision-capable model (see
-    OLLAMA_VISION_MODEL / GEMINI_MODEL in config.py). Captures a fresh
-    screenshot in memory only - unlike take_screenshot(), nothing is ever
-    written to disk here."""
+    """Describe screen or answer `question` (OLLAMA_VISION_MODEL / GEMINI_MODEL).
+    In-memory screenshot only — never writes to disk."""
     return bridges.describe_screen(question)
 
 
 def click_screen_element(description: str, double_click: bool = False, confirmed: bool = False) -> str:
-    """Finds a described UI element on screen (via the vision model) and
-    clicks it - e.g. 'click the Send button', 'click the X to close that
-    popup'. This is what lets Alyssa act on what she sees rather than
-    just narrate it, at the cost of being approximate: a language model
-    estimating pixel coordinates from a screenshot isn't as reliable as a
-    real UI-element lookup, so it works best on clearly labeled, distinct
-    targets and can miss small or ambiguous ones. Always confirmed first
-    (same as run_command/delete_file) since a misplaced click is hard to
-    predict the consequences of - it could hit anything."""
+    """Vision-locate then click (e.g. 'Send button'). Confirm first (like
+    run_command/delete_file). locate_screen_element → % coords →
+    click/doubleClick. Approximate; best on distinct labeled targets."""
     if not confirmed:
         if confirmation._critical_confirmation_callback is None:
             return "Confirmation required: please ask the user to approve this click."

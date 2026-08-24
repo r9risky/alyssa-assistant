@@ -1,20 +1,9 @@
 """
-Sticky Notes plugin for Alyssa - also doubles as a worked example of the
-Settings-tab GUI extension point (GUI_PANEL_TITLE + build_gui_panel; see
-plugin_loader.py's docstring and the "Giving a plugin its own Settings
-tab" section of README.md).
+Sticky notes (voice + Settings tab). Same sticky_notes.json for both.
 
-Gives Alyssa "add_sticky_note" / "list_sticky_notes" / "delete_sticky_note"
-/ "clear_sticky_notes" abilities ("Alyssa, add a sticky note: pick up
-milk"), AND adds a "Sticky Notes" tab to Settings with its own list, an
-add box, and delete buttons - so the exact same notes can be managed
-either by talking to her or by clicking around in Settings.
-
-Both sides read/write the same sticky_notes.json next to this file, so a
-note added one way shows up the other way. The GUI panel polls that file
-every couple seconds while its tab is open, since a plugin's GUI has no
-built-in push channel from the assistant/tool-call side - see refresh()
-below.
+Tools: add/list/delete/clear. GUI_PANEL_TITLE + build_gui_panel (see
+plugin_loader.py / README). Panel polls the file while the tab is open
+(no push from the tool-call side).
 """
 import json
 import os
@@ -39,9 +28,7 @@ def _load() -> list:
 
 
 def _save(notes: list):
-    # Same atomic-write pattern as memory.py/reminders.py - write to a
-    # temp file first so a crash mid-write can't leave sticky_notes.json
-    # half-written/corrupt.
+    # Atomic write (temp + replace) so a crash can't corrupt sticky_notes.json.
     with _lock:
         tmp_path = _NOTES_FILE + ".tmp"
         with open(tmp_path, "w", encoding="utf-8") as f:
@@ -76,8 +63,7 @@ def list_sticky_notes() -> str:
 
 
 def delete_sticky_note(note_id: int) -> str:
-    """Deletes one sticky note by its number, as shown by
-    list_sticky_notes."""
+    """Delete one note by id from list_sticky_notes."""
     with _lock:
         notes = _load()
         try:
@@ -159,22 +145,15 @@ TOOLS = [
 ]
 
 
-# --- Settings tab ------------------------------------------------------
-# See README.md > Plugins > "Giving a plugin its own Settings tab" for
-# the contract: GUI_PANEL_TITLE (str) + build_gui_panel(parent) -> QWidget.
+# Settings tab: GUI_PANEL_TITLE (str) + build_gui_panel(parent) -> QWidget.
 GUI_PANEL_TITLE = "Sticky Notes"
 
-# This tab manages its own scroll region (the QListWidget already
-# scrolls), so it opts out of the QScrollArea wrapper settings_dialog.py
-# adds by default - same reasoning as the built-in Plugins tab.
+# Opt out of settings_dialog.py's QScrollArea; QListWidget already scrolls.
 GUI_PANEL_SCROLLABLE = False
 
 
 def build_gui_panel(parent):
-    """Builds the "Sticky Notes" Settings tab: a live list of the same
-    notes add_sticky_note()/list_sticky_notes() work with, an add box,
-    and Delete/Clear buttons. Polls _NOTES_FILE every 2s so a note added
-    by voice while this tab is open shows up without reopening Settings."""
+    """Settings tab: live list, add box, Delete/Clear. Polls _NOTES_FILE every 2s."""
     from PySide6.QtCore import Qt, QTimer
     from PySide6.QtWidgets import (
         QHBoxLayout, QLabel, QLineEdit, QListWidget, QListWidgetItem,
@@ -219,10 +198,7 @@ def build_gui_panel(parent):
     status.setStyleSheet(f"color: {parent._t()['subtext']}; font-size: 11px;")
     layout.addWidget(status)
 
-    # Tracks the last-seen (id, text) snapshot so the 2s poll only
-    # touches the list widget - and disturbs the user's current
-    # selection/scroll position - when something actually changed on
-    # disk, rather than rebuilding it every tick regardless.
+    # Rebuild the list only when (id, text) on disk actually changed.
     state = {"signature": None}
 
     def refresh(force: bool = False):
@@ -271,9 +247,7 @@ def build_gui_panel(parent):
     poll_timer.setInterval(2000)
     poll_timer.timeout.connect(refresh)
     poll_timer.start()
-    # Belt-and-suspenders: stop the timer once the widget itself is gone
-    # (e.g. this tab gets rebuilt on the next plugin reload) so it can't
-    # keep firing into a destroyed widget.
+    # Stop the poll timer when the widget is destroyed (e.g. plugin reload).
     w.destroyed.connect(lambda: poll_timer.stop())
 
     refresh(force=True)

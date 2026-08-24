@@ -1,8 +1,6 @@
 """
-Caveman plugin — lets the user switch Alyssa's own reply style into terse
-caveman-speak. Unlike a text filter, this sets config.CAVEMAN_MODE, which
-brain.py's system prompt reads on every request - the LLM itself generates
-shorter replies, so facts, code, numbers, and tool behavior are untouched.
+Sets config.CAVEMAN_MODE so brain.py's system prompt makes the LLM generate
+terse replies. Not a text filter — facts, code, and tools stay unchanged.
 """
 import config
 

@@ -17,14 +17,7 @@ from ..theming import _apply_elevation
 
 class PluginsTabMixin:
     def _build_plugins_tab(self) -> QWidget:
-        """A little in-app IDE for plugins/*.py: a file list on the left
-        (green dot = enabled, gray dot = disabled - see plugin_loader.py's
-        underscore-prefix convention) and a syntax-highlighted code editor
-        on the right. Unlike the other tabs, nothing here applies live as
-        you type - Python is too easy to leave momentarily broken
-        mid-edit, so changes only take effect on an explicit Save, and
-        Save is also the moment reload_plugins()/reload_plugin_tools() run
-        to pick the change up in this same running session."""
+        """In-app plugins/*.py editor. `_` prefix = disabled. No live-apply while typing; Save runs reload_plugins."""
         w = QWidget()
         w.setObjectName("tabPage")
         outer = QVBoxLayout(w)
@@ -43,9 +36,6 @@ class PluginsTabMixin:
         splitter = QSplitter(Qt.Horizontal)
         self._plugin_splitter = splitter
         splitter.setChildrenCollapsible(False)
-        # Default handle renders as a stark, unstyled bar in this theme -
-        # given a little width and a themed color via QSplitter::handle
-        # in _build_style instead, so it reads as a subtle divider.
         splitter.setHandleWidth(10)
 
         left = QWidget()
@@ -114,7 +104,6 @@ class PluginsTabMixin:
         mono.setPointSize(11)
         self.plugin_editor.setFont(mono)
         self.plugin_editor.textChanged.connect(self._on_plugin_text_changed)
-        # ponytail: syntax highlighter removed (yagni for a settings-dialog editor)
         right_layout.addWidget(self.plugin_editor, 1)
 
         splitter.addWidget(right)
@@ -123,9 +112,6 @@ class PluginsTabMixin:
         splitter.setSizes([190, 500])
         outer.addWidget(splitter, 1)
 
-        # Selected filename on disk (e.g. "weather.py" or "_weather.py" if
-        # disabled) and whether the editor has unsaved changes - both used
-        # by the handlers below.
         self._current_plugin_file = None
         self._plugin_dirty = False
         self._refresh_plugin_list()
@@ -133,10 +119,7 @@ class PluginsTabMixin:
         return w
 
     def _refresh_plugin_list(self, select: str = None):
-        """Repopulates self.plugin_list from plugins/*.py on disk. `select`
-        (a filename) re-selects that item afterward if given - used after
-        creating/renaming a plugin so the list doesn't lose the user's
-        place."""
+        """Rebuild plugin_list from plugins/*.py. `select` re-selects that filename after create/rename."""
         self.plugin_list.blockSignals(True)
         self.plugin_list.clear()
         plugins_dir = plugin_loader.PLUGINS_DIR
@@ -224,8 +207,7 @@ class PluginsTabMixin:
         old_path = os.path.join(plugins_dir, old_name)
         new_path = os.path.join(plugins_dir, new_name)
         try:
-            # Flush any unsaved edits into the file before the rename, so
-            # toggling enable/disable never silently discards them.
+            # Flush unsaved edits before rename so enable/disable never discards them.
             if self._plugin_dirty:
                 with open(old_path, "w", encoding="utf-8") as f:
                     f.write(self.plugin_editor.toPlainText())
@@ -269,12 +251,7 @@ class PluginsTabMixin:
             self._save_plugin_file(self._current_plugin_file)
 
     def _reload_plugins_backend(self):
-        """Re-scans plugins/ and pushes the result into the already-running
-        session - actions.FUNCTIONS/PLUGIN_TOOLS and brain.TOOLS - so a
-        save in this tab is usable immediately without restarting Alyssa.
-        Also re-syncs any plugin-contributed Settings tabs (see
-        ConfigDialog._rebuild_plugin_gui_tabs) so a plugin's own GUI panel
-        appears, updates, or disappears in this same open dialog."""
+        """Reload plugins into this session (actions.FUNCTIONS/PLUGIN_TOOLS, brain.TOOLS) and rebuild plugin GUI tabs."""
         try:
             actions.reload_plugins()
             brain.reload_plugin_tools()

@@ -1,14 +1,8 @@
 """
-Timers & Stopwatch plugin for Alyssa.
+Countdown timers and stopwatch.
 
-Gives Alyssa abilities to:
-- Set countdown timers with proactive spoken notifications ('start_timer')
-- Check active timers ('list_timers')
-- Cancel running timers ('cancel_timer')
-- Start and stop a stopwatch ('start_stopwatch', 'stop_stopwatch')
-
-Includes a check_watch() background watcher so when a timer elapses, Alyssa
-spontaneously alerts the user: "Timer finished! Your 5 minute timer is up."
+start_timer / list_timers / cancel_timer; start_stopwatch / stop_stopwatch.
+check_watch() speaks when a timer elapses.
 """
 import time
 

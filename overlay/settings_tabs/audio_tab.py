@@ -11,10 +11,10 @@ except ImportError:  # pragma: no cover - sounddevice is a core dependency
 
 class AudioTabMixin:
     def _populate_device_combo(self, combo: QComboBox, channel_key: str, configured_value: str):
-        """Fills combo with "Default" plus every device exposing
-        channel_key (max_input_channels/max_output_channels), each item's
-        data holding the exact string that goes in config.py. Selects
-        "Default" or whichever device name contains configured_value."""
+        """Fill combo with Default + devices exposing `channel_key`. Item data is the config.py string.
+
+        Select Default, or a name containing configured_value. Dedupes by name (Windows lists one device per driver).
+        """
         combo.addItem("Default", "default")
         configured = str(configured_value or "").strip()
         matched = False
@@ -28,11 +28,6 @@ class AudioTabMixin:
                 continue
             name = device["name"]
             if name in seen_names:
-                # Same physical device often shows up once per Windows
-                # audio driver (MME, DirectSound, WASAPI, WDM-KS) - the
-                # matching in recorder.py/voice.py is name-based anyway,
-                # so listing every duplicate just adds clutter without
-                # adding a real choice.
                 continue
             seen_names.add(name)
             combo.addItem(name, name)
@@ -40,9 +35,7 @@ class AudioTabMixin:
                 combo.setCurrentText(name)
                 matched = True
         if not matched and configured and configured.lower() != "default":
-            # Configured device isn't currently plugged in/detected - keep
-            # its name selectable so saving other fields doesn't silently
-            # drop it.
+            # Configured device not detected — keep it selectable so save doesn't drop it.
             combo.addItem(f"{configured} (not detected)", configured)
             combo.setCurrentText(f"{configured} (not detected)")
 
