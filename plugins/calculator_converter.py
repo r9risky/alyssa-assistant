@@ -1,16 +1,10 @@
-"""
-Smart Calculator & Unit Converter plugin for Alyssa.
-
-Gives Alyssa abilities to:
-- Safely compute mathematical expressions ('calculate_math')
-- Convert between units of temperature, distance, mass, and volume ('convert_units')
-"""
+"""Safe math (calculate_math) and unit conversion (convert_units: temp, distance, mass, volume)."""
 import ast
 import math
 import re
 
 
-# Safe AST math evaluator (no arbitrary code execution risk)
+# AST eval of allowlisted ops/functions only (no arbitrary code).
 _ALLOWED_OPERATORS = {
     ast.Add: lambda a, b: a + b,
     ast.Sub: lambda a, b: a - b,

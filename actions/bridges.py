@@ -1,9 +1,5 @@
-"""Callbacks supplied by the reasoning layer to desktop actions.
-
-Actions are infrastructure: they should not import the high-level ``brain``
-package.  The brain registers the few capabilities that actions need during
-application composition, keeping dependency direction one-way.
-"""
+"""Brain-registered callbacks for actions. Do not import brain from here;
+brain binds these during composition."""
 
 from __future__ import annotations
 

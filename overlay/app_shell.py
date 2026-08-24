@@ -18,12 +18,7 @@ from .theming import _THEME_LIGHT, _build_menu_style, _theme
 from .widgets import Bridge, ChatInputBar, CompanionWindow, SpeechBubble
 
 def _build_app_icon(size: int = 64, theme: dict = None) -> "QIcon":
-    """A small on-brand app/tray icon, painted to match the current color
-    theme's header gradient (Settings header, primary buttons) instead of
-    a generic system icon - a soft circular badge with a simple sparkle,
-    so Alyssa is recognizable at a glance in the taskbar/tray without
-    needing a bundled image asset. Defaults to the light preset when no
-    theme is given, same as before this became theme-aware."""
+    """Circular tray/app icon from the theme header gradient. Defaults to light if `theme` is None."""
     t = theme or _THEME_LIGHT
     pm = QPixmap(size, size)
     pm.fill(Qt.transparent)
@@ -39,9 +34,6 @@ def _build_app_icon(size: int = 64, theme: dict = None) -> "QIcon":
     painter.setBrush(gradient)
     painter.drawEllipse(circle_rect)
 
-    # A small four-point sparkle/star, off-white, centered slightly high -
-    # echoes the little heart/sparkle accents on the bundled chibi art
-    # without reproducing it.
     cx, cy = size / 2, size * 0.47
     r_out, r_in = size * 0.24, size * 0.09
     star = QPainterPath()
@@ -57,8 +49,6 @@ def _build_app_icon(size: int = 64, theme: dict = None) -> "QIcon":
     painter.setBrush(QColor("#FFFFFF"))
     painter.drawPath(star)
 
-    # A tiny pink dot "gem" beneath the sparkle for a touch of the
-    # accent2 pink used throughout the rest of the palette.
     dot_r = size * 0.055
     painter.setBrush(QColor(t["accent2"]))
     painter.drawEllipse(QPoint(int(cx), int(size * 0.74)), int(dot_r), int(dot_r))
@@ -98,20 +88,12 @@ _console_window_handle = None
 
 
 def _find_windows_terminal_hwnd():
-    """Best-effort lookup of the actual on-screen Windows Terminal window
-    hosting this process, or None if we're not running under Windows
-    Terminal (or can't determine it).
+    """Visible Windows Terminal hwnd hosting this process, or None.
 
-    Under Windows Terminal, this process's console is served over ConPTY:
-    GetConsoleWindow() returns a real but *invisible* conhost.exe window,
-    not the WindowsTerminal.exe window the user actually sees - so
-    showing/hiding that handle has no visible effect. There's no direct
-    Win32 API from a console process to its ConPTY frontend, so instead
-    we walk up the process tree (python.exe -> cmd.exe from
-    start_alyssa.bat -> OpenConsole.exe -> WindowsTerminal.exe) with
-    psutil (already a dependency) looking for a WindowsTerminal.exe
-    ancestor, then find that process's top-level window by its known
-    class name."""
+    - WT ConPTY: GetConsoleWindow() is an invisible conhost — show/hide it is a no-op.
+    - Walk ancestors (python → cmd → OpenConsole → WindowsTerminal.exe), then
+      EnumWindows for class CASCADIA_HOSTING_WINDOW_CLASS.
+    """
     try:
         import psutil
 
@@ -148,23 +130,17 @@ def _find_windows_terminal_hwnd():
         user32.EnumWindows(_enum_proc, 0)
         return found[0] if found else None
     except Exception:
-        return None  # best-effort - fall back to the conhost heuristic
+        return None  # fall back to conhost / foreground heuristic
 
 
 def _set_console_visible(visible: bool):
-    """On Windows, shows or hides the console window this process is
-    attached to - the cmd.exe window opened by scripts\\start_alyssa.bat (or
-    whatever terminal launched it) - controlled by HIDE_CONSOLE_WINDOW in
-    config.py (or the matching Settings -> Assistant checkbox).
+    """Show/hide the attached Windows console (HIDE_CONSOLE_WINDOW / Settings checkbox).
 
-    Unlike _close_parent_console() below, this doesn't close that window
-    or end the .bat script waiting on it - it only toggles whether it's
-    drawn on screen, so it can be shown again later (e.g. by unchecking
-    "Show command prompt" in Settings) to see startup errors,
-    tracebacks, or DEBUG_PRINT_TRANSCRIPTS output. No-op (silently) on
-    any platform other than Windows, or if there's no console attached at
-    all (e.g. launched via pythonw.exe or a frozen windowed .exe with no
-    console) - both cases where there's nothing to show or hide."""
+    - Hide only (ShowWindowAsync SW_RESTORE/SW_HIDE); does not close the window or launching .bat.
+    - Cached hwnd: WT ConPTY via _find_windows_terminal_hwnd; else focused
+      ConsoleWindowClass / CASCADIA_HOSTING_WINDOW_CLASS; else GetConsoleWindow().
+    - No-op on non-Windows or if no console (pythonw / windowed exe).
+    """
     if sys.platform != "win32":
         return
     try:
@@ -191,14 +167,10 @@ def _set_console_visible(visible: bool):
             if user32.IsWindowVisible(console_hwnd):
                 _console_window_handle = console_hwnd
             else:
-                # console_hwnd is invisible - most likely we're under
-                # Windows Terminal's ConPTY. Find its real window by
-                # process ancestry rather than guessing from whatever
-                # happens to be focused right now.
+                # Invisible hwnd = likely WT ConPTY; resolve via ancestry, not foreground.
                 _console_window_handle = _find_windows_terminal_hwnd()
             if _console_window_handle is None:
-                # Fall back to the old foreground-window heuristic for
-                # any terminal we don't have a direct lookup for.
+                # Fallback: focused ConsoleWindowClass / CASCADIA_HOSTING_WINDOW_CLASS.
                 foreground = user32.GetForegroundWindow()
                 class_name = ctypes.create_unicode_buffer(64)
                 user32.GetClassNameW(foreground, class_name, len(class_name))
@@ -213,20 +185,10 @@ def _set_console_visible(visible: bool):
 
 
 def _close_parent_console():
-    """On Windows, asks the console window this process is attached to -
-    the cmd.exe window opened by scripts\\start_alyssa.bat (or whatever terminal
-    launched it) - to close itself too.
+    """Post WM_CLOSE to the attached Windows console so the launching cmd/.bat exits with the app.
 
-    Quitting Alyssa only ends the Python process; the console window she
-    was launched from stays open behind her (that's just how a console
-    process works - the shell that ran the script doesn't close itself
-    just because the script exited). GetConsoleWindow() finds that
-    console's window handle, and posting it WM_CLOSE asks it to close the
-    same way clicking its own [x] button would - including terminating
-    the .bat script/cmd.exe that was waiting on this process, since they
-    share one console. No-op (silently) on any platform other than
-    Windows, or if there's no console attached at all (e.g. launched via
-    pythonw.exe or a frozen windowed .exe with no console)."""
+    Unlike _set_console_visible, this closes the window. No-op on non-Windows or if no console.
+    """
     if sys.platform != "win32":
         return
     try:
@@ -240,21 +202,14 @@ def _close_parent_console():
 
 
 def run_with_assistant(assistant_loop_fn):
-    """Starts the Qt GUI on the main thread and runs assistant_loop_fn(bridge)
-    on a background thread. assistant_loop_fn should behave like main.py's
-    run_assistant_loop(bridge): do its own listening/thinking/speaking loop,
-    and call bridge.speak_signal.emit(text) (instead of / in addition to
-    printing) whenever it wants something shown in the speech bubble."""
-    # Kick off the Whisper model load now, before window/QApplication
-    # setup - it's a plain CPU/GPU-bound background thread with no
-    # dependency on Qt. This is intentionally redundant with the load
-    # main.run_assistant_loop() itself kicks off shortly after; whichever
-    # gets there first does the real loading and the other is a no-op.
+    """Qt GUI on the main thread; assistant_loop_fn(bridge) on a daemon worker.
+
+    `assistant_loop_fn` should match main.run_assistant_loop: emit bridge.speak_signal for the bubble.
+    """
+    # Preload Whisper before Qt; redundant with run_assistant_loop — first load wins.
     import transcribe
     threading.Thread(target=transcribe.preload, daemon=True).start()
 
-    # Hide the cmd.exe console window behind her by default (see
-    # HIDE_CONSOLE_WINDOW in config.py).
     _set_console_visible(not getattr(config, "HIDE_CONSOLE_WINDOW", False))
 
     app = QApplication(sys.argv)
@@ -271,23 +226,13 @@ def run_with_assistant(assistant_loop_fn):
 
     bridge.speak_signal.connect(bubble.show_message)
     bridge.thinking_signal.connect(bubble.show_thinking)
-    # NOTE: connect to bound methods here, not bare lambdas.
-    # speak_signal/talk_*_signal/error_signal are emitted from the
-    # background assistant thread - PySide6 only auto-queues a signal to
-    # the GUI thread when the slot is a bound method of a QObject (it
-    # reads the receiver's thread affinity). A bare lambda has no such
-    # receiver, so it falls back to a direct same-thread call, meaning
-    # set_talking()/QMessageBox.critical() would run on the background
-    # thread, touching Qt widgets/timers unsafely - causing mouth-
-    # animation glitches and occasional crashes.
+    # Bound QObject methods only (not lambdas): background emits auto-queue to the GUI thread.
     bridge.error_signal.connect(window.show_error)
     bridge.gemini_key_needed.connect(window.prompt_gemini_key_setup)
     bridge.reply_pending_signal.connect(bubble.on_reply_pending)
     bridge.talk_start_signal.connect(window.start_talking)
     bridge.talk_end_signal.connect(window.stop_talking)
-    # Keeps the speech bubble's fade-out timed to when she actually
-    # finishes speaking, rather than a fixed guess made when the text
-    # first appeared (see SpeechBubble.on_talk_start/on_talk_end).
+    # Bubble linger/fade follows talk_start/talk_end, not a guess at show time.
     bridge.talk_start_signal.connect(bubble.on_talk_start)
     bridge.talk_end_signal.connect(bubble.on_talk_end)
     if QSystemTrayIcon.isSystemTrayAvailable():
@@ -296,24 +241,14 @@ def run_with_assistant(assistant_loop_fn):
     window.show()
     chatbar.apply_enabled()
 
-    # Qt can reinitialize the Windows console during application/window setup.
-    # Re-apply the configured visibility after the GUI is fully initialized so
-    # the Settings checkbox and config.py value reliably control the console.
+    # Qt may reinit the Windows console during setup — re-apply after the GUI is up.
     _set_console_visible(not getattr(config, "HIDE_CONSOLE_WINDOW", False))
-    # The startup greeting is spoken by run_assistant_loop() itself (via
-    # speak(), once preflight checks pass) - not shown here directly,
-    # since showing it here too would flash a silent, unvoiced duplicate
-    # before the real greeting replaces it a moment later.
+    # Greeting is spoken by run_assistant_loop after preflight; showing it here would flash a silent duplicate.
 
     window._worker_thread = None
 
     def _run_worker_safely():
-        """Runs assistant_loop_fn and, if it ever exits via an unhandled
-        exception, reports it through the GUI instead of letting the
-        thread just vanish. Without this, any crash here (a bug, or a
-        None sys.stdout/stderr when launched via pythonw.exe with no
-        console - see main.py) leaves the window looking totally normal
-        while nothing is actually listening, with no way to tell why."""
+        """Run assistant_loop_fn; on unhandled exception, emit via the GUI so a dead listener is visible (pythonw has no console)."""
         try:
             assistant_loop_fn(bridge)
         except Exception as e:
@@ -326,13 +261,10 @@ def run_with_assistant(assistant_loop_fn):
             )
 
     def _start_worker():
-        """(Re)starts the background listening loop if it isn't already
-        running. Safe to call any number of times - a no-op while the loop
-        is already alive. This is what makes "paste API key -> Save" in
-        Settings actually start listening immediately: the loop exits
-        right away on first launch if run_preflight_checks() fails (e.g.
-        no key yet), so without this, nothing would ever restart it short
-        of fully relaunching the app."""
+        """Start the listener thread if it isn't alive. Idempotent.
+
+        After Settings saves a key: first launch can exit immediately if preflight fails; this restarts without a full relaunch.
+        """
         if window._worker_thread is not None and window._worker_thread.is_alive():
             return
         window._worker_thread = threading.Thread(
@@ -343,11 +275,7 @@ def run_with_assistant(assistant_loop_fn):
     window.start_assistant_worker = _start_worker
     _start_worker()
 
-    # app.exec() only returns once app.quit() is called - and since
-    # setQuitOnLastWindowClosed(False) is set above, only the "Quit"
-    # actions in the right-click/tray menus do that (see
-    # _show_context_menu and _build_tray_icon). So this is the reliable
-    # spot to also close the console window she was launched from.
+    # exec() returns only after Quit (last-window-close is off); close the parent console here.
     exit_code = app.exec()
     _close_parent_console()
     sys.exit(exit_code)

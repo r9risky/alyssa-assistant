@@ -1,6 +1,4 @@
-"""
-Assistant name detection and matching utilities.
-"""
+"""Assistant name detection and matching utilities."""
 
 import functools
 import re

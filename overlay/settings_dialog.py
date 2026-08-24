@@ -50,8 +50,7 @@ from .settings_tabs.updates_tab import UpdatesTabMixin
 from .settings_tabs.plugins_tab import PluginsTabMixin
 
 class _StatusLabel(QLabel):
-    """A QLabel that hides itself whenever its text is empty, so an
-    empty status line doesn't leave a blank gap in the layout."""
+    """QLabel that hides when its text is empty (no blank layout gap)."""
 
     def setText(self, text):
         super().setText(text)
@@ -94,9 +93,7 @@ class _SidebarTabs(QWidget):
             self.navigation.setCurrentRow(0)
 
     def removeTab(self, index: int):
-        """Undoes one addTab() - used to drop plugin-contributed tabs
-        before rebuilding them on a plugin reload (see
-        ConfigDialog._rebuild_plugin_gui_tabs)."""
+        """Drop one addTab(); used by ConfigDialog._rebuild_plugin_gui_tabs."""
         item = self.navigation.takeItem(index)
         if item is not None:
             del item
@@ -112,27 +109,18 @@ class _SidebarTabs(QWidget):
         self.navigation.setCurrentRow(index)
 
     def fit_navigation(self, available_width: int):
-        """Keep the rail proportional without letting it crowd the form."""
+        """Keep the rail proportional without crowding the form."""
         self.navigation.setFixedWidth(max(120, min(190, round(available_width * 0.22))))
 
 
 class VoiceBrowserDialog(QDialog):
-    """Search-and-pick dialog over the full Microsoft Edge neural voice
-    catalog (400+ voices, ~140 locales) - opened from Settings ->
-    Assistant -> Voice & Behavior -> "Browse all voices". The catalog is
-    fetched from Microsoft on a background thread the first time this is
-    opened (voice.list_edge_voices() caches it after that, so reopening
-    the dialog later is instant). Typing in the search bar filters live
-    across short name, locale, gender, and friendly name - e.g. "en-GB",
-    "female", or "Aria" all narrow the list."""
+    """Search/pick Edge neural voices. First open fetches (voice.list_edge_voices caches); search filters ShortName/Locale/Gender/FriendlyName."""
 
     voice_picked = Signal(str)
     _voices_loaded_signal = Signal(bool, str, list)
 
     def _t(self) -> dict:
-        """This dialog's theme dict, matching whatever light/dark mode
-        Settings is currently in - kept as a helper so every status-label
-        color pulls from the same palette instead of a stray hex code."""
+        """Theme dict for the current light/dark mode."""
         return _theme(self._dark)
 
     def __init__(self, parent, dark: bool = False):
@@ -188,8 +176,6 @@ class VoiceBrowserDialog(QDialog):
         self._start_fetch(force_refresh=True)
 
     def _do_fetch(self, force_refresh: bool):
-        # Runs off the GUI thread - list_edge_voices() is a blocking
-        # network call (unless already cached from an earlier open).
         import voice as voice_module
         try:
             voices = voice_module.list_edge_voices(force_refresh=force_refresh)
@@ -255,11 +241,9 @@ class ConfigDialog(QDialog, AssistantTabMixin, EngineTabMixin, AudioTabMixin,
                    CompanionTabMixin, UpdatesTabMixin, PluginsTabMixin):
     # Background checks emit here so Qt queues the result onto the GUI thread.
     _key_verified_signal = Signal(str, bool, str, list)
-    # Custom OpenAI-compatible server - fetching its model list doubles as
-    # its "verify" step, since there's no separate cheap auth-only probe.
+    # Custom OpenAI-compatible: fetching models is the verify step (no cheaper auth probe).
     _custom_models_fetched_signal = Signal(bool, str, list)
-    # Spotify's pair is verified together as one signal, since the token
-    # request needs both at once.
+    # Spotify Client ID + Secret verified together (token request needs both).
     _spotify_verified_signal = Signal(bool, str)
     _update_checked_signal = Signal(bool, object)
     _CREDENTIAL_EDIT_SPECS = (
@@ -275,37 +259,19 @@ class ConfigDialog(QDialog, AssistantTabMixin, EngineTabMixin, AudioTabMixin,
 
     _update_installed_signal = Signal(bool, str)
 
-    # A cohesive theme matching the companion/speech-bubble palette,
-    # built from the shared color themes so the dialog, speech bubble, and
-    # menus use one source of truth.
     def _t(self) -> dict:
-        """This dialog's theme dict, matching the companion's current color_theme
-        or dark_mode setting - a single place every status-label/border color
-        reads from."""
+        """Theme dict for the companion's color_theme / dark_mode."""
         return _theme(self.companion.settings)
 
     def __init__(self, companion: CompanionWindow, focus_gemini: bool = False):
         super().__init__(None, Qt.Window)
-        # Explicitly non-modal: this dialog has no parent, so exec()'s
-        # default modality would be Qt.ApplicationModal and block input to
-        # every other window - including Alyssa herself, making her
-        # un-right-clickable and undraggable while Settings is open. Shown
-        # with .show() (see CompanionWindow.open_settings) rather than
-        # .exec() so she stays fully interactive alongside it.
+        # NonModal + .show() (not exec()): no parent would make exec() ApplicationModal and freeze the companion.
         self.setWindowModality(Qt.NonModal)
-        # Destroy the C++ widget on close instead of just hiding it, so a
-        # closed-and-reopened Settings window is always built fresh from
-        # current settings/config.py rather than showing stale state.
+        # WA_DeleteOnClose: reopen builds fresh from current settings/config.py.
         self.setAttribute(Qt.WA_DeleteOnClose, True)
         self.companion = companion
         self.setWindowTitle(f"{config.ASSISTANT_NAME} - Settings")
-        # Wide enough that every row (API key field + Show/Verify buttons,
-        # etc.) fits without horizontal scrolling.
-        # Cap the dialog's height to the actual screen it's opening on, and
-        # give it a sane default - without this, adding rows to a tab could
-        # push the natural minimum height past the available screen space
-        # and trigger a Windows geometry warning. Each tab scrolls
-        # internally instead (see _wrap_in_scroll_area).
+        # Size to the current screen; tabs scroll internally (see _wrap_in_scroll_area).
         screen = self.screen() or QGuiApplication.primaryScreen()
         available = screen.availableGeometry().size()
         self.resize(
@@ -321,10 +287,7 @@ class ConfigDialog(QDialog, AssistantTabMixin, EngineTabMixin, AudioTabMixin,
         self._compact_layout = None
         self._credential_commit_names = frozenset()
 
-        # Non-secret fields still apply as they change. Credential fields
-        # deliberately bypass the debounce timer and commit only on Apply,
-        # successful verification, or editingFinished so partial values are
-        # never persisted during a pause in typing.
+        # Live-apply non-secrets. Credentials skip debounce: commit only on Apply, successful Verify, or editingFinished.
         self._companion_apply_timer = QTimer(self)
         self._companion_apply_timer.setSingleShot(True)
         self._companion_apply_timer.setInterval(150)
@@ -346,27 +309,16 @@ class ConfigDialog(QDialog, AssistantTabMixin, EngineTabMixin, AudioTabMixin,
         self.tabs.addTab(self._wrap_in_scroll_area(self._build_engine_tab()), "Engine")
         self.tabs.addTab(self._wrap_in_scroll_area(self._build_audio_tab()), "Audio")
         self.tabs.addTab(self._wrap_in_scroll_area(self._build_companion_tab()), "Companion")
-        # Not wrapped in _wrap_in_scroll_area like the tabs above - this
-        # tab's own splitter (plugin list + code editor) needs to claim
-        # the full available height itself rather than being able to
-        # shrink to content size inside a QScrollArea.
+        # Plugins tab owns its splitter height; do not wrap in a QScrollArea.
         self.tabs.addTab(self._build_plugins_tab(), "Plugins")
         self.tabs.addTab(self._wrap_in_scroll_area(self._build_updates_tab()), "Updates")
-        # Any plugin can contribute its own Settings tab (GUI_PANEL_TITLE +
-        # build_gui_panel()) alongside its FUNCTIONS/TOOLS - added last so
-        # built-in tabs always come first. See _add_plugin_gui_tabs.
+        # Plugin GUI tabs last (GUI_PANEL_TITLE + build_gui_panel) so built-ins stay first.
         self._plugin_gui_tab_count = 0
         self._add_plugin_gui_tabs()
         self._configure_credential_commit_behavior()
 
 
-        # Root-cause fix for clipped combo text (provider/model dropdowns
-        # etc.): QFormLayout's ExpandingFieldsGrow stretches QLineEdit
-        # fields to the column width but leaves QComboBox at its
-        # content-derived sizeHint, since its default horizontal size
-        # policy doesn't include the Grow flag. Rather than patching every
-        # `QComboBox()` call site across the tabs, normalize them all here
-        # in one pass so every dropdown matches the text fields beside it.
+        # QFormLayout won't grow QComboBox; force Expanding so dropdowns match QLineEdit width.
         for combo in self.findChildren(QComboBox):
             combo.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
 
@@ -377,13 +329,8 @@ class ConfigDialog(QDialog, AssistantTabMixin, EngineTabMixin, AudioTabMixin,
 
         close_btn.setObjectName("primaryButton")
         close_btn.clicked.connect(self._on_close)
-        # Soft micro-interaction: opacity dips on press, eases back on
-        # release/leave. Kept to the one button the user clicks most on
-        # their way out, rather than wired onto every button in the
-        # dialog - see _HoverPress for wiring it onto others.
         close_btn._press_fx = _HoverPress(close_btn)
-        # Covers every way the dialog can close (Close button, window X,
-        # Esc) - see _flush_pending_applies.
+        # Flush pending applies on Close / window X / Esc.
         self.finished.connect(self._flush_pending_applies)
 
         btn_row = QHBoxLayout()
@@ -415,10 +362,7 @@ class ConfigDialog(QDialog, AssistantTabMixin, EngineTabMixin, AudioTabMixin,
             self.gemini_key_edit.setStyleSheet(f"border: 2px solid {self._t()['warning']};")
             self.gemini_key_edit.setFocus()
 
-        # Track what the form itself changed. Comparing against the live
-        # companion is wrong when the user drags/resizes her while Settings
-        # remains open: an unrelated toggle would otherwise re-submit the
-        # stale size slider and snap her back.
+        # Snapshot form values; don't re-apply live companion geometry (drag/resize while Settings is open).
         self._last_companion_form_values = self._gather_companion_settings()
 
     def resizeEvent(self, event):
@@ -489,21 +433,14 @@ class ConfigDialog(QDialog, AssistantTabMixin, EngineTabMixin, AudioTabMixin,
         self.update()
 
     def _section_header(self, text: str, icon: str = "", first: bool = False) -> QLabel:
-        """A small bold, accent-colored label with a hairline divider
-        above it, used to break a long tab's fields into named groups
-        (e.g. "Voice & Behavior", "Music") without changing how any of
-        the actual fields/rows work underneath - purely a visual label
-        dropped into the existing QFormLayout via addRow("", header).
-        Qt doesn't support text-transform:uppercase so we uppercase in Python."""
+        """Section label; Qt has no text-transform, so uppercase here."""
         label = QLabel(f"{icon}  {text.upper()}" if icon else text.upper())
         label.setObjectName("sectionHeaderFirst" if first else "sectionHeader")
         return label
 
     # -- Assistant tab helpers ----------------------------------------------
     def _wrap_in_scroll_area(self, content: QWidget) -> QScrollArea:
-        """Wraps a tab's content in a scroll area so a long tab (Assistant,
-        Engine) doesn't force the whole Settings dialog taller than the
-        screen."""
+        """Scroll wrapper so a long tab doesn't force the dialog taller than the screen."""
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QFrame.NoFrame)
@@ -516,16 +453,11 @@ class ConfigDialog(QDialog, AssistantTabMixin, EngineTabMixin, AudioTabMixin,
         return scroll
 
     def _add_plugin_gui_tabs(self):
-        """Adds one Settings tab per plugin that registers a GUI panel
-        (plugin_loader.get_gui_panels()) - the GUI counterpart to a
-        plugin's FUNCTIONS/TOOLS: a plugin can ship buttons, lists,
-        forms, whatever it needs, as a normal QWidget, and it shows up
-        here like any built-in tab. Always appended after the built-in
-        tabs (see __init__) so the app's own tabs stay in a stable
-        position regardless of what plugins are installed. Each panel is
-        built inside try/except - a plugin that raises while building
-        its widget gets a small inline error tab instead of taking the
-        whole Settings dialog down."""
+        """Append one tab per plugin_loader.get_gui_panels() after built-ins.
+
+        build_gui_panel() must return a QWidget; exceptions become an inline error tab.
+        wrap in _wrap_in_scroll_area unless panel.scrollable is False.
+        """
         added = 0
         for panel in plugin_loader.get_gui_panels():
             try:
@@ -545,9 +477,7 @@ class ConfigDialog(QDialog, AssistantTabMixin, EngineTabMixin, AudioTabMixin,
         self._plugin_gui_tab_count = added
 
     def _build_plugin_panel_error_tab(self, plugin_filename: str, error: Exception) -> QWidget:
-        """Stand-in tab shown in place of a plugin's Settings panel when
-        build_gui_panel() raised, so the error is visible in-app (with
-        the failing filename) instead of only in the console."""
+        """Error stand-in when build_gui_panel() raises; shows plugin filename + exception."""
         w = QWidget()
         w.setObjectName("tabPage")
         layout = QVBoxLayout(w)
@@ -564,13 +494,7 @@ class ConfigDialog(QDialog, AssistantTabMixin, EngineTabMixin, AudioTabMixin,
         return w
 
     def _rebuild_plugin_gui_tabs(self):
-        """Re-syncs the plugin-contributed Settings tabs after a plugin
-        reload (Settings > Plugins > Save / Reload / enable-toggle / New /
-        Delete all call actions.reload_plugins(), which repopulates
-        plugin_loader.get_gui_panels()) - so a plugin's tab appears,
-        updates, or disappears immediately without closing and reopening
-        this dialog. Removes exactly the tabs _add_plugin_gui_tabs added
-        last time, then adds them again from scratch."""
+        """Drop then re-add plugin GUI tabs after reload_plugins(); keep current row if still valid."""
         current_row = self.tabs.navigation.currentRow()
         built_in_count = self.tabs.count() - self._plugin_gui_tab_count
         for _ in range(self._plugin_gui_tab_count):
@@ -580,18 +504,13 @@ class ConfigDialog(QDialog, AssistantTabMixin, EngineTabMixin, AudioTabMixin,
             self.tabs.setCurrentIndex(current_row)
 
     def _add_row(self, form, label, field):
-        """Adds a row to `form` and returns (label_widget, field_widget) so
-        the row can be shown/hidden as a unit later (e.g. only the
-        currently-selected LLM provider's fields)."""
+        """addRow and return (label, field) so the pair can be shown/hidden together."""
         label_widget = QLabel(label) if isinstance(label, str) else label
         form.addRow(label_widget, field)
         return (label_widget, field)
 
     def _stack_under(self, primary, *extras) -> QWidget:
-        """Stacks `extras` (status text, "don't have one?" links, etc.)
-        directly beneath `primary` in a single column, so they line up
-        under their field instead of spanning the full row width the way
-        addRow("", ...) would."""
+        """Stack extras under primary in one column (not full-row addRow('', ...))."""
         wrapper = QWidget()
         col = QVBoxLayout(wrapper)
         col.setContentsMargins(0, 0, 0, 0)
@@ -605,11 +524,7 @@ class ConfigDialog(QDialog, AssistantTabMixin, EngineTabMixin, AudioTabMixin,
         return wrapper
 
     def _help_label(self, text: str) -> QLabel:
-        """Small gray status/help text used under a field (verify results,
-        "don't have one?" links, etc.). Starts hidden and only takes up
-        space once it actually has something to say - otherwise an empty
-        status label left a blank line between the field and the link
-        below it."""
+        """Hidden until it has text (empty status must not leave a blank line)."""
         label = _StatusLabel(text)
         label.setStyleSheet("font-size: 11px;")
         label.setWordWrap(True)
@@ -626,12 +541,7 @@ class ConfigDialog(QDialog, AssistantTabMixin, EngineTabMixin, AudioTabMixin,
         return label
 
     def _set_rows_visible(self, form, rows, visible):
-        """Hides/shows each (label, field) row as a unit via
-        QFormLayout.setRowVisible, which - unlike widget.setVisible()
-        directly - also collapses the row's spacing when hidden. Without
-        this, every hidden provider's rows still ate their share of
-        form.setSpacing(), leaving a big dead gap wherever 2-3 unused
-        providers were hiding."""
+        """Show/hide (label, field) via QFormLayout.setRowVisible so hidden rows collapse spacing."""
         for label_widget, field_widget in rows:
             form.setRowVisible(field_widget, visible)
 
@@ -639,11 +549,7 @@ class ConfigDialog(QDialog, AssistantTabMixin, EngineTabMixin, AudioTabMixin,
         self, form, label_text, initial_value, status, placeholder,
         provider=None, verify=None, checking="", verify_slot=None, extras=(),
     ):
-        """Builds the common "[key field] [Show] [Verify]" row shared by
-        every cloud provider's API key setting, with any status/help-link
-        labels stacked directly under the field. Returns (key_edit,
-        row_label, rows) where `rows` is a single-item list of (label,
-        field) suitable for _set_rows_visible."""
+        """`[key] [Show] [Verify]` row; extras stacked under the field. Returns (key_edit, row_label, rows)."""
         key_edit = QLineEdit(initial_value)
         key_edit.setEchoMode(QLineEdit.Password)
         key_edit.setPlaceholderText(placeholder)
@@ -668,8 +574,6 @@ class ConfigDialog(QDialog, AssistantTabMixin, EngineTabMixin, AudioTabMixin,
             )
         verify_btn.clicked.connect(verify_slot)
 
-        # Stashed on key_edit so the toggle/verify slots (which only get
-        # the changed value, e.g. the checked bool) can reach these back.
         key_edit._toggle_btn = toggle_btn
         key_edit._verify_btn = verify_btn
 
@@ -684,11 +588,7 @@ class ConfigDialog(QDialog, AssistantTabMixin, EngineTabMixin, AudioTabMixin,
         return key_edit, row_label, [row]
 
     def _build_model_combo(self, current_value: str) -> QComboBox:
-        """An editable dropdown for a provider's model name - starts with
-        just the current/default value typed in, and gets repopulated with
-        the real list once Verify/Fetch models succeeds. Editable so a
-        model that isn't in the fetched list (brand new, preview-only,
-        etc.) can still be typed in by hand."""
+        """Editable model dropdown; starts with current value; user can type a name not in the fetched list."""
         combo = QComboBox()
         combo.setEditable(True)
         combo.setInsertPolicy(QComboBox.NoInsert)
@@ -699,10 +599,7 @@ class ConfigDialog(QDialog, AssistantTabMixin, EngineTabMixin, AudioTabMixin,
         return combo
 
     def _populate_model_combo(self, combo: QComboBox, models: list):
-        """Refills *combo* with a freshly-fetched model list, keeping
-        whatever the user currently has typed/selected as the current text
-        even if it's not in the new list (e.g. they'd already picked a
-        preview model the list endpoint doesn't surface)."""
+        """Refill combo from a fetched list; keep current text even if missing from the new items."""
         current = combo.currentText().strip()
         combo.blockSignals(True)
         combo.clear()
@@ -713,10 +610,7 @@ class ConfigDialog(QDialog, AssistantTabMixin, EngineTabMixin, AudioTabMixin,
         combo.blockSignals(False)
 
     def _poll_engine_status_after_change(self):
-        # Called right after a Whisper setting change kicks off a
-        # background reload (see _apply_assistant_live()) - checks the
-        # status label every second for a few seconds to catch the reload
-        # finishing (or failing) without a manual refresh.
+        # After a Whisper reload, poll the status label for a few seconds.
         self._engine_status_poll_ticks = 8
         self._engine_status_poll_timer.start()
 
@@ -866,10 +760,7 @@ class ConfigDialog(QDialog, AssistantTabMixin, EngineTabMixin, AudioTabMixin,
         self._assistant_apply_timer.start()
 
     def _flush_pending_applies(self, *args):
-        # Flush any pending debounced writes immediately instead of losing
-        # up to 400ms of unapplied change if the window closes right after
-        # the last edit. Hooked to `finished`, so this runs no matter how
-        # the dialog closes - Close button, window X, or Esc.
+        # Flush pending debounce immediately on any close path (Close / X / Esc).
         if self._companion_apply_timer.isActive():
             self._companion_apply_timer.stop()
             self._apply_companion_live()

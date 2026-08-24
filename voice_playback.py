@@ -23,9 +23,8 @@ _mixer_ready = False
 
 
 def _configured_output_device():
-    """Return the sounddevice output index matching AUDIO_OUTPUT_DEVICE, or
-    None to use the system default - same name-matching convention as
-    recorder._configured_input_device()."""
+    """sounddevice output index matching AUDIO_OUTPUT_DEVICE, or None for default.
+    Same name-matching as recorder._configured_input_device()."""
     configured = getattr(config, "AUDIO_OUTPUT_DEVICE", None)
     if not configured or str(configured).lower() == "default":
         return None
@@ -39,9 +38,8 @@ def _configured_output_device():
 
 
 def _configured_output_device_name():
-    """Like _configured_output_device(), but returns the matched device's
-    exact name - pygame's mixer takes a device name, not a sounddevice
-    index."""
+    """Like _configured_output_device(), but the matched device's exact name
+    (pygame mixer takes a name, not a sounddevice index)."""
     configured = getattr(config, "AUDIO_OUTPUT_DEVICE", None)
     if not configured or str(configured).lower() == "default":
         return None
@@ -75,9 +73,7 @@ def _init_mixer_locked():
 
 
 def reinit_mixer():
-    """Reopens the pygame mixer on the currently configured output device -
-    called from Settings when AUDIO_OUTPUT_DEVICE changes, so picking a new
-    speaker/headset takes effect immediately instead of needing a restart."""
+    """Reopen pygame mixer on the current AUDIO_OUTPUT_DEVICE (Settings live change)."""
     global _mixer_ready
     with _mixer_lock:
         if _mixer_ready:
@@ -94,8 +90,7 @@ def _smooth_speech_text(text: str) -> str:
     return " ".join((text or "").split())
 
 
-# Words that commonly precede a period without ending a sentence ("Dr.
-# Smith", "etc."), checked when deciding sentence-split points below.
+# Words that commonly precede a period without ending a sentence.
 _SENTENCE_ABBREVIATIONS = {
     "mr", "mrs", "ms", "dr", "st", "jr", "sr", "prof",
     "vs", "etc", "e.g", "i.e", "approx",
@@ -103,10 +98,9 @@ _SENTENCE_ABBREVIATIONS = {
 
 
 def _split_sentences(text: str) -> list:
-    """Splits *text* into sentence-sized chunks for pipelined playback,
-    without splitting a decimal ("3.5") or abbreviation ("Dr.", "etc.").
-    Under-splitting just costs a little pipelining benefit; over-splitting
-    would speak a fragment as a whole sentence, so boundaries are conservative."""
+    """Split *text* into sentence-sized chunks for pipelined playback.
+    Does not split decimals ("3.5") or abbreviations ("Dr.", "etc.").
+    Conservative: under-splitting costs pipeline benefit; over-splitting speaks a fragment."""
     boundaries = []
     for m in re.finditer(r"[.!?]+(?=\s|$)", text):
         end = m.end()
@@ -134,20 +128,12 @@ def _split_sentences(text: str) -> list:
 
 
 def _volume_str_to_gain(volume_str: str) -> float:
-    """Converts config.EDGE_TTS_VOLUME ('+0%', '-20%', ...) into a
-    pygame.mixer.music playback gain (0.0-1.0).
+    """config.EDGE_TTS_VOLUME ('+0%', '-20%', ...) → pygame mixer gain 0.0–1.0.
 
-    Edge TTS's own %-volume prosody knob is passed to Communicate() below,
-    but it's notoriously unreliable on many neural voices - some barely
-    change loudness at all no matter what value is sent, which is why the
-    Settings volume slider could look like it "does nothing." Applying the
-    same percentage as real playback gain here guarantees the slider is
-    always audible, on top of whatever Edge TTS itself does with its own
-    knob. This can only attenuate, never boost - pygame can't play a clip
-    louder than its source without introducing distortion - so 0% and any
-    positive percentage both play at full (1.0) gain; only negative values
-    (quieter) have an effect here. A positive value still reaches Edge
-    TTS's own volume parameter in case that provides some boost."""
+    Edge's own %-volume is unreliable; this applies the same % as real playback
+    gain so the slider is always audible. Attenuates only — pygame can't boost
+    without distortion — so 0% and any positive % play at 1.0; only negative
+    values quiet. Positive still goes to Edge TTS in case it boosts."""
     try:
         percent = int(str(volume_str).strip().rstrip("%"))
     except (TypeError, ValueError):
@@ -195,9 +181,8 @@ class StreamingSpeaker:
                 break
             end = match.end()
             hard_boundary = self._pending[match.start() - 1] in ".!?"
-            # Sentence punctuation is latency-sensitive and flushes at once.
-            # Soft clause punctuation waits for the configured minimum, but a
-            # later sentence boundary still ends the chunk immediately.
+            # Sentence punctuation flushes immediately. Soft clause punctuation
+            # waits for TTS_CLAUSE_MIN_CHARACTERS; a later .!? still ends the chunk.
             while not hard_boundary and end < minimum:
                 next_match = self._BOUNDARY_RE.search(self._pending, end)
                 if next_match is None:
@@ -352,17 +337,12 @@ class StreamingSpeaker:
 
 
 def warm_up():
-    """Fires a throwaway synthesis (and, if pygame is available, initializes
-    the mixer) so the first real reply doesn't eat the one-time cost of
-    spinning up the event loop thread, opening the audio device, and doing
-    Edge TTS's initial connection/handshake. Safe to call from a background
-    thread at startup; safe to call more than once.
+    """Throwaway synthesis + mixer init so the first reply doesn't pay startup
+    cost (event loop, audio device, Edge handshake). Safe from a background
+    thread; idempotent.
 
-    Skips the actual network round trip when TTS_PROVIDER is "elevenlabs" -
-    unlike Edge TTS, ElevenLabs' API isn't free, so a throwaway "." on every
-    single startup would quietly spend a sliver of the account's character
-    quota for no real benefit. The event loop thread and mixer still get
-    started either way."""
+    Skips the network round trip when TTS_PROVIDER is "elevenlabs" (paid quota).
+    Event loop and mixer still start."""
     try:
         _ensure_mixer()
         _get_loop()
@@ -377,8 +357,8 @@ def warm_up():
 
 
 def _play(path: str, stop_event=None) -> bool:
-    """Plays *path* to completion, or stops as soon as *stop_event* is set.
-    Returns True if playback finished on its own, False if cut off."""
+    """Play *path* to completion, or stop when *stop_event* is set.
+    True if finished on its own, False if cut off."""
     _ensure_mixer()
     music = pygame.mixer.music
     music.load(path)
@@ -403,9 +383,8 @@ def _play(path: str, stop_event=None) -> bool:
 
 
 def _speak_one(text: str, on_playback_start=None, on_playback_end=None, stop_event=None) -> bool:
-    """Synthesize the whole reply, then play it. Used for single-sentence
-    replies and as the fallback when pipelining is off. Returns True if
-    interrupted (stop_event fired before/during playback)."""
+    """Synthesize the whole reply, then play. Single-sentence / pipeline-off fallback.
+    True if interrupted (stop_event fired before/during playback)."""
     try:
         path = _synthesize_to_temp_file(text)
     except Exception as e:
@@ -437,10 +416,9 @@ def _speak_one(text: str, on_playback_start=None, on_playback_end=None, stop_eve
 def _speak_pipelined(sentences: list, on_playback_start=None, on_playback_end=None, stop_event=None) -> bool:
     """Speak sentences with at most two synthesis requests in flight.
 
-    The current sentence and one lookahead sentence synthesize concurrently.
-    As playback advances, the next job starts. On interruption, work that has
-    not started stays cancelled; already-running daemon jobs finish and their
-    temporary files are removed in the background.
+    Current + one lookahead synthesize concurrently. On interrupt, unstarted
+    work stays cancelled; running daemon jobs finish and temps are removed in
+    the background.
     """
     if stop_event is not None and stop_event.is_set():
         if on_playback_end is not None:
@@ -522,23 +500,15 @@ def _speak_pipelined(sentences: list, on_playback_start=None, on_playback_end=No
     return interrupted
 
 def speak(text: str, on_playback_start=None, on_playback_end=None, stop_event=None) -> bool:
-    """Synthesize and play *text*, optionally reporting real playback bounds.
+    """Synthesize and play *text*. Callbacks wrap actual playback, not synthesis,
+    so animation starts when audio is about to be heard (synthesis can take a
+    noticeable network round trip).
 
-    Synthesis can take a noticeable network round trip. Callbacks deliberately
-    wrap actual playback rather than synthesis so a companion animation starts
-    when audio is about to be heard, not while Alyssa is silently waiting for
-    Edge TTS to create the file.
+    Multi-sentence replies pipeline unless TTS_PIPELINE_SENTENCES is False.
 
-    A reply with more than one sentence is pipelined (see _speak_pipelined) -
-    set TTS_PIPELINE_SENTENCES = False in config.py to always synthesize the
-    whole reply as one request instead, the original behavior.
-
-    stop_event, if given, is a threading.Event another thread can set (see
-    main.py's speak() wrapper and recorder.listen_for_barge_in) to cut
-    playback off as soon as you start talking over her - checked before
-    starting each sentence and polled during playback itself. Returns True
-    if playback was cut short this way, False if it finished normally (or
-    stop_event was never given).
+    stop_event: another thread can cut playback (see main.speak /
+    recorder.listen_for_barge_in). Checked before each sentence and polled
+    during play. True if cut short, False if finished / no stop_event.
     """
     text = _smooth_speech_text(text)
     if not text:

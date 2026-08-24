@@ -1,12 +1,4 @@
-"""
-Process Manager & System Tune-Up plugin for Alyssa.
-
-Gives Alyssa abilities to:
-- Terminate specific running applications/processes ('kill_process')
-- Identify top CPU or RAM consuming processes ('get_heavy_processes')
-- Clean temporary system files ('clean_temp_files')
-- Empty the Windows Recycle Bin ('empty_recycle_bin')
-"""
+"""Terminate apps, list heavy processes, clean TEMP, empty Recycle Bin."""
 import ctypes
 import os
 
@@ -189,7 +181,7 @@ def empty_recycle_bin(confirmed: bool = False) -> str:
         res = _shell32.SHEmptyRecycleBinW(None, None, flags)
         if res == 0:
             return "Recycle Bin emptied successfully."
-        elif res == 0x80004005:  # E_FAIL - often returned when already empty
+        elif res == 0x80004005:  # E_FAIL, often already empty
             return "The Recycle Bin is already empty."
         else:
             return "Recycle Bin cleared."

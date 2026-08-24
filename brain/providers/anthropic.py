@@ -19,10 +19,7 @@ _ANTHROPIC_VERSION = "2023-06-01"
 
 
 def _tools_to_anthropic(tools=None):
-    """Converts our OpenAI-style TOOLS list into Anthropic's tool schema -
-    same JSON Schema `parameters`, just renamed to `input_schema` and
-    flattened (no nested "function" wrapper). Cached - see
-    _anthropic_tools_cache above."""
+    """OpenAI-style tools -> Anthropic (`input_schema`, no function wrapper). Cached."""
     global _anthropic_tools_cache
     tool_list = TOOLS if tools is None else tools
     key = tuple(t["function"]["name"] for t in tool_list)
@@ -41,9 +38,10 @@ def _tools_to_anthropic(tools=None):
 
 
 def _messages_to_anthropic(messages):
-    """Converts our internal message list into Anthropic's (system,
-    messages) shape, where tool calls/results are content blocks rather
-    than separate message roles."""
+    """Internal messages -> Anthropic `(system, messages)`.
+
+    Tool calls/results are content blocks, not separate roles.
+    """
     system_text = None
     out = []
 

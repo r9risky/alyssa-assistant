@@ -6,10 +6,7 @@ import requests
 from brain.common import is_api_key_transport_secure
 
 def _volume_str_to_percent(value: str, default: int = 0) -> int:
-    """Parses config.EDGE_TTS_VOLUME's edge-tts format ('+0%', '-15%',
-    '20%') into a plain int for the slider. Falls back to `default` for
-    anything unexpected rather than raising, since this runs while just
-    building the Settings window."""
+    """EDGE_TTS_VOLUME ('+0%', '-15%', '20%') → int for the slider. Returns `default` on bad input (Settings build)."""
     try:
         return int(str(value).strip().rstrip("%"))
     except (TypeError, ValueError):
@@ -17,9 +14,7 @@ def _volume_str_to_percent(value: str, default: int = 0) -> int:
 
 
 def _percent_to_volume_str(percent: int) -> str:
-    """Inverse of _volume_str_to_percent - always includes an explicit
-    sign (edge-tts accepts '+0%' but this keeps it consistent with the
-    +N%/-N% style already used throughout config.py's own comments)."""
+    """Inverse of _volume_str_to_percent; always signed (`+0%`, `-15%`)."""
     return f"{percent:+d}%"
 
 
@@ -30,18 +25,10 @@ def _is_http_url(value: str, api_key: str = "") -> bool:
 
 
 def _verify_gemini_key(api_key: str) -> "tuple[bool, str, list]":
-    """Checks whether `api_key` is accepted by Gemini, without spending any
-    of the key's generation quota the way an actual chat/vision call would.
-    Uses the free "list models" endpoint purely as a cheap auth probe - and,
-    since that same response already lists every model the key can use,
-    also returns that list so the Settings UI can offer it as a dropdown
-    instead of a free-text guess.
+    """Auth-probe Gemini via GET /v1beta/models (no generation quota). Blocking; run off the GUI thread.
 
-    Returns (is_valid, message, models) - message is empty on success, or a
-    short human-readable reason on failure; models is a sorted list of
-    model names usable for chat (empty on failure or if none qualify).
-    Runs a blocking network call, so the caller is expected to run this off
-    the GUI thread."""
+    Returns (ok, message, models): message empty on success; models are generateContent names, sorted desc (empty on failure).
+    """
     try:
         resp = requests.get(
             "https://generativelanguage.googleapis.com/v1beta/models",
@@ -55,9 +42,6 @@ def _verify_gemini_key(api_key: str) -> "tuple[bool, str, list]":
         models = []
         try:
             for m in resp.json().get("models", []):
-                # Only ones that actually support a chat-style call - the
-                # list also includes embedding/imagen/etc. models that
-                # would just fail if picked here.
                 if "generateContent" not in m.get("supportedGenerationMethods", []):
                     continue
                 name = m.get("name", "")
@@ -76,9 +60,7 @@ def _verify_gemini_key(api_key: str) -> "tuple[bool, str, list]":
 
 
 def _verify_openai_key(api_key: str) -> "tuple[bool, str, list]":
-    """Same idea as _verify_gemini_key above, but against OpenAI's free
-    "list models" endpoint. See that function's docstring for the return
-    contract."""
+    """Auth-probe OpenAI GET /v1/models. Same return as _verify_gemini_key; drops embedding/whisper/tts/dall-e/moderation/davinci/babbage ids."""
     try:
         resp = requests.get(
             "https://api.openai.com/v1/models",
@@ -90,9 +72,6 @@ def _verify_openai_key(api_key: str) -> "tuple[bool, str, list]":
 
     if resp.status_code == 200:
         models = []
-        # OpenAI's /v1/models also lists non-chat models (embeddings,
-        # Whisper, TTS, DALL-E, moderation) that would just fail here -
-        # filter those out so the dropdown only shows usable chat models.
         _non_chat_markers = ("embedding", "whisper", "tts", "dall-e", "moderation", "davinci-", "babbage-")
         try:
             for m in resp.json().get("data", []):
@@ -113,9 +92,7 @@ def _verify_openai_key(api_key: str) -> "tuple[bool, str, list]":
 
 
 def _verify_anthropic_key(api_key: str) -> "tuple[bool, str, list]":
-    """Same idea as _verify_gemini_key above, but against Anthropic's free
-    "list models" endpoint. See that function's docstring for the return
-    contract."""
+    """Auth-probe Anthropic GET /v1/models. Same return contract as _verify_gemini_key, but keep API order (newest first)."""
     try:
         resp = requests.get(
             "https://api.anthropic.com/v1/models",
@@ -128,9 +105,6 @@ def _verify_anthropic_key(api_key: str) -> "tuple[bool, str, list]":
     if resp.status_code == 200:
         models = []
         try:
-            # Anthropic returns these newest-first already - keep that
-            # order rather than re-sorting alphabetically, since it's more
-            # useful here (newest model shown first).
             models = [m.get("id", "") for m in resp.json().get("data", []) if m.get("id")]
         except ValueError:
             pass
@@ -146,10 +120,7 @@ def _verify_anthropic_key(api_key: str) -> "tuple[bool, str, list]":
 
 
 def _verify_spotify_credentials(client_id: str, client_secret: str) -> "tuple[bool, str]":
-    """Checks whether `client_id`/`client_secret` are accepted by Spotify's
-    client-credentials token endpoint - the exact same request
-    actions._get_spotify_token() makes, so a green check here means
-    play_music's Spotify lookups will actually work."""
+    """Probe Spotify client-credentials token (same request as actions._get_spotify_token). Returns (ok, message)."""
     try:
         resp = requests.post(
             "https://accounts.spotify.com/api/token",
@@ -172,10 +143,7 @@ def _verify_spotify_credentials(client_id: str, client_secret: str) -> "tuple[bo
 
 
 def _verify_youtube_key(api_key: str) -> "tuple[bool, str]":
-    """Checks whether `api_key` is accepted by the YouTube Data API v3.
-    Uses the videoCategories endpoint rather than search - it costs a
-    fraction of the API quota (1 unit vs. search's 100), so a Verify click
-    doesn't eat into the same daily quota play_music's actual lookups use."""
+    """Probe YouTube Data API v3 via videoCategories (1 quota unit, not search's 100). Returns (ok, message)."""
     try:
         resp = requests.get(
             "https://www.googleapis.com/youtube/v3/videoCategories",
@@ -197,14 +165,11 @@ def _verify_youtube_key(api_key: str) -> "tuple[bool, str]":
 
 
 def _fetch_custom_openai_models(base_url: str, api_key: str) -> "tuple[bool, str, list]":
-    """Lists models from a custom OpenAI-compatible endpoint (Groq,
-    OpenRouter, Together, a local LM Studio/vLLM server, etc.) by hitting
-    its standard GET {base_url}/models route - the same endpoint OpenAI's
-    own client uses, which most compatible providers implement too.
+    """GET {base_url}/models on an OpenAI-compatible server. Blocking.
 
-    Returns (ok, message, models) - same contract as _verify_gemini_key,
-    except message is also used for a non-fatal note on success (e.g. a
-    server that doesn't support this endpoint at all)."""
+    Returns (ok, message, models) like _verify_gemini_key; message may be a non-fatal note.
+    HTTPS required when sending an API key; HTTP only for loopback. Appends /models unless already present.
+    """
     base_url = (base_url or "").rstrip("/")
     if not base_url:
         return False, "Enter a base URL first.", []
@@ -232,9 +197,7 @@ def _fetch_custom_openai_models(base_url: str, api_key: str) -> "tuple[bool, str
     except ValueError:
         return False, "Server responded, but not with valid JSON.", []
 
-    # Most OpenAI-compatible servers use {"data": [{"id": ...}, ...]},
-    # same shape as OpenAI itself - fall back to a bare list of strings/
-    # dicts in case a server returns something slightly different.
+    # Prefer {"data": [{"id": ...}]}; else a bare list of ids / dicts.
     raw = data.get("data") if isinstance(data, dict) else data
     models = []
     if isinstance(raw, list):
@@ -250,18 +213,14 @@ def _fetch_custom_openai_models(base_url: str, api_key: str) -> "tuple[bool, str
 
 
 def _elevenlabs_voice_display(v: dict) -> str:
-    """Combo-box text for one ElevenLabs voice - shows the human name but
-    keeps the voice_id recoverable (see _extract_elevenlabs_voice_id)
-    since the id, not the name, is what actually goes in config.py."""
+    """Combo text: `{name} ({category}) — {voice_id}` so the id is recoverable."""
     name = v.get("name") or v.get("voice_id", "")
     category = f" ({v['category']})" if v.get("category") else ""
     return f"{name}{category} — {v.get('voice_id', '')}"
 
 
 def _extract_elevenlabs_voice_id(text: str) -> str:
-    """Reverses _elevenlabs_voice_display - pulls the voice_id back out of
-    a combo entry. A bare id (no ' — ' separator), e.g. one typed in by
-    hand or loaded straight from config.py, passes through unchanged."""
+    """Inverse of _elevenlabs_voice_display: id after ` — `, or the whole string if none."""
     text = (text or "").strip()
     if " — " in text:
         return text.rsplit(" — ", 1)[-1].strip()
@@ -269,12 +228,7 @@ def _extract_elevenlabs_voice_id(text: str) -> str:
 
 
 def _verify_elevenlabs_key(api_key: str) -> "tuple[bool, str, list]":
-    """Fetches the account's ElevenLabs voice list as both the auth check
-    and the data the Settings voice dropdown needs - there's no separate
-    cheap auth-only probe, same as the custom OpenAI-compatible provider
-    above. Returns (ok, message, display_strings) - display_strings are
-    _elevenlabs_voice_display() text, ready to drop straight into the
-    voice combo."""
+    """List ElevenLabs voices as auth + dropdown data (no cheaper probe). Returns (ok, message, display_strings)."""
     import voice as voice_module
     try:
         voices = voice_module.list_elevenlabs_voices(api_key)
@@ -288,9 +242,7 @@ def _verify_elevenlabs_key(api_key: str) -> "tuple[bool, str, list]":
 
 
 def _patch_config_line(text: str, key: str, value_literal: str) -> str:
-    """Replaces the value of a top-level `KEY = ...` assignment in
-    config.py's source text, preserving any trailing inline comment. Adds
-    the line at the end if the key isn't already present."""
+    """Replace a top-level `KEY = ...` in config.py text; keep trailing comments. Append if missing."""
     import re
 
     pattern = re.compile(rf"(?m)^{re.escape(key)}\s*=\s*.*?(\s*#.*)?$")

@@ -1,6 +1,4 @@
-"""
-Dynamic plugin loader for user-defined actions in plugins/.
-"""
+"""Dynamic plugin loader for user-defined actions in plugins/."""
 import importlib.util
 import os
 import sys
@@ -9,33 +7,21 @@ from config import PLUGIN_SETTINGS as config
 
 PLUGINS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "plugins")
 
-# So a plugin can do `from _location import get_ip_location` etc. to share
-# code with another file in plugins/, the same way any normal Python package
-# would resolve a sibling import - without this, each plugin is loaded via
-# spec_from_file_location in isolation and has no way to find its neighbors.
+# plugins/ on sys.path so a plugin can `from _location import ...` siblings.
+# Without this, spec_from_file_location isolation can't see neighbors.
 if os.path.isdir(PLUGINS_DIR) and PLUGINS_DIR not in sys.path:
     sys.path.insert(0, PLUGINS_DIR)
 
-# Problems from the most recent load_plugins() call, so
-# actions.run_diagnostics() can report plugin health without parsing console output.
+# From the most recent load_plugins(); actions.run_diagnostics() reports these.
 _load_errors = []
 
-# Watchers (name, check_watch callable, interval_seconds) collected by the
-# most recent load_plugins() call - see get_watchers() and the module
-# docstring above. Populated as a side effect of load_plugins(), which
-# actions.py already calls once at import time, so by the time main.py's
-# watcher loop starts, this is ready without a second plugin scan.
+# Watchers from the most recent load_plugins() — see get_watchers().
+# Populated as a side effect; ready by the time the watcher loop starts.
 _watchers = []
 
-# GUI panels (title + a build(parent) -> QWidget callable) collected by the
-# most recent load_plugins() call - see get_gui_panels() and the module
-# docstring above. A plugin opts into a Settings tab of its own by
-# defining GUI_PANEL_TITLE and build_gui_panel() at module level, same
-# spirit as FUNCTIONS/TOOLS for actions and check_watch() for proactive
-# checks. Nothing in this file imports Qt - the widget only gets built
-# when overlay/settings_dialog.py actually calls "build", so a headless
-# run (tests, --no-gui) never pays for PySide6 just because a plugin
-# defines a panel.
+# GUI panels from the most recent load_plugins() — see get_gui_panels().
+# Opt in with GUI_PANEL_TITLE + build_gui_panel() at module level.
+# Qt is not imported here; overlay builds the widget later (headless-safe).
 _gui_panels = []
 
 
@@ -52,10 +38,9 @@ def get_gui_panels():
 
 
 def load_plugins():
-    """Returns (functions, tools) merged from every .py file in plugins/.
-    functions is a dict of {name: callable}; tools is a list of tool-schema
-    dicts. Files starting with '_' (including __init__.py) are skipped -
-    rename a plugin to start with '_' to disable it without deleting it."""
+    """(functions, tools) merged from every .py in plugins/.
+    functions: {name: callable}; tools: tool-schema dicts.
+    Skip files starting with '_' (including __init__.py) — rename to disable."""
     global _load_errors, _watchers, _gui_panels
     _load_errors = []
     _watchers = []
@@ -154,10 +139,7 @@ def load_plugins():
                     "name": filename,
                     "title": str(panel_title),
                     "build": panel_builder,
-                    # A plugin panel that manages its own scrolling (e.g. an
-                    # embedded list + editor like the built-in Plugins tab)
-                    # can set GUI_PANEL_SCROLLABLE = False to opt out of the
-                    # QScrollArea wrapper settings_dialog.py adds by default.
+                    # GUI_PANEL_SCROLLABLE = False opts out of the QScrollArea wrapper.
                     "scrollable": bool(getattr(module, "GUI_PANEL_SCROLLABLE", True)),
                 })
                 print(f"[plugins] '{filename}' registered a Settings tab: {panel_title}")

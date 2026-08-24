@@ -62,16 +62,12 @@ class CompanionTabMixin:
         self._repolish()
 
     def _refresh_startup_status(self):
-        """Queries whether the AlyssaAssistant scheduled task currently
-        exists - this only reads, so unlike installing/removing it, no
-        admin prompt is needed just to check."""
+        """Read whether the AlyssaAssistant scheduled task exists (query only; no admin prompt)."""
         try:
-            # CREATE_NO_WINDOW keeps this invisible instead of flashing a
-            # console window every time Settings opens.
             result = subprocess.run(
                 ["schtasks", "/Query", "/TN", "AlyssaAssistant"],
                 capture_output=True, timeout=5,
-                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),  # no console flash on Settings open
             )
             registered = result.returncode == 0
         except Exception:
@@ -298,9 +294,6 @@ class CompanionTabMixin:
         self.image_edit.textChanged.connect(self._refresh_preview)
         self.talk_image_edit.textChanged.connect(self._refresh_preview)
 
-        # Every control on this tab feeds the same live-apply debounce
-        # timer, so the companion window (and overlay_config.json) picks
-        # up each change without a Save click.
         for widget, signal in [
             (self.image_edit, self.image_edit.editingFinished),
             (self.talk_image_edit, self.talk_image_edit.editingFinished),
@@ -361,10 +354,6 @@ class CompanionTabMixin:
             pixmap.scaled(140, 198, Qt.KeepAspectRatio, Qt.SmoothTransformation)
         )
 
-    # Every field on both tabs applies itself as you change it (debounced -
-    # see the two QTimers set up in __init__) instead of waiting for a Save
-    # click. Close just dismisses the window; there's nothing left to commit.
-
     def _gather_companion_settings(self) -> dict:
         return {
             "character_image": self._validated_image_path(
@@ -399,9 +388,7 @@ class CompanionTabMixin:
         return value if valid else self.companion.settings.get(setting_key, "")
 
     def _queue_companion_apply(self, *args):
-        # Restarting a single-shot timer on every call is what turns a
-        # burst of signals (dragging a slider, typing a path) into one
-        # apply shortly after things settle, instead of one per event.
+        # Restart the single-shot timer: burst of signals → one apply after settle.
         self._companion_apply_timer.start()
 
     def sync_companion_scale(self, scale: float):

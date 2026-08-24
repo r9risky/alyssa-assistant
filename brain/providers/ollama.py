@@ -18,17 +18,12 @@ def _call_ollama(messages, on_text_delta=None, cancel_event=None, tools=None):
             "messages": messages,
             "tools": TOOLS if tools is None else tools,
             "stream": True,
-            # Low temperature = more consistent rule-following (act, don't
-            # ask/narrate) and more reliable tool-call formatting, at some
-            # cost to reply variety - a good tradeoff for a small local model.
+            # Low temperature: more reliable tool-call formatting on small models.
             "options": {
                 "temperature": 0.2,
                 "num_predict": getattr(config, "LLM_MAX_OUTPUT_TOKENS", 256),
             },
-            # How long Ollama keeps this model loaded after this request -
-            # see OLLAMA_KEEP_ALIVE in config.py. Sent on every request
-            # (not just the warm-up ping below) since Ollama resets the
-            # countdown from whatever value it's most recently told.
+            # keep_alive on every request — Ollama resets the countdown from the last value.
             "keep_alive": getattr(config, "OLLAMA_KEEP_ALIVE", "10m"),
         },
         timeout=(10, 120),
@@ -70,19 +65,10 @@ def _call_ollama(messages, on_text_delta=None, cancel_event=None, tools=None):
 
 
 def warm_up_ollama():
-    """Best-effort: asks Ollama to load OLLAMA_MODEL into memory right now,
-    rather than waiting for your first real command to trigger that load.
-    A cold model load is the single slowest thing that can happen in this
-    whole pipeline - noticeably slower than any individual reply once it's
-    warm - so doing it in the background at startup means it's already
-    absorbed by the time you actually say something, instead of landing on
-    your first command every single time Alyssa starts.
+    """Best-effort: preload OLLAMA_MODEL. No-op unless LLM_PROVIDER is ollama.
 
-    A no-op for every other LLM_PROVIDER, since only a local Ollama model
-    needs to be loaded into memory in the first place. Safe to call on a
-    background thread; any failure here is swallowed silently, since
-    run_preflight_checks() already confirmed Ollama is reachable and the
-    model is pulled - the normal request path surfaces any real problem."""
+    Safe on a background thread; failures are swallowed.
+    """
     if config.LLM_PROVIDER != "ollama":
         return
     try:
@@ -92,9 +78,7 @@ def warm_up_ollama():
                 "model": config.OLLAMA_MODEL,
                 "messages": [{"role": "user", "content": "hi"}],
                 "stream": False,
-                # Cuts the warm-up reply as short as the model will allow -
-                # the point is only to force the load, never to actually
-                # use whatever it says here.
+                # Force a load only; reply is unused.
                 "options": {"temperature": 0.2, "num_predict": 1},
                 "keep_alive": getattr(config, "OLLAMA_KEEP_ALIVE", "10m"),
             },

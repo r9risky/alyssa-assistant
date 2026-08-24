@@ -70,10 +70,7 @@ class AssistantTabMixin:
         form.addRow(self._ollama_model_label, self.ollama_model_edit)
 
         # -- Gemini --
-        # Pre-filled from config.py (masked) so the field reflects what's
-        # already set. Keep the original value to only rewrite config.py's
-        # *_API_KEY lines if they actually changed - same pattern for
-        # OpenAI/Anthropic/custom below.
+        # Keep originals so *_API_KEY lines are rewritten only when they actually change.
         self._original_gemini_key = config.GEMINI_API_KEY
         self.gemini_key_status_label = self._help_label("")
         get_key_link = self._link_label(
@@ -169,8 +166,7 @@ class AssistantTabMixin:
         note.setStyleSheet(f"color: {self._t()['subtext']}; font-size: 11px;")
         form.addRow("", note)
 
-        # -- Music (Spotify / YouTube Music) -- optional: without these,
-        # play_music can only open a search page (see actions.py).
+        # -- Music: without these, play_music can only open a search page.
         form.addRow("", self._section_header("Music (Spotify / YouTube Music)", "🎵"))
         music_intro = self._help_label(
             "Optional: plays results directly instead of opening search."
@@ -189,9 +185,7 @@ class AssistantTabMixin:
                 self.spotify_client_secret_edit, self.spotify_status_label
             )
         )
-        # Right-padded to match the width of the Secret/YouTube fields
-        # below (which have Show/Verify buttons eating into their width),
-        # so this field doesn't run wider and look ragged.
+        # Pad to match Secret/YouTube rows that include Show/Verify buttons.
         id_row = QHBoxLayout()
         id_row.addWidget(self.spotify_client_id_edit)
         id_spacer = QLabel("")
@@ -239,8 +233,6 @@ class AssistantTabMixin:
         self._edge_voice_rows = []
         self.voice_combo = QComboBox()
         self.voice_combo.setEditable(True)
-        # ponytail: dropped 63-entry COMMON_VOICES list; combo is editable
-        # and "Browse all voices" fetches the full catalog from Edge TTS.
         self.voice_combo.addItem(config.EDGE_TTS_VOICE)
         self.voice_combo.setCurrentText(config.EDGE_TTS_VOICE)
         self.voice_combo.currentTextChanged.connect(self._queue_assistant_apply)
@@ -317,9 +309,7 @@ class AssistantTabMixin:
         volume_row = QHBoxLayout()
         volume_row.addWidget(self.volume_slider)
         volume_row.addWidget(self.volume_value_label)
-        # Edge TTS only - ElevenLabs' API has no equivalent %-volume knob,
-        # so this row is hidden rather than shown-but-inert when that
-        # provider is selected (see _update_tts_provider_rows_visibility).
+        # Edge TTS only; hidden for ElevenLabs (no %-volume API).
         self._edge_voice_rows.append(self._add_row(form, "Volume:", volume_row))
 
         self._update_tts_provider_rows_visibility()
@@ -329,9 +319,7 @@ class AssistantTabMixin:
         self.speak_check.toggled.connect(self._queue_assistant_apply)
         form.addRow("", self.speak_check)
 
-        # Caveman mode - mirrors plugins/caveman_mode.py's set_caveman_mode()
-        # tool (which the user can also trigger by voice); both write the
-        # same config.CAVEMAN_MODE, so whichever was used last wins.
+        # Same config.CAVEMAN_MODE as the voice tool; last writer wins.
         self.caveman_combo = QComboBox()
         self.caveman_combo.addItem("Off", None)
         self.caveman_combo.addItem("Lite", "lite")
@@ -514,8 +502,7 @@ class AssistantTabMixin:
         else:
             status.setText("✓ Valid key.")
 
-    # -- Custom OpenAI-compatible provider: "Fetch models" doubles as its
-    # verify step, since there's no separate cheap auth-only probe. --------
+    # Fetch models doubles as verify (no cheaper auth probe).
 
     def _confirm_custom_key_origin(self, base_url: str, key: str) -> bool:
         if not key:
@@ -572,7 +559,7 @@ class AssistantTabMixin:
         self._custom_fetch_models_btn.setText("Fetch models")
         current = (self.custom_base_url_edit.text().strip(), self.custom_key_edit.text().strip())
         if current != self._last_custom_fetch_checked:
-            return  # user changed the URL/key again while this was in flight
+            return  # URL/key changed while this fetch was in flight
 
         if ok and models:
             self._populate_model_combo(self.custom_model_edit, models)
@@ -581,9 +568,6 @@ class AssistantTabMixin:
         else:
             self.custom_models_status_label.setStyleSheet(f"font-size: 11px; color: {self._t()['danger']};")
             self.custom_models_status_label.setText(f"✗ {message}")
-
-    # -- Edge TTS "Browse all voices" - opens VoiceBrowserDialog, which
-    # fetches the full catalog on its own background thread. -------------
 
     def _open_edge_voice_browser(self):
         from ..settings_dialog import VoiceBrowserDialog
@@ -596,10 +580,6 @@ class AssistantTabMixin:
         if self.voice_combo.findText(short_name) < 0:
             self.voice_combo.addItem(short_name)
         self.voice_combo.setCurrentText(short_name)
-
-    # -- Spotify credential verification (mirrors the Gemini block above,
-    # except it checks a Client ID/Secret pair together instead of a
-    # single key) -----------------------------------------------------------
 
     def _start_spotify_verify(self):
         client_id = self.spotify_client_id_edit.text().strip()
@@ -717,10 +697,7 @@ class AssistantTabMixin:
         }
 
     def _gather_secret_updates(self, values=None) -> dict:
-        """Secret fields changed since the dialog opened (or since the
-        last apply). These never get patched into config.py as text -
-        see _apply_assistant_live, which routes them to
-        credential_store.set_secret() instead."""
+        """Changed secrets since open/last apply. Never patched into config.py; see credential_store.set_secret()."""
         values = values or self._gather_assistant_values()
         originals = {
             "GEMINI_API_KEY": self._original_gemini_key,
@@ -738,10 +715,7 @@ class AssistantTabMixin:
         }
 
     def _gather_assistant_updates(self, values=None) -> dict:
-        """Non-secret fields to patch into config.py as text. Secret
-        fields (credential_store.SECRET_ENV_VARS) are excluded here on
-        purpose - they're persisted via _gather_secret_updates() /
-        credential_store.set_secret() instead, never as plaintext."""
+        """Non-secret fields to patch into config.py. SECRET_ENV_VARS go through _gather_secret_updates()."""
         values = values or self._gather_assistant_values()
         return {
             key: repr(value) for key, value in values.items()
@@ -749,8 +723,7 @@ class AssistantTabMixin:
         }
 
     def _apply_edge_volume_live(self, value: int):
-        # Synthesis and active playback both read this value directly; only
-        # the config.py write remains debounced while the slider is dragged.
+        # Playback reads this immediately; config.py write stays debounced.
         config.EDGE_TTS_VOLUME = _percent_to_volume_str(value)
         self._queue_assistant_apply()
 
@@ -759,11 +732,7 @@ class AssistantTabMixin:
 
         _atomic_write_text = _settings_dialog._atomic_write_text
         _set_console_visible = _settings_dialog._set_console_visible
-        # Patch config.py on disk (non-secret settings only) + this
-        # session's already-imported config module, so changes take
-        # effect immediately without a restart. API keys/secrets never
-        # touch config.py - they go to the OS keyring via
-        # credential_store instead, so they aren't a plaintext file.
+        # Patch config.py (non-secrets) + live `config` module. Secrets go to the OS keyring, never config.py.
         values = self._gather_assistant_values()
         updates = self._gather_assistant_updates(values)
         try:
@@ -780,10 +749,7 @@ class AssistantTabMixin:
         secret_updates = self._gather_secret_updates(values)
         if secret_updates:
             failed = [key for key, value in secret_updates.items() if not credential_store.set_secret(key, value)]
-            # Resync the "original" trackers (used to detect future changes
-            # and to restore on Cancel) from what was actually attempted -
-            # a failed set_secret leaves the keyring untouched, so its
-            # tracker stays at the old value in that case.
+            # Resync originals from attempted writes; failed set_secret leaves tracker at the old value.
             self._original_gemini_key = self.gemini_key_edit.text().strip() if "GEMINI_API_KEY" not in failed else self._original_gemini_key
             self._original_openai_key = self.openai_key_edit.text().strip() if "OPENAI_API_KEY" not in failed else self._original_openai_key
             self._original_anthropic_key = self.anthropic_key_edit.text().strip() if "ANTHROPIC_API_KEY" not in failed else self._original_anthropic_key
@@ -820,36 +786,23 @@ class AssistantTabMixin:
             config.WHISPER_MODEL_SIZE, config.WHISPER_DEVICE, config.WHISPER_COMPUTE_TYPE
         )
         if whisper_settings_changed:
-            # transcribe.py caches the loaded Whisper model for the process
-            # lifetime - without this, changing model/device/compute type
-            # here would patch config.py but the already-loaded model
-            # would keep being reused, silently ignoring the change until
-            # a full restart. reload_model_async() drops the cached model.
+            # Drop the process-lifetime Whisper cache so model/device/compute take effect now.
             try:
                 import transcribe
                 transcribe.reload_model_async()
-                # Refresh the Engine tab's live status label a few times
-                # over the next several seconds, so it picks up the reload
-                # finishing (or a forced GPU choice quietly failing back to
-                # CPU) without you having to click Refresh yourself.
                 if hasattr(self, "_poll_engine_status_after_change"):
                     self._poll_engine_status_after_change()
             except ImportError:
                 pass
         if old_audio_output != getattr(config, "AUDIO_OUTPUT_DEVICE", "default"):
-            # pygame's mixer only opens its output device once, at
-            # first use - without this, picking a new speaker here would
-            # patch config.py but replies would keep playing through the
-            # old device until a full restart.
+            # pygame mixer opens its device once; reinit so a new speaker takes effect.
             try:
                 import voice
                 voice.reinit_mixer()
             except ImportError:
                 pass
         if old_spotify != (config.SPOTIFY_CLIENT_ID, config.SPOTIFY_CLIENT_SECRET):
-            # actions.py caches a Spotify access token in-process (valid
-            # ~1hr) - without this, changing Client ID/Secret wouldn't
-            # take effect until that cached token expired on its own.
+            # Drop the in-process Spotify token (~1hr) so new Client ID/Secret apply now.
             try:
                 import actions
                 actions._spotify_token_cache["access_token"] = None
@@ -857,9 +810,7 @@ class AssistantTabMixin:
             except ImportError:
                 pass
 
-        # Actually start listening now if it wasn't already (e.g. this is
-        # what just supplied a previously-missing Gemini key) - a no-op if
-        # the assistant loop is already running.
+        # Start the listener if it wasn't already (e.g. a newly supplied Gemini key). Idempotent.
         starter = getattr(self.companion, "start_assistant_worker", None)
         if starter is not None:
             starter()

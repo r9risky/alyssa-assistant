@@ -40,10 +40,8 @@ def set_critical_confirmation_callback(callback):
 
 
 def _confirm(description: str, force: bool = False) -> bool:
-    """Asks for y/n confirmation. Normally only if CONFIRM_BEFORE_ACTIONS is
-    enabled in config.py - but force=True (used by delete_file, run_command,
-    and restart/shutdown) always asks regardless of that setting, since
-    those are the actions that are genuinely hard to undo."""
+    """y/n unless CONFIRM_BEFORE_ACTIONS is off. force=True always asks.
+    Voice callback may raise VoiceConfirmationRequired."""
     current = getattr(_tool_confirmation, "current", None)
     if current and current[2]:
         return True

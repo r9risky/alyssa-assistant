@@ -1,9 +1,5 @@
-"""Desktop automation boundary for Windows actions.
-
-The rest of the application can import the actions package without immediately
-initializing PyAutoGUI (which probes the desktop/display at import time).  The
-actual dependency is loaded only when a desktop action is executed.
-"""
+"""Lazy PyAutoGUI boundary: import actions without probing the display.
+Loaded only when a desktop action runs."""
 
 from __future__ import annotations
 
@@ -12,7 +8,7 @@ import threading
 
 
 class _LazyPyAutoGUI:
-    """Small module proxy that delays PyAutoGUI initialization until use."""
+    """Proxy that loads PyAutoGUI on first use."""
 
     def __init__(self) -> None:
         object.__setattr__(self, "_module", None)

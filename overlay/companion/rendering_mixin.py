@@ -20,18 +20,12 @@ class RenderingMixin:
         self.update()
 
     def _frame_from_movie(self, path: str, mouth_open: bool) -> QPixmap:
-        """Returns the current frame of the GIF at path, scaled/centered
-        to the window's current size - and makes sure that GIF's QMovie
-        is the one actually playing (stopping whichever one was playing
-        before, if this is a switch between her idle/talking GIFs, so
-        only one decodes frames at a time)."""
+        """Current GIF frame, scaled/centered. Stops the previous movie so only one GIF decodes at a time."""
         movie = self._movies.get(path)
         if movie is None:
             movie = QMovie(path)
             movie.setCacheMode(QMovie.CacheAll)
-            # Some GIFs have a finite (or zero) authored loop count - as a
-            # background character she should loop forever regardless.
-            movie.finished.connect(movie.start)
+            movie.finished.connect(movie.start)  # loop forever regardless of authored loop count
             movie.frameChanged.connect(self._on_movie_frame)
             self._movies[path] = movie
 
@@ -42,9 +36,7 @@ class RenderingMixin:
 
         frame = movie.currentPixmap()
         if frame.isNull():
-            # First call, before the movie has decoded frame 0 yet - fall
-            # back to a static render just for this one paint so there's
-            # never a blank flash; the next frameChanged tick replaces it.
+            # Frame 0 not decoded yet: static render this paint; frameChanged replaces it.
             return render_character(self.settings, self.size(), mouth_open=mouth_open)
         return _scale_centered(frame, self.size())
 
@@ -56,10 +48,7 @@ class RenderingMixin:
             self._active_movie_path = None
 
     def _on_movie_frame(self, _frame_number: int):
-        # QMovie advances frames on its own internal timer, so this is the
-        # actual animation tick for a GIF - only repaint if the signal came
-        # from whichever movie is currently active/shown (a previous movie
-        # can still be mid-decode of a queued frame right as we switch away).
+        # GIF tick: ignore queued frames from a movie we already switched away from.
         if self.sender() is self._movies.get(self._active_movie_path):
             self._update_pixmap()
 
@@ -67,8 +56,7 @@ class RenderingMixin:
         if self._pixmap is None or self._pixmap.isNull():
             return
         region = QRegion(self._pixmap.mask()).translated(0, int(self._bounce_offset))
-        # Always keep the resize grip clickable even if that corner of the
-        # image happens to be transparent.
+        # Keep the resize grip clickable even if that corner of the image is transparent.
         gx = self.width() - RESIZE_GRIP
         gy = self.height() - RESIZE_GRIP
         region += QRegion(gx, gy, RESIZE_GRIP, RESIZE_GRIP, QRegion.Ellipse)
@@ -80,9 +68,6 @@ class RenderingMixin:
         if self._pixmap is not None:
             painter.drawPixmap(0, int(self._bounce_offset), self._pixmap)
 
-        # Resize grip glyph, always visible so it's discoverable even on a
-        # transparent corner of the artwork. Color pulls from the current
-        # theme accent so it matches the UI palette instead of being arbitrary.
         gx = self.width() - RESIZE_GRIP
         gy = self.height() - RESIZE_GRIP
         t_grip = _theme(self.settings)
@@ -102,9 +87,7 @@ class RenderingMixin:
             )
 
     def _update_effective_opacity(self):
-        """Combines the base "Opacity" setting with the optional
-        "dim while idle" setting -- she fades out a bit whenever she isn't
-        talking, and comes back to full (base) opacity while she is."""
+        """Base opacity × dim-when-idle (idle only). Talking uses full base opacity."""
         base = float(self.settings.get("opacity", 1.0))
         if self.settings.get("dim_when_idle_enabled", False) and not self._talking:
             dim_pct = float(self.settings.get("dim_when_idle_opacity", 55)) / 100.0

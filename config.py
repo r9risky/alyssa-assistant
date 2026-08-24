@@ -1,6 +1,4 @@
-"""
-Central Configuration Settings for Alyssa Assistant.
-"""
+"""Central configuration settings for Alyssa Assistant."""
 from typing import Any
 
 import credential_store as _cred
@@ -21,21 +19,21 @@ OLLAMA_MODEL = 'qwen2.5:3b'
 OLLAMA_URL = "http://localhost:11434/api/chat"
 OLLAMA_KEEP_ALIVE = "10m"
 
-GEMINI_API_KEY = _cred.get_secret('GEMINI_API_KEY')  # env var GEMINI_API_KEY still overrides
+GEMINI_API_KEY = _cred.get_secret('GEMINI_API_KEY')  # env always wins
 GEMINI_MODEL = 'gemini-3.5-flash-lite'
 
-OPENAI_API_KEY = _cred.get_secret('OPENAI_API_KEY')  # env var OPENAI_API_KEY still overrides
+OPENAI_API_KEY = _cred.get_secret('OPENAI_API_KEY')  # env always wins
 OPENAI_MODEL = 'gpt-5-mini'
 OPENAI_BASE_URL = "https://api.openai.com/v1"
 
-SPOTIFY_CLIENT_ID = _cred.get_secret('SPOTIFY_CLIENT_ID')  # env var SPOTIFY_CLIENT_ID still overrides
-SPOTIFY_CLIENT_SECRET = _cred.get_secret('SPOTIFY_CLIENT_SECRET')  # env var SPOTIFY_CLIENT_SECRET still overrides
-YOUTUBE_API_KEY = _cred.get_secret('YOUTUBE_API_KEY')  # env var YOUTUBE_API_KEY still overrides
+SPOTIFY_CLIENT_ID = _cred.get_secret('SPOTIFY_CLIENT_ID')  # env always wins
+SPOTIFY_CLIENT_SECRET = _cred.get_secret('SPOTIFY_CLIENT_SECRET')  # env always wins
+YOUTUBE_API_KEY = _cred.get_secret('YOUTUBE_API_KEY')  # env always wins
 
-ANTHROPIC_API_KEY = _cred.get_secret('ANTHROPIC_API_KEY')  # env var ANTHROPIC_API_KEY still overrides
+ANTHROPIC_API_KEY = _cred.get_secret('ANTHROPIC_API_KEY')  # env always wins
 ANTHROPIC_MODEL = 'claude-sonnet-5'
 
-CUSTOM_API_KEY = _cred.get_secret('CUSTOM_API_KEY')  # env var CUSTOM_LLM_API_KEY still overrides
+CUSTOM_API_KEY = _cred.get_secret('CUSTOM_API_KEY')  # env var is CUSTOM_LLM_API_KEY; always wins
 CUSTOM_BASE_URL = 'https://openrouter.ai/api/v1'
 CUSTOM_MODEL = 'meta-llama/llama-3.3-70b-instruct'
 LLM_MAX_OUTPUT_TOKENS = 256
@@ -45,8 +43,7 @@ LLM_MAX_OUTPUT_TOKENS = 256
 OLLAMA_VISION_MODEL = "llava"
 SCREEN_VISION_MAX_DIMENSION = 768
 
-# "auto" uses ElevenLabs' persistent realtime WebSocket when a key is
-# configured, otherwise it preserves the local Faster Whisper fallback.
+# "auto": ElevenLabs realtime WebSocket when a key is set, else local Faster Whisper.
 STT_PROVIDER = "auto"  # "auto", "elevenlabs_realtime", or "local"
 STT_REALTIME_MODEL = "scribe_v2_realtime"
 STT_LANGUAGE = "en"
@@ -91,7 +88,7 @@ EDGE_TTS_RATE = "+0%"
 EDGE_TTS_VOLUME = '+0%'
 EDGE_TTS_PITCH = "+0Hz"
 
-ELEVENLABS_API_KEY = _cred.get_secret('ELEVENLABS_API_KEY')  # env var not supported for this one; use the Settings window
+ELEVENLABS_API_KEY = _cred.get_secret('ELEVENLABS_API_KEY')  # no env override; use Settings
 ELEVENLABS_VOICE_ID = ''
 ELEVENLABS_MODEL = 'eleven_flash_v2_5'
 
@@ -127,12 +124,9 @@ LOCATION_CACHE_MINUTES = 60
 REMINDER_UPCOMING_WINDOW_HOURS = 24
 
 ENABLE_COMPANION_GUI = True
-HIDE_CONSOLE_WINDOW = True  # Keep startup diagnostics visible by default
+HIDE_CONSOLE_WINDOW = True  # True: hide the Windows console at startup
 
-# --- Caveman Mode (runtime-toggled via plugins/caveman_mode.py) ---
-# None = off. Otherwise "lite" / "full" / "ultra" - shrinks Alyssa's own
-# reply length by instructing the LLM to speak tersely; never touches what
-# she knows or does, only how many words she uses to say it.
+# None = off. "lite" / "full" / "ultra" — terser LLM replies only; does not change what she knows or does.
 CAVEMAN_MODE = None
 
 LAUNCH_APPS_IN_BACKGROUND = True

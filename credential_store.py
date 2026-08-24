@@ -1,12 +1,9 @@
-"""OS-native credential store for Alyssa secrets (via `keyring`).
+"""OS keyring for Alyssa secrets. config.py names unchanged; only the value source.
 
-config.py still exposes the same names (GEMINI_API_KEY, ...); only the
-value source changes.
+Precedence: env var ALWAYS wins > keyring > "" (unset).
 
-Precedence: env var (always wins) > OS keyring > "" (unset).
-
-migrate_legacy_plaintext_keys() (main.py startup): move leftover
-plaintext secret literals from config.py into the keyring and blank them.
+migrate_legacy_plaintext_keys() (main.py, before importing config): move leftover
+plaintext literals from config.py into the keyring and blank them.
 """
 import json
 import os
@@ -14,8 +11,7 @@ import re
 
 SERVICE_NAME = "Alyssa Assistant"
 
-# Secret name -> override env var (None = no env override).
-# Names match config.py attributes.
+# Secret name -> override env var (None = no env override). Names match config.py.
 SECRET_ENV_VARS = {
     "GEMINI_API_KEY": "GEMINI_API_KEY",
     "OPENAI_API_KEY": "OPENAI_API_KEY",
@@ -37,8 +33,7 @@ except ImportError as e:  # pragma: no cover - exercised via _keyring_available(
 
 
 def _keyring_available() -> bool:
-    """True if `keyring` is installed and a real OS backend is available
-    (not the "fail" backend, which raises on every call)."""
+    """True if `keyring` is installed with a real OS backend (not the "fail" backend)."""
     if keyring is None:
         return False
     try:
@@ -50,7 +45,7 @@ def _keyring_available() -> bool:
 
 def get_secret(name: str) -> str:
     """Return secret `name` (config.py attribute, e.g. GEMINI_API_KEY).
-    Precedence: matching env var, then OS keyring. Always a str; "" if unset."""
+    Precedence: matching env var ALWAYS wins, then OS keyring. Always a str; "" if unset."""
     env_var = SECRET_ENV_VARS.get(name)
     if env_var:
         env_value = os.environ.get(env_var)

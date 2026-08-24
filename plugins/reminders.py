@@ -1,15 +1,8 @@
 """
-Reminders plugin - gives Alyssa "add_reminder" / "list_reminders" /
-"complete_reminder" / "delete_reminder" abilities, e.g. "Alyssa, remind me
-to call the dentist tomorrow at 3pm" or "Alyssa, what's on my list?".
+Local reminders (reminders.json, atomic write). No calendar/OAuth/sync.
 
-Stored locally in reminders.json (next to this file), same plain-JSON,
-atomic-write approach as memory.py - no calendar account, no OAuth, no sync.
-
-Note: Alyssa only checks reminders when asked (or when the system prompt
-naturally surfaces due ones - see list_reminders) - she has no background
-scheduler, so she won't interrupt you unprompted the moment something
-becomes due. Ask "what's on my list" / "anything due" and she'll tell you.
+Tools: add/list/complete/delete. No background scheduler — only checked
+when asked (or via list_reminders due window).
 """
 import json
 import os
@@ -33,10 +26,7 @@ def _format_time(value: datetime) -> str:
 REMINDERS_FILE = os.path.join(_BASE_DIR, "reminders.json")
 _lock = threading.RLock()
 
-# Very small natural-language time parser - covers the common spoken cases
-# ("tomorrow", "tomorrow at 3pm", "in 2 hours", "at 5pm", "friday") without
-# pulling in a heavy NLP dependency. Falls back to "no specific time" (a
-# plain to-do with no due date) if nothing matches, which still works fine.
+# Spoken due times: tomorrow, "in 2 hours", "at 5pm", friday. No match → undated to-do.
 _WEEKDAYS = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"]
 
 
@@ -52,8 +42,7 @@ def _parse_time_of_day(text: str, base: datetime) -> datetime | None:
     elif meridiem == "am" and hour == 12:
         hour = 0
     elif meridiem is None and hour < 8:
-        # Bare small numbers ("at 3") without am/pm almost always mean
-        # afternoon in casual speech - nudge to PM rather than 3am.
+        # Bare hour < 8 with no am/pm → PM (casual "at 3" ≠ 3am).
         hour += 12
     if not (0 <= hour <= 23) or not (0 <= minute <= 59):
         return None
@@ -61,8 +50,7 @@ def _parse_time_of_day(text: str, base: datetime) -> datetime | None:
 
 
 def _parse_due(when: str, now: datetime = None) -> datetime | None:
-    """Best-effort parse of a spoken due time into a datetime, or None if
-    *when* is empty/unparseable (reminder is then just an undated to-do)."""
+    """Parse spoken due time; empty/unparseable → None (undated to-do)."""
     now = now or datetime.now()
     text = (when or "").strip().lower()
     if not text:
@@ -88,7 +76,7 @@ def _parse_due(when: str, now: datetime = None) -> datetime | None:
         for i, day in enumerate(_WEEKDAYS):
             if day in text:
                 days_ahead = (i - now.weekday()) % 7
-                days_ahead = days_ahead or 7  # "friday" on a Friday means next Friday
+                days_ahead = days_ahead or 7  # same weekday → next week, not today
                 base = now + timedelta(days=days_ahead)
                 break
 
@@ -96,7 +84,7 @@ def _parse_due(when: str, now: datetime = None) -> datetime | None:
     if at_time:
         return at_time
     if base.date() != now.date():
-        # A day was named but no clock time - default to 9am that day.
+        # Day named, no clock time → 9am that day.
         return base.replace(hour=9, minute=0, second=0, microsecond=0)
     return None
 

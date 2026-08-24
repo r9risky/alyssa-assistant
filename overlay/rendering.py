@@ -105,11 +105,12 @@ def render_svg(svg_text: str, size: QSize) -> QPixmap:
 
 
 def _resolve_character_path(settings: dict, mouth_open: bool) -> str:
-    """Picks which image file (if any) should be shown right now, given
-    the talk state - shared by render_character() (static rendering /
-    caching) and CompanionWindow's live GIF playback, so both agree on
-    which file is "the current one" without duplicating the fallback
-    order in two places."""
+    """Image path for the current talk state (shared by render_character and GIF playback).
+
+    mouth_open: talk_path → BUNDLED_TALK_IMAGE → idle_path → BUNDLED_IDLE_IMAGE.
+    idle: idle_path → BUNDLED_IDLE_IMAGE.
+    First existing path wins; else \"\".
+    """
     idle_path = settings.get("character_image") or ""
     talk_path = settings.get("character_image_talking") or ""
     if mouth_open:
@@ -120,10 +121,7 @@ def _resolve_character_path(settings: dict, mouth_open: bool) -> str:
 
 
 def _scale_centered(src: QPixmap, size: QSize) -> QPixmap:
-    """Scales src to fit within size (preserving aspect ratio) and
-    centers it on a transparent canvas of exactly size - the same
-    treatment every character image gets, whether it's a static file or
-    one frame of a playing GIF."""
+    """Scale `src` to fit `size` (KeepAspectRatio) and center on a transparent canvas of exactly `size`."""
     scaled = src.scaled(size, Qt.KeepAspectRatio, Qt.SmoothTransformation)
     out = QPixmap(size)
     out.fill(Qt.transparent)
@@ -136,20 +134,12 @@ def _scale_centered(src: QPixmap, size: QSize) -> QPixmap:
 
 
 def render_character(settings: dict, size: QSize, mouth_open: bool = False) -> QPixmap:
-    """Renders the current character (built-in or user-supplied image) at
-    the given size, preserving aspect ratio and centering it.
+    """Render the character at `size`, KeepAspectRatio + centered.
 
-    mouth_open picks between the "talking" image and the "idle" image, for
-    the PNGTuber-style talk/not-talk swap. If the user hasn't picked custom
-    images, falls back to the bundled assets/nottalk.png + assets/talkopen.png
-    when present, and finally to the built-in blinking chibi SVG.
-
-    For an animated .gif, this always returns just its first frame -
-    used for one-off renders (the Settings preview thumbnail) where an
-    unmoving image is fine. CompanionWindow itself does NOT call this for
-    an active .gif; it drives real frame-by-frame playback via QMovie
-    instead (see CompanionWindow._frame_from_movie) so she actually
-    animates on screen rather than freezing on frame 1."""
+    - mouth_open: talking vs idle via _resolve_character_path.
+    - Missing/unreadable file → transparent pixmap of `size`.
+    - .gif: first frame only (Settings preview). Live GIF is CompanionWindow QMovie, not this.
+    """
     custom_path = _resolve_character_path(settings, mouth_open)
 
     if custom_path:
@@ -177,8 +167,7 @@ def render_character(settings: dict, size: QSize, mouth_open: bool = False) -> Q
                 src = QPixmap(custom_path)
                 if src and not src.isNull():
                     return _scale_centered(src, size)
-            # ponytail: transparent fallback if file can't load
-            out = QPixmap(size)
+            out = QPixmap(size)  # unreadable file → transparent
             out.fill(Qt.transparent)
             return out
 

@@ -1,6 +1,4 @@
-"""
-Alyssa Assistant - Main Listening Loop and Application Entrypoint.
-"""
+"""Main listening loop and application entrypoint."""
 import queue
 import random
 import re
@@ -9,15 +7,14 @@ import sys
 import threading
 import time
 
-# PyInstaller exe: look for config.py next to the exe, not bundled inside it,
-# so editing config.py takes effect without a rebuild.
+# PyInstaller: config.py is next to the exe, not bundled; edits take effect without rebuild.
 if getattr(sys, "frozen", False):
     sys.path.insert(0, os.path.dirname(sys.executable))
     _config_dir = os.path.dirname(sys.executable)
 else:
     _config_dir = os.path.dirname(os.path.abspath(__file__))
 
-# Windows startup processes can inherit an arbitrary current directory.
+# Startup can inherit an arbitrary cwd; chdir to the config dir.
 os.chdir(_config_dir)
 
 import startup_logging
@@ -30,13 +27,8 @@ print(
 if sys.stdin is None:
     sys.stdin = open(os.devnull, "r")
 
-# One-time upgrade path: if this install still has real API keys sitting
-# in config.py as plaintext literals (how the Settings window used to
-# save them, before credential_store.py moved secrets into the OS
-# keyring), move them into the keyring and blank the literals - before
-# config.py is imported below, so the values it reads via
-# credential_store.get_secret() are already in place either way. See
-# credential_store.py's docstring for what this is protecting against.
+# Migrate leftover plaintext API-key literals from config.py into the OS
+# keyring BEFORE importing config, so get_secret() already sees them.
 import credential_store as _cred
 _migrated = _cred.migrate_legacy_plaintext_keys(os.path.join(_config_dir, "config.py"))
 if _migrated:
@@ -89,12 +81,8 @@ import plugin_loader
 import nameutil
 import telemetry
 
-# Serializes speak() calls between the main listen loop and the background
-# watcher thread (see run_watcher_loop below), so a proactive alert ("your
-# disk is almost full") can never talk over - or get talked over by - a
-# reply to something you actually asked. A watcher alert simply waits its
-# turn; nothing is dropped, since each plugin's check_watch() re-evaluates
-# on its own next cycle anyway.
+# Serializes speak() between the listen loop and the watcher thread so
+# alerts never overlap a reply. Watcher alerts wait; nothing is dropped.
 _speak_lock = threading.Lock()
 
 
@@ -104,15 +92,11 @@ def _clean_reply_for_speech(text: str) -> str:
 
 
 def speak(text: str, bridge=None):
-    """Speaks *text*, and returns audio you spoke to interrupt her with, if
-    you did - a numpy array ready to hand straight to transcribe.transcribe,
-    or None if she finished the reply without being cut off (or
-    SPEAK_RESPONSES/ALLOW_INTERRUPTIONS is off).
+    """Speak *text*. Returns barge-in audio (numpy array for transcribe.transcribe)
+    or None if playback finished uncut / SPEAK_RESPONSES or ALLOW_INTERRUPTIONS is off.
 
-    A background thread (recorder.listen_for_barge_in) watches the mic while
-    she talks. The moment it hears you, it sets stop_speaking_event, which
-    voice.speak()'s playback loop reacts to within ~20ms, and keeps
-    recording what you say next so it can be treated as your next command."""
+    Background recorder.listen_for_barge_in sets stop_speaking_event (~20ms stop)
+    and records the rest as the next command."""
     text = _clean_reply_for_speech(text)
     if not text:
         return None
@@ -152,8 +136,7 @@ def speak(text: str, bridge=None):
             )
         finally:
             playback_done_event.set()
-            # A broken audio driver can leave stream.read() blocked forever.
-            # The listener is a daemon, so never let that freeze all replies.
+            # stream.read() can block forever; listener is a daemon — don't freeze replies.
             listener_thread.join(timeout=1.0)
 
         return interrupt_result["audio"]
@@ -252,25 +235,16 @@ def _stream_command_reply(command: str, bridge=None, text_queue=None):
 
 
 def run_watcher_loop(bridge=None):
-    """Background thread, parallel to the main listen loop in
-    run_assistant_loop below - the actual architectural shift that makes
-    Alyssa proactive instead of purely reactive. Periodically runs every
-    plugin's check_watch() (system diagnostics, security camera motion,
-    calendar reminders, a daily news digest, whatever else you add - see
-    plugin_loader.py's module docstring for how a plugin opts in) and
-    speaks whatever any of them return, unprompted - nobody has to ask
-    first.
+    """Background thread parallel to run_assistant_loop. Periodically runs
+    each plugin's check_watch() and speaks non-empty results unprompted.
 
-    Each plugin tracks its own "have I already mentioned this" state (see
-    plugins/system_watch.py for the pattern), so this loop doesn't need to
-    know anything about de-duplication - it just calls check_watch() on
-    each plugin's own schedule and speaks a non-empty result."""
+    Plugins own de-duplication; this loop just calls on each interval.
+    Reloads are picked up each pass (see plugin_loader.get_watchers)."""
     next_due = {}
     watcher_signature = None
 
     while True:
-        # Reloads replace plugin_loader's watcher list. Read it each pass so
-        # disabled checks stop and newly enabled checks start immediately.
+        # Reloads replace the watcher list; re-read each pass so enable/disable is immediate.
         watchers = list(plugin_loader.get_watchers())
         signature = tuple((w["name"], id(w["func"])) for w in watchers)
         if signature != watcher_signature:
@@ -304,8 +278,7 @@ def run_watcher_loop(bridge=None):
         time.sleep(max(0.5, min(soonest, 5.0)))
 
 
-# Randomized so Alyssa isn't saying the same line every time her name is
-# said with no request attached.
+# Randomized so name-only mentions don't repeat the same prompt.
 _PAUSE_PROMPTS = [
     "What do you want me to do?",
     "Yes? What can I help with?",
@@ -318,8 +291,8 @@ def _pause_prompt() -> str:
     return random.choice(_PAUSE_PROMPTS)
 
 
-# Timestamp until which a reply is allowed without saying Alyssa's name
-# again, armed whenever her last reply ended in a question. 0 = inactive.
+# Until this timestamp, a reply is allowed without saying the name again.
+# Armed when her last reply ended in a question. 0 = inactive.
 _grace_until = 0.0
 
 
@@ -328,9 +301,7 @@ def _reply_asks_question(reply: str) -> bool:
 
 
 def _arm_or_clear_grace_period(reply: str):
-    """Starts (or restarts) the name-optional grace period if `reply` ends
-    in a question, otherwise clears it - called after every reply Alyssa
-    speaks on her own initiative."""
+    """Arm/restart the name-optional grace period if `reply` ends in `?`; else clear it."""
     global _grace_until
     if _reply_asks_question(reply):
         seconds = getattr(config, "FOLLOWUP_GRACE_SECONDS", 20)
@@ -344,9 +315,7 @@ def _grace_period_active() -> bool:
 
 
 def _extract_command(text: str):
-    """Returns the command text if the assistant's name was mentioned,
-    otherwise None - keeps ordinary conversation from being treated as a
-    command."""
+    """Command text if the assistant name was mentioned, else None."""
     span = nameutil.find_name_span(text)
     if span is None:
         return None
@@ -354,10 +323,8 @@ def _extract_command(text: str):
 
 
 def _strip_name_mention(text: str) -> str:
-    """Like _extract_command but never returns None - for callers (typed
-    chat input) that don't need to gate on the name being said, but still
-    want it stripped so downstream logic (e.g. brain.py's small-talk
-    detector) sees the same text voice input would produce."""
+    """Like _extract_command but never None — for typed input that skips
+    name-gating but still strips a mentioned name so downstream sees the same text as voice."""
     span = nameutil.find_name_span(text)
     if span is None:
         return text
@@ -365,10 +332,9 @@ def _strip_name_mention(text: str) -> str:
 
 
 def run_preflight_checks(bridge=None) -> bool:
-    """Checks the configured LLM provider is reachable before entering the
-    listening loop. In console mode (bridge is None) prints and exits on
-    failure; in GUI mode reports the problem via bridge instead of killing
-    the app, so Settings stays reachable."""
+    """Verify the configured LLM provider is reachable before the listen loop.
+    Console (bridge is None): print and exit on failure. GUI: report via bridge
+    so Settings stays reachable."""
 
     print("Running startup preflight checks...")
 
@@ -445,8 +411,7 @@ def run_preflight_checks(bridge=None) -> bool:
             "open Settings, and switch the LLM provider to Gemini instead."
         )
 
-    # Model might not be pulled yet - check now, rather than a confusing
-    # 404 later mid-loop.
+    # Check the model is pulled now rather than 404 mid-loop.
     try:
         tags = requests.get("http://localhost:11434/api/tags", timeout=5).json()
         pulled = {m["name"] for m in tags.get("models", [])}
@@ -462,8 +427,7 @@ def run_preflight_checks(bridge=None) -> bool:
     except requests.exceptions.RequestException:
         pass  # non-critical check
 
-    # Warn (don't block) if the model doesn't declare tool-calling support -
-    # it may respond but silently fail to run actual commands.
+    # Warn (don't block) if the model doesn't declare tool-calling support.
     try:
         show = requests.post(
             "http://localhost:11434/api/show",
@@ -491,14 +455,11 @@ _gemini_calls_this_session = 0
 
 
 def run_assistant_loop(bridge=None):
-    """The always-listening loop. Runs on the main thread in console mode,
-    or on a background thread when the desktop companion GUI is enabled -
-    this function doesn't need to know which; it just calls speak(reply, bridge)."""
-    # Warm up Whisper and (for Ollama) the LLM now, before the cost hits on
-    # your first real command. Done before preflight on purpose: Whisper
-    # doesn't need an LLM provider/key, so it can load while you're still in
-    # Settings fixing a missing key. Both calls are safe to call more than
-    # once, so re-running this after a failed preflight just no-ops here.
+    """Always-listening loop. Main thread in console mode, background thread with GUI.
+    Calls speak(reply, bridge) either way."""
+    # Warm Whisper/LLM/TTS before the first command. Before preflight on purpose:
+    # Whisper doesn't need a provider/key, so it can load while Settings is open.
+    # Calls are idempotent.
     threading.Thread(target=transcribe.preload, daemon=True).start()
     threading.Thread(target=brain.warm_up_connections, daemon=True).start()
     threading.Thread(target=voice.warm_up, daemon=True).start()
@@ -513,22 +474,13 @@ def run_assistant_loop(bridge=None):
     creator = getattr(config, "CREATOR_NAME", "")
     if creator:
         print(f"Made by {creator}.")
-    # Goes through speak() so the GUI mode both fills the speech bubble and
-    # actually plays the TTS, mouth animation synced via bridge signals.
+    # Via speak() so GUI fills the bubble and plays TTS, mouth animation via bridge.
     text_queue = getattr(bridge, "text_queue", None) if bridge is not None else None
 
-    # Audio captured by recorder.listen_for_barge_in if you interrupted the
-    # previous reply (or the initial greeting) - consumed below instead of
-    # making you repeat yourself. None on every ordinary pass.
-    #
-    # This call sits outside the while loop's try/except below, so it used
-    # to be a real crash risk: a transient hiccup here (TTS network error,
-    # audio device briefly busy/reclaimed, etc.) raised straight out of
-    # run_assistant_loop() and killed the whole listening thread before a
-    # single command was ever heard - looking exactly like a random crash,
-    # often right after waking the PC or right after another app grabbed
-    # the mic/speakers. Catching it here means a bad greeting just gets
-    # skipped instead of taking the whole assistant down with it.
+    # Barge-in audio from interrupting the previous reply; consumed below so
+    # you don't repeat yourself. None on ordinary passes.
+    # Greeting is outside the loop's try/except — catch here so a TTS/device
+    # hiccup skips the greeting instead of killing the listen thread.
     try:
         pending_interrupt_audio = speak(
             f"{config.ASSISTANT_NAME} ready. At your service.", bridge
@@ -540,7 +492,7 @@ def run_assistant_loop(bridge=None):
     while True:
         try:
             typed_text = None
-            audio = None  # explicit reset each pass - see below; stays None for typed input
+            audio = None  # reset each pass; stays None for typed input
             if text_queue is not None:
                 try:
                     typed_text = text_queue.get_nowait()
@@ -557,8 +509,7 @@ def run_assistant_loop(bridge=None):
                 audio = recorder.record_command(text_queue=text_queue)
 
                 if audio is None:
-                    # Could be "no speech this pass" or "a typed message
-                    # interrupted the listen" - check for the latter first.
+                    # No speech this pass, or a typed message interrupted listen.
                     if text_queue is not None:
                         try:
                             typed_text = text_queue.get_nowait()
@@ -588,28 +539,23 @@ def run_assistant_loop(bridge=None):
                             full_text=f"(Whisper heard: {text!r})",
                         )
                     )
-                # Feed word count back so the recorder can adapt the
-                # pause-before-done threshold - see ADAPTIVE_SILENCE_* in config.py.
+                # Feed word count so the recorder can adapt pause-before-done (ADAPTIVE_SILENCE_*).
                 recorder.update_speaking_rate(len(text.split()))
                 if not text:
                     continue
 
-            # A pending confirmation always gets first priority, so "yes"/
-            # "go ahead" works without saying Alyssa's name.
+            # Pending confirmation first so "yes"/"go ahead" works without the name.
             if brain.has_pending_power_confirmation():
                 command = text
             else:
                 if typed_text is not None:
-                    # Typed into her chat box - unambiguously addressed to
-                    # her, so skip the name-mention requirement (unlike
-                    # voice), but still strip a mentioned name if present.
+                    # Typed chat is addressed to her — skip name-gating, still strip name.
                     command = _strip_name_mention(text)
                 elif was_interruption:
-                    # Cutting her off mid-reply is just as unambiguous.
+                    # Cutting her off is equally unambiguous.
                     command = _strip_name_mention(text)
                 elif _grace_period_active():
-                    # She just asked a question - no name required, same
-                    # handling as above.
+                    # She just asked a question — no name required.
                     command = _strip_name_mention(text)
                 else:
                     command = _extract_command(text)
@@ -617,7 +563,7 @@ def run_assistant_loop(bridge=None):
                         continue  # didn't mention Alyssa - ignore
 
                 if not command.strip():
-                    # Name said/typed with nothing following - ask what they want.
+                    # Name only — ask what they want.
                     source = "typed" if typed_text is not None else "spoken"
                     print(
                         startup_logging.format_content_log(
@@ -640,14 +586,12 @@ def run_assistant_loop(bridge=None):
                 )
             )
             if config.LLM_PROVIDER == "gemini":
-                # Visibility into free-quota usage, and for spotting false
-                # name-triggers (background noise/TV misheard as "Alyssa").
+                # Free-quota visibility; also spots false name-triggers (TV/noise).
                 global _gemini_calls_this_session
                 _gemini_calls_this_session += 1
                 print(f"[Gemini request #{_gemini_calls_this_session} this session]")
 
-            # "Thinking..." bubble while the model works, so the companion
-            # doesn't look frozen during a multi-second cloud round trip.
+            # "Thinking..." bubble so the companion doesn't look frozen.
             if bridge is not None:
                 bridge.thinking_signal.emit()
 
@@ -664,10 +608,7 @@ def run_assistant_loop(bridge=None):
             print("\nShutting down.")
             break
         except Exception:
-            # Full traceback (not just str(e)) so a recurring "random
-            # crash" report is actually diagnosable from the console log
-            # or telemetry, instead of a bare one-line message that
-            # doesn't say where in the turn it happened.
+            # Full traceback so recurring crashes are diagnosable.
             import traceback
             traceback.print_exc()
             print("Recovering and going back to listening...")

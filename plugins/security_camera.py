@@ -1,21 +1,12 @@
 """
-Security/webcam plugin - motion detection on your webcam (or an IP camera
-RTSP/HTTP stream), with a spoken alert. Off by default - say "Alyssa, turn
-on the security camera" to arm it, "turn it off" to disarm.
+Webcam/IP-camera motion detection. Off by default.
 
-Requires: pip install opencv-python (add to requirements.txt if missing).
+Arm/disarm via enable/disable; capture_camera_snapshot saves one local
+image to Pictures. Never records or uploads footage.
 
-Privacy note: this only ever compares consecutive frames for MOTION - it
-never records, uploads, or saves footage anywhere. When you ask for a
-snapshot (capture_camera_snapshot) it saves ONE image locally, same as
-take_screenshot() does for your screen, and tells you exactly where.
-
-How it works: enabling the camera starts its own background thread (not
-main.py's watcher loop - motion detection needs frame-rate polling, much
-faster than the shared watcher cadence). That thread just sets a flag
-when it sees motion; check_watch() (called by main.py's watcher loop,
-same as every other plugin) is what actually turns that flag into a
-spoken alert, with a cooldown so one motion event doesn't repeat forever.
+Motion polling runs on a dedicated thread (faster than the shared watcher).
+check_watch() turns the motion flag into a spoken alert with cooldown.
+Requires opencv-python.
 """
 import os
 import sys
@@ -27,15 +18,14 @@ try:
 except ImportError:
     cv2 = None
 
-# 0 = default webcam. Or a string like "rtsp://192.168.1.50:554/stream" for
-# an IP camera.
+# 0 = default webcam, or an RTSP/HTTP URL string.
 CAMERA_SOURCE = 0
 
 MOTION_THRESHOLD = 25          # per-pixel frame-diff sensitivity (lower = more sensitive)
 MOTION_MIN_AREA_FRACTION = 0.02  # fraction of frame that must change to count as "motion"
 ALERT_COOLDOWN_SECONDS = 120    # don't re-alert more often than this
 
-WATCH_INTERVAL_SECONDS = 15  # check_watch() just checks the flag - cheap, can run often
+WATCH_INTERVAL_SECONDS = 15  # check_watch() only reads the flag
 
 _CV2_MISSING_MSG = "I can't use the camera - opencv-python isn't installed. Run: pip install opencv-python"
 
@@ -48,7 +38,7 @@ _lock = threading.RLock()
 _armed = False
 _thread = None
 _stop_event = None
-_motion_detected_at = None   # timestamp of the most recent motion event, cleared once alerted
+_motion_detected_at = None   # last motion time; cleared after alert
 _last_alert_at = 0
 _camera_error = None
 
@@ -121,9 +111,7 @@ def camera_status() -> str:
 
 
 def capture_camera_snapshot() -> str:
-    """Saves a single still frame to Pictures, same convention as
-    take_screenshot(). Works whether or not the camera is currently armed
-    for motion detection - opens it just long enough for one frame."""
+    """Save one still to Pictures (same as take_screenshot). Works armed or not."""
     if cv2 is None:
         return _CV2_MISSING_MSG
     cap = cv2.VideoCapture(CAMERA_SOURCE)
@@ -144,8 +132,7 @@ def capture_camera_snapshot() -> str:
 
 
 def check_watch():
-    """Called by main.py's watcher loop. Turns a motion flag set by the
-    background capture thread into a spoken alert, cooldown-limited."""
+    """Watcher: motion flag → spoken alert, cooldown-limited."""
     global _last_alert_at, _motion_detected_at
     with _lock:
         if not _armed or _motion_detected_at is None:

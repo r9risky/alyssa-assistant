@@ -36,14 +36,11 @@ def _call_model(
     provider=None,
     tools=None,
 ):
-    """Dispatches to the selected LLM provider (defaulting to config.py), always
-    returning the same normalized {"message": {"content", "tool_calls"}}
-    shape so the rest of this module doesn't need to know which one it is.
+    """Dispatch to `provider` (default: config.LLM_PROVIDER).
 
-    `force_tools` only affects Gemini - see _call_gemini for why. Other
-    providers don't currently need it: this codebase hasn't observed the
-    same "replies with plain text instead of calling a tool" laziness from
-    them, so they're left on their normal default tool-calling behavior."""
+    Returns {"message": {"content", "tool_calls"}}.
+    `force_tools` is Gemini-only; other providers ignore it.
+    """
     provider = provider or config.LLM_PROVIDER
     if provider == "gemini":
         return _call_gemini(messages, force_tools, on_text_delta, cancel_event, tools)

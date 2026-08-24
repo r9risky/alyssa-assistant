@@ -22,12 +22,10 @@ _SCREEN_VISION_BASE_PROMPT = (
 
 
 def describe_screen_with_vision(question: str = "") -> str:
-    """Takes a screenshot (in memory only - nothing saved to disk) and asks
-    the configured LLM provider's vision-capable model to describe it, or
-    answer a specific question about it. Returns the plain-text answer, or
-    a plain-language error string starting with "Couldn't"/"I can't" if
-    something went wrong - handle_command()'s caller-facing tool-result
-    convention, same as every function in actions.py."""
+    """Screenshot in memory (never saved to disk); describe it or answer `question`.
+
+    Returns plain text, or an error starting with "Couldn't"/"I can't".
+    """
     try:
         from PIL import ImageGrab
     except ImportError:
@@ -83,16 +81,11 @@ _LOCATE_ELEMENT_PROMPT_TEMPLATE = (
 
 
 def locate_screen_element_with_vision(description: str) -> tuple[float, float] | None:
-    """Takes a screenshot and asks the vision model to point at a
-    described UI element as (x_percent, y_percent) of the screen, 0-100
-    each. Returns None if the model reported it couldn't find the element
-    or its reply didn't parse as coordinates. Used by
-    actions.click_screen_element() to let Alyssa act on what she sees,
-    not just narrate it - the vision-to-click pipeline is inherently
-    approximate (a language model estimating pixel coordinates from a
-    downscaled screenshot), so this is best used for reasonably large,
-    distinct on-screen targets (a labeled button, an icon, a visible
-    text field) rather than tiny or ambiguous ones."""
+    """Locate a UI element as `(x_percent, y_percent)`, each 0-100.
+
+    Screenshot in memory (never saved to disk). Returns None if not found or unparseable.
+    Approximate; best for large, distinct targets.
+    """
     try:
         from PIL import ImageGrab
     except ImportError:
