@@ -43,8 +43,10 @@ LLM_MAX_OUTPUT_TOKENS = 256
 OLLAMA_VISION_MODEL = "llava"
 SCREEN_VISION_MAX_DIMENSION = 768
 
-# "auto": ElevenLabs realtime WebSocket when a key is set, else local Faster Whisper.
-STT_PROVIDER = "auto"  # "auto", "elevenlabs_realtime", or "local"
+# "auto": Groq Whisper LPU cloud when key is set (ultra-fast ~90ms), else local Faster Whisper.
+STT_PROVIDER = "auto"  # "auto", "groq", "elevenlabs_realtime", or "local"
+GROQ_API_KEY = _cred.get_secret('GROQ_API_KEY')
+STT_GROQ_MODEL = "whisper-large-v3-turbo"
 STT_REALTIME_MODEL = "scribe_v2_realtime"
 STT_LANGUAGE = "en"
 STT_FINAL_TIMEOUT_SECONDS = 2.0
@@ -65,11 +67,30 @@ VOCABULARY_CORRECTIONS = [
 
 MICROPHONE_DEVICE = 'default'
 AUDIO_OUTPUT_DEVICE = 'default'  # "default" or a (partial) speaker/headset name
+
+# Capri-inspired Call & Meeting Mode settings
+CALL_MODE_ENABLED = False  # True when actively in a call/meeting session
+CALL_APP = 'Auto'  # "Auto", "Discord", "Zoom", "Teams", "WhatsApp", "Steam", "Browser"
+CALL_VIRTUAL_MIC_DEVICE = 'CABLE Input'  # Output device sending Alyssa's voice into Discord/Zoom
+CALL_VIRTUAL_MIC_VOLUME = 1.0  # 0.0 to 1.0 loudness of Alyssa in the call
+CALL_FRIENDS_CAN_ASK = True  # Friends can request games/songs, requiring your confirmation
+CALL_BARGE_IN_TOLERANCE_SECONDS = 1.0  # Yields only if someone speaks over her for >1.0s
+CALL_AUTO_JOIN_ENABLED = True  # Automatically click Join Voice / Join Meeting
+
 SAMPLE_RATE = 16000
 SILENCE_SECONDS = 0.30
 MAX_RECORD_SECONDS = 15
 VAD_AGGRESSIVENESS = 2
 MIN_SPEECH_MS = 120
+VAD_ENGINE = 'auto'  # "auto", "silero", or "webrtc"
+SILERO_VAD_THRESHOLD = 0.50  # 0.0 to 1.0 speech probability
+PRE_ROLL_BUFFER_MS = 400  # ms of rolling audio prepended to speech to prevent clipped starts
+WAKE_WORD_MODE = 'always_listening'  # "always_listening", "wake_word", or "push_to_talk"
+WAKE_WORD_NAME = 'Alyssa'
+WAKE_WORD_THRESHOLD = 0.65  # 0.0 to 1.0 confidence
+WAKE_CHIME_ENABLED = True  # Play pleasant confirmation chime on wake-up
+WAKE_CHIME_VOLUME = 0.5  # 0.0 to 1.0
+WAKE_WORD_MODEL_PATH = ''  # Optional path to custom ONNX wake word model
 
 ADAPTIVE_SILENCE_ENABLED = True
 ADAPTIVE_SILENCE_MIN_SECONDS = 0.24
@@ -79,6 +100,8 @@ ADAPTIVE_SILENCE_SLOW_WPS = 1.3
 ADAPTIVE_SILENCE_EMA_ALPHA = 0.3
 
 FAST_TOOL_RESPONSES = True
+SPECULATIVE_EXECUTION_ENABLED = True
+SPECULATIVE_TIMEOUT_SECONDS = 3.0
 
 SPEAK_RESPONSES = True
 TTS_PROVIDER = 'edge'  # "edge" or "elevenlabs"
@@ -124,7 +147,7 @@ LOCATION_CACHE_MINUTES = 60
 REMINDER_UPCOMING_WINDOW_HOURS = 24
 
 ENABLE_COMPANION_GUI = True
-HIDE_CONSOLE_WINDOW = True  # True: hide the Windows console at startup
+HIDE_CONSOLE_WINDOW = False  # True: hide the Windows console at startup
 
 # None = off. "lite" / "full" / "ultra" — terser LLM replies only; does not change what she knows or does.
 CAVEMAN_MODE = None
@@ -133,6 +156,64 @@ LAUNCH_APPS_IN_BACKGROUND = True
 APP_LAUNCH_SETTLE_SECONDS = 1.5
 DEBUG_PRINT_TRANSCRIPTS = True
 CONFIRM_BEFORE_ACTIONS = False
+
+# Capri-inspired Security Presets: "lockdown", "guarded", "trusted", "blackwall"
+SECURITY_PRESET = 'trusted'
+SECURITY_PERMISSIONS = {
+    "open_apps_urls": True,
+    "window_management": True,
+    "media_volume": True,
+    "clipboard_screen": True,
+    "typing_keys": True,
+    "screen_clicking": False,
+    "file_deletion": False,
+    "shell_commands": False,
+    "power_actions": False,
+    "plugins": True,
+}
+
+# Capri-inspired Richer Memory, Transcripts & Custom Personality
+USER_NICKNAME = ''
+REMEMBER_CHATS_ENABLED = True
+PERSONALITY_FILE = 'personality.md'
+ME_NOTES_FILE = 'me.md'
+MEMORIES_NOTES_FILE = 'memories.md'
+CHECK_INS_FILE = 'check-ins.md'
+TRANSCRIPTS_DIR = 'transcripts'
+SCREEN_MEMORY_RETENTION_HOURS = 3.0
+
+# Capri-inspired Proactive Screen Watching, Visual Lookout & Quiet Mode
+QUIET_MODE = False
+SCREEN_WATCH_ENABLED = False
+SCREEN_WATCH_INTERVAL_SECONDS = 120
+SCREEN_WATCH_KEEP_CAUGHT_UP = True
+CHECK_IN_ENABLED = False
+CHECK_IN_INTERVAL_MINUTES = 45
+
+# Capri-inspired Voice DSP Effects & Typing Sound
+VOICE_DSP_ENABLED = False
+VOICE_PITCH_SEMITONES = 0.0
+VOICE_SPEED_FACTOR = 1.0
+VOICE_ROBOT_AMOUNT = 0
+VOICE_GLITCH_AMOUNT = 0
+VOICE_LAYERS_ENABLED = False
+VOICE_LAYER_1_PITCH = -3.0
+VOICE_LAYER_2_PITCH = 4.0
+TYPING_SOUND_ENABLED = False
+
+# Capri-inspired Global Hotkeys
+HOTKEYS_ENABLED = True
+HOTKEY_TALK = 'ctrl+alt+v'
+HOTKEY_MUTE = 'ctrl+alt+n'
+HOTKEY_TYPE = 'ctrl+alt+t'
+HOTKEY_HIDE = 'ctrl+alt+h'
+HOTKEY_QUIET = 'ctrl+alt+p'
+HOTKEY_HOP_OFF = 'ctrl+alt+c'
+
+# Capri-inspired Code / Husk Mode
+HUSK_MODE_ENABLED = False
+HUSK_PORT = 47831
+HUSK_WATCH_CLAUDE_CODE = True
 
 
 class _SettingsView:
@@ -187,7 +268,10 @@ class ProviderSettings(_SettingsView):
 
 class AudioSettings(_SettingsView):
     ASSISTANT_NAME: str
+    USER_NICKNAME: str
     STT_PROVIDER: str
+    GROQ_API_KEY: str
+    STT_GROQ_MODEL: str
     STT_REALTIME_MODEL: str
     STT_LANGUAGE: str
     STT_FINAL_TIMEOUT_SECONDS: float
@@ -206,6 +290,15 @@ class AudioSettings(_SettingsView):
     MAX_RECORD_SECONDS: int
     VAD_AGGRESSIVENESS: int
     MIN_SPEECH_MS: int
+    VAD_ENGINE: str
+    SILERO_VAD_THRESHOLD: float
+    PRE_ROLL_BUFFER_MS: int
+    WAKE_WORD_MODE: str
+    WAKE_WORD_NAME: str
+    WAKE_WORD_THRESHOLD: float
+    WAKE_CHIME_ENABLED: bool
+    WAKE_CHIME_VOLUME: float
+    WAKE_WORD_MODEL_PATH: str
     ADAPTIVE_SILENCE_ENABLED: bool
     ADAPTIVE_SILENCE_MIN_SECONDS: float
     ADAPTIVE_SILENCE_MAX_SECONDS: float
@@ -230,6 +323,22 @@ class AudioSettings(_SettingsView):
     BARGE_IN_MIN_SPEECH_MS: int
     BARGE_IN_VAD_AGGRESSIVENESS: int
     DEBUG_PRINT_TRANSCRIPTS: bool
+    VOICE_DSP_ENABLED: bool
+    VOICE_PITCH_SEMITONES: float
+    VOICE_SPEED_FACTOR: float
+    VOICE_ROBOT_AMOUNT: int
+    VOICE_GLITCH_AMOUNT: int
+    VOICE_LAYERS_ENABLED: bool
+    VOICE_LAYER_1_PITCH: float
+    VOICE_LAYER_2_PITCH: float
+    TYPING_SOUND_ENABLED: bool
+    CALL_MODE_ENABLED: bool
+    CALL_APP: str
+    CALL_VIRTUAL_MIC_DEVICE: str
+    CALL_VIRTUAL_MIC_VOLUME: float
+    CALL_FRIENDS_CAN_ASK: bool
+    CALL_BARGE_IN_TOLERANCE_SECONDS: float
+    CALL_AUTO_JOIN_ENABLED: bool
 
 
 class MemorySettings(_SettingsView):
@@ -242,6 +351,14 @@ class MemorySettings(_SettingsView):
     POWER_CONFIRMATION_TIMEOUT_SECONDS: int
     FOLLOWUP_GRACE_SECONDS: int
     CONVERSATION_TIMEOUT_SECONDS: int
+    USER_NICKNAME: str
+    REMEMBER_CHATS_ENABLED: bool
+    PERSONALITY_FILE: str
+    ME_NOTES_FILE: str
+    MEMORIES_NOTES_FILE: str
+    CHECK_INS_FILE: str
+    TRANSCRIPTS_DIR: str
+    SCREEN_MEMORY_RETENTION_HOURS: float
 
 
 class PluginSettings(_SettingsView):
@@ -249,6 +366,14 @@ class PluginSettings(_SettingsView):
     ENABLE_BACKGROUND_WATCHER: bool
     SYSTEM_WATCH_ENABLED: bool
     SYSTEM_WATCH_INTERVAL_SECONDS: int
+    SCREEN_WATCH_ENABLED: bool
+    SCREEN_WATCH_INTERVAL_SECONDS: int
+    SCREEN_WATCH_KEEP_CAUGHT_UP: bool
+    CHECK_IN_ENABLED: bool
+    CHECK_IN_INTERVAL_MINUTES: int
+    HUSK_MODE_ENABLED: bool
+    HUSK_PORT: int
+    HUSK_WATCH_CLAUDE_CODE: bool
     WEATHER_DEFAULT_LOCATION: str
     WEATHER_UNITS: str
     AUTO_DETECT_LOCATION: bool
@@ -259,13 +384,26 @@ class PluginSettings(_SettingsView):
 class UISettings(_SettingsView):
     ASSISTANT_NAME: str
     CREATOR_NAME: str
+    USER_NICKNAME: str
     ENABLE_COMPANION_GUI: bool
     HIDE_CONSOLE_WINDOW: bool
     CAVEMAN_MODE: str | None
     LAUNCH_APPS_IN_BACKGROUND: bool
     APP_LAUNCH_SETTLE_SECONDS: float
     CONFIRM_BEFORE_ACTIONS: bool
+    SECURITY_PRESET: str
+    SECURITY_PERMISSIONS: dict
+    QUIET_MODE: bool
+    HOTKEYS_ENABLED: bool
+    HOTKEY_TALK: str
+    HOTKEY_MUTE: str
+    HOTKEY_TYPE: str
+    HOTKEY_HIDE: str
+    HOTKEY_QUIET: str
+    HOTKEY_HOP_OFF: str
     FAST_TOOL_RESPONSES: bool
+    SPECULATIVE_EXECUTION_ENABLED: bool
+    SPECULATIVE_TIMEOUT_SECONDS: float
 
 
 PROVIDER_SETTINGS = ProviderSettings(*ProviderSettings.__annotations__)
@@ -278,3 +416,4 @@ DIALOGUE_SETTINGS = _SettingsView(
     *MemorySettings.__annotations__,
     *UISettings.__annotations__,
 )
+

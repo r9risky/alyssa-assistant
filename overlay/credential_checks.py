@@ -241,6 +241,41 @@ def _verify_elevenlabs_key(api_key: str) -> "tuple[bool, str, list]":
     return True, "", [_elevenlabs_voice_display(v) for v in voices]
 
 
+def _verify_groq_key(api_key: str) -> "tuple[bool, str, list]":
+    """Auth-probe Groq via GET https://api.groq.com/openai/v1/models.
+    Returns (ok, message, whisper_models).
+    """
+    try:
+        resp = requests.get(
+            "https://api.groq.com/openai/v1/models",
+            headers={"Authorization": f"Bearer {api_key}"},
+            timeout=10,
+        )
+    except requests.exceptions.RequestException:
+        return False, "Couldn't reach Groq - check your internet connection.", []
+
+    if resp.status_code == 200:
+        whisper_models = []
+        try:
+            for m in resp.json().get("data", []):
+                model_id = m.get("id", "")
+                if "whisper" in model_id.lower():
+                    whisper_models.append(model_id)
+        except ValueError:
+            pass
+        if not whisper_models:
+            whisper_models = ["whisper-large-v3-turbo", "whisper-large-v3"]
+        return True, "", sorted(set(whisper_models), reverse=True)
+
+    try:
+        detail = resp.json().get("error", {}).get("message", "")
+    except ValueError:
+        detail = ""
+    if resp.status_code in (400, 401, 403):
+        return False, detail or "Groq rejected this key.", []
+    return False, detail or f"Groq returned an error ({resp.status_code}).", []
+
+
 def _patch_config_line(text: str, key: str, value_literal: str) -> str:
     """Replace a top-level `KEY = ...` in config.py text; keep trailing comments. Append if missing."""
     import re

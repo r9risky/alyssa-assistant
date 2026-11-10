@@ -24,6 +24,8 @@ PySide6
 # Local semantic memory retrieval. Downloads the quantized
 # BAAI/bge-small-en-v1.5 model (~67MB) once on first use.
 fastembed
+# Neural Voice Activity Detection (Silero VAD v5)
+onnxruntime
 #
 # GPU acceleration for Whisper (nvidia-cublas-cu12, nvidia-cudnn-cu12,
 # nvidia-cuda-runtime-cu12) lives in requirements-gpu.txt, not here -

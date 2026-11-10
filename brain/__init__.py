@@ -8,6 +8,7 @@ from .dialogue import (
     reload_plugin_tools,
     warm_up_connections,
 )
+from .speculative import get_speculative_engine
 from .tool_registry import TOOLS
 from .vision import describe_screen_with_vision, locate_screen_element_with_vision
 
@@ -24,6 +25,7 @@ __all__ = [
     "TOOLS",
     "clear_conversation_history",
     "describe_screen_with_vision",
+    "get_speculative_engine",
     "handle_command",
     "has_pending_power_confirmation",
     "locate_screen_element_with_vision",

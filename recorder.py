@@ -1,7 +1,8 @@
-"""Records a command from the microphone until you go quiet."""
-
+import collections
 import contextlib
+import os
 import queue
+import sys
 import threading
 import time
 from typing import Optional
@@ -13,6 +14,101 @@ import webrtcvad
 from config import AUDIO_SETTINGS as config
 import nameutil
 import transcribe
+import wake_word
+
+if getattr(sys, "frozen", False):
+    _BASE_DIR = os.path.dirname(sys.executable)
+else:
+    _BASE_DIR = os.path.dirname(__file__)
+
+
+class VoiceActivityDetector:
+    """Hybrid Voice Activity Detector using Silero VAD v5 with graceful WebRTC fallback."""
+
+    def __init__(
+        self,
+        sample_rate: int = 16000,
+        aggressiveness: int = 2,
+        threshold: float = 0.50,
+    ):
+        self.sample_rate = sample_rate
+        self.threshold = threshold
+        self.engine = "webrtc"
+        self._session = None
+        self._state = np.zeros((2, 1, 128), dtype=np.float32)
+        self._sr_tensor = np.array([sample_rate], dtype=np.int64)
+        self._webrtc_vad = webrtcvad.Vad(aggressiveness)
+
+        configured_engine = str(getattr(config, "VAD_ENGINE", "auto") or "auto").strip().lower()
+        if configured_engine != "webrtc":
+            self._try_init_silero()
+
+    def _try_init_silero(self):
+        try:
+            import onnxruntime as ort
+            candidates = [
+                os.path.join(_BASE_DIR, "assets", "silero_vad.onnx"),
+                os.path.join(os.path.dirname(__file__), "assets", "silero_vad.onnx"),
+            ]
+            model_path = next((p for p in candidates if os.path.exists(p)), None)
+            if model_path is not None:
+                opts = ort.SessionOptions()
+                opts.inter_op_num_threads = 1
+                opts.intra_op_num_threads = 1
+                opts.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
+                self._session = ort.InferenceSession(
+                    model_path,
+                    sess_options=opts,
+                    providers=["CPUExecutionProvider"],
+                )
+                self.engine = "silero"
+        except Exception:
+            self.engine = "webrtc"
+
+    def reset(self):
+        self._state = np.zeros((2, 1, 128), dtype=np.float32)
+
+    def is_speech(self, chunk_pcm: np.ndarray | bytes) -> bool:
+        if self.engine == "silero" and self._session is not None:
+            try:
+                if isinstance(chunk_pcm, bytes):
+                    samples = np.frombuffer(chunk_pcm, dtype=np.int16).astype(np.float32) / 32768.0
+                else:
+                    samples = (
+                        chunk_pcm.astype(np.float32) / 32768.0
+                        if chunk_pcm.dtype == np.int16
+                        else chunk_pcm.astype(np.float32)
+                    )
+
+                n = samples.size
+                if n < 512:
+                    padded = np.zeros(512, dtype=np.float32)
+                    padded[:n] = samples
+                    input_tensor = padded[np.newaxis, :]
+                else:
+                    input_tensor = samples[:512][np.newaxis, :]
+
+                out, self._state = self._session.run(
+                    None,
+                    {"input": input_tensor, "state": self._state, "sr": self._sr_tensor},
+                )
+                prob = float(out[0][0])
+                thresh = float(getattr(config, "SILERO_VAD_THRESHOLD", self.threshold))
+                return prob >= thresh
+            except Exception:
+                pass
+
+        # WebRTC VAD fallback (requires 10/20/30ms frames of int16 PCM)
+        if isinstance(chunk_pcm, np.ndarray):
+            pcm_bytes = chunk_pcm.astype(np.int16).tobytes()
+        else:
+            pcm_bytes = chunk_pcm
+        usable_bytes = min(len(pcm_bytes), 960)
+        usable_bytes = usable_bytes - (usable_bytes % 320)
+        if usable_bytes < 320:
+            return False
+        return self._webrtc_vad.is_speech(pcm_bytes[:usable_bytes], self.sample_rate)
+
 
 # Extra wait past MAX_RECORD_SECONDS before treating a mic read as hung.
 _WATCHDOG_GRACE_SECONDS = 5.0
@@ -115,7 +211,7 @@ def _open_stream(**kwargs):
 # resets to the config default on restart.
 _rate_lock = threading.Lock()
 _words_per_second_ema = None  # None until we have at least one real sample
-_FRAME_MS = 30  # must match the frame_ms used in _record_command_blocking
+_FRAME_MS = 32  # 32ms matches 512 samples at 16kHz for Silero VAD v5 and WebRTC fallback
 _last_speech_frames = 0  # from the most recent recording; read by update_speaking_rate()
 
 
@@ -173,13 +269,21 @@ def update_speaking_rate(word_count: int) -> None:
             _words_per_second_ema = alpha * sample_wps + (1 - alpha) * _words_per_second_ema
 
 
-def _record_command_blocking(result_q: "queue.Queue", text_queue: "Optional[queue.Queue]" = None) -> None:
+def _record_command_blocking(
+    result_q: "queue.Queue",
+    text_queue: "Optional[queue.Queue]" = None,
+    bypass_wake_word: bool = False,
+) -> None:
     """Blocking record on a worker so the caller can timeout (see record_command).
     Puts (audio_or_None, error_or_None) on result_q, or never returns if stream.read() hangs.
 
     If text_queue is given (typed chat), abandon the pass as soon as a message arrives."""
     try:
-        vad = webrtcvad.Vad(getattr(config, "VAD_AGGRESSIVENESS", 2))
+        vad = VoiceActivityDetector(
+            sample_rate=config.SAMPLE_RATE,
+            aggressiveness=getattr(config, "VAD_AGGRESSIVENESS", 2),
+            threshold=float(getattr(config, "SILERO_VAD_THRESHOLD", 0.50)),
+        )
         frame_ms = _FRAME_MS
         frame_size = int(config.SAMPLE_RATE * frame_ms / 1000)
 
@@ -190,10 +294,31 @@ def _record_command_blocking(result_q: "queue.Queue", text_queue: "Optional[queu
         min_speech_frames = max(
             1, int(getattr(config, "MIN_SPEECH_MS", 120) / frame_ms)
         )
+        pre_roll_ms = int(getattr(config, "PRE_ROLL_BUFFER_MS", 400))
+        pre_roll_limit = max(2, int(pre_roll_ms / frame_ms))
+        pre_roll_frames = collections.deque(maxlen=pre_roll_limit)
+
+        wake_mode = str(getattr(config, "WAKE_WORD_MODE", "always_listening") or "always_listening").lower()
+        use_wake_word = (not bypass_wake_word) and (wake_mode == "wake_word")
+        if (not bypass_wake_word) and (wake_mode == "push_to_talk"):
+            result_q.put((None, None))
+            return
+
+        ww_detector = wake_word.get_wake_word_detector() if use_wake_word else None
+        if ww_detector is not None:
+            ww_detector.reset()
 
         if getattr(config, "DEBUG_PRINT_TRANSCRIPTS", True):
-            print(f"(Pause-before-done threshold this pass: {silence_seconds:.2f}s)")
-        print("Listening for your command...")
+            mode_str = f"Wake-word: {config.WAKE_WORD_NAME}" if use_wake_word else f"Listen mode: {wake_mode}"
+            print(
+                f"({mode_str} | VAD: {vad.engine.upper()} | Pause threshold: {silence_seconds:.2f}s | "
+                f"Pre-roll: {pre_roll_ms}ms)"
+            )
+        if use_wake_word:
+            print(f"Waiting for wake word ('{config.WAKE_WORD_NAME}')...")
+        else:
+            print("Listening for your command...")
+
         frames = []
         silent_run = 0
         speech_run = 0
@@ -216,32 +341,64 @@ def _record_command_blocking(result_q: "queue.Queue", text_queue: "Optional[queu
 
                 chunk, _ = stream.read(frame_size)
                 chunk = chunk.flatten()
-                frames.append(chunk)
-                if streaming_stt is not None:
-                    stt_frames.append(chunk)
-                    if len(stt_frames) >= 4:  # 120 ms: low latency without tiny WS frames
-                        try:
-                            streaming_stt.send(np.concatenate(stt_frames).tobytes())
-                            stt_frames.clear()
-                        except Exception as e:
-                            print(f"(realtime STT stream failed, using local Whisper: {e})")
-                            streaming_stt.disconnect()
-                            streaming_stt = None
+                is_speech = vad.is_speech(chunk)
 
-                is_speech = vad.is_speech(chunk.tobytes(), config.SAMPLE_RATE)
-
-                if is_speech:
-                    speech_run += 1
-                    silent_run = 0
-                    total_speech_frames += 1
-                    if speech_run >= min_speech_frames:
-                        heard_speech = True
+                if not heard_speech:
+                    pre_roll_frames.append(chunk)
+                    if use_wake_word and ww_detector is not None:
+                        triggered, score = ww_detector.process_frame(chunk)
+                        if triggered:
+                            heard_speech = True
+                            frames = list(pre_roll_frames)
+                            total_speech_frames = len(frames)
+                            ww_detector.play_chime()
+                            if getattr(config, "DEBUG_PRINT_TRANSCRIPTS", True):
+                                print(f"(Wake word detected, confidence: {score:.2f} - recording command...)")
+                            if streaming_stt is not None:
+                                try:
+                                    streaming_stt.send(np.concatenate(frames).tobytes())
+                                except Exception as e:
+                                    streaming_stt.disconnect()
+                                    streaming_stt = None
+                    else:
+                        if is_speech:
+                            speech_run += 1
+                            if speech_run >= min_speech_frames:
+                                heard_speech = True
+                                frames = list(pre_roll_frames)
+                                total_speech_frames = speech_run
+                                if streaming_stt is not None:
+                                    try:
+                                        streaming_stt.send(np.concatenate(frames).tobytes())
+                                    except Exception as e:
+                                        print(f"(realtime STT stream failed, using local Whisper: {e})")
+                                        streaming_stt.disconnect()
+                                        streaming_stt = None
+                        else:
+                            speech_run = 0
                 else:
-                    silent_run += 1
-                    speech_run = 0
+                    frames.append(chunk)
+                    if streaming_stt is not None:
+                        stt_frames.append(chunk)
+                        if len(stt_frames) >= 4:  # ~128 ms
+                            try:
+                                streaming_stt.send(np.concatenate(stt_frames).tobytes())
+                                stt_frames.clear()
+                            except Exception as e:
+                                print(f"(realtime STT stream failed, using local Whisper: {e})")
+                                streaming_stt.disconnect()
+                                streaming_stt = None
 
-                if heard_speech and silent_run >= silence_frames_needed:
-                    break
+                    if is_speech:
+                        speech_run += 1
+                        silent_run = 0
+                        total_speech_frames += 1
+                    else:
+                        silent_run += 1
+                        speech_run = 0
+
+                    if silent_run >= silence_frames_needed:
+                        break
 
         print("Done listening.")
 
@@ -256,7 +413,7 @@ def _record_command_blocking(result_q: "queue.Queue", text_queue: "Optional[queu
                 print(f"(realtime STT finalization failed, using local Whisper: {e})")
                 streaming_stt.disconnect()
 
-        if not heard_speech:
+        if not heard_speech or not frames:
             result_q.put((None, None))
             return
 
@@ -283,7 +440,11 @@ def listen_for_barge_in(
     global _last_speech_frames
 
     try:
-        vad = webrtcvad.Vad(getattr(config, "BARGE_IN_VAD_AGGRESSIVENESS", 3))
+        vad = VoiceActivityDetector(
+            sample_rate=config.SAMPLE_RATE,
+            aggressiveness=getattr(config, "BARGE_IN_VAD_AGGRESSIVENESS", 3),
+            threshold=float(getattr(config, "SILERO_VAD_THRESHOLD", 0.55)),
+        )
         frame_ms = _FRAME_MS
         frame_size = int(config.SAMPLE_RATE * frame_ms / 1000)
         min_speech_frames = max(
@@ -292,6 +453,8 @@ def listen_for_barge_in(
         silence_seconds = _current_silence_seconds()
         silence_frames_needed = int(silence_seconds * 1000 / frame_ms)
         max_frames = int(config.MAX_RECORD_SECONDS * 1000 / frame_ms)
+        pre_roll_ms = int(getattr(config, "PRE_ROLL_BUFFER_MS", 400))
+        pre_roll_limit = max(2, int(pre_roll_ms / frame_ms))
 
         with _open_stream(
             samplerate=config.SAMPLE_RATE,
@@ -302,22 +465,26 @@ def listen_for_barge_in(
             # With BARGE_IN_REQUIRE_NAME, speech without her name doesn't
             # stop her — retry while she's still talking.
             while not playback_done_event.is_set():
-                # Phase 1: wait for enough sustained speech (not a cough / speaker bleed).
+                # Phase 1: wait for enough sustained speech with circular pre-roll buffer.
                 frames = []
+                pre_roll_frames = collections.deque(maxlen=pre_roll_limit)
                 speech_run = 0
                 triggered = False
+                vad.reset()
+
                 while not playback_done_event.is_set():
                     if text_queue is not None and not text_queue.empty():
                         stop_speaking_event.set()
                         return None
                     chunk, _ = stream.read(frame_size)
                     chunk = chunk.flatten()
-                    is_speech = vad.is_speech(chunk.tobytes(), config.SAMPLE_RATE)
+                    pre_roll_frames.append(chunk)
+                    is_speech = vad.is_speech(chunk)
                     if is_speech:
                         speech_run += 1
-                        frames.append(chunk)
                         if speech_run >= min_speech_frames:
                             triggered = True
+                            frames = list(pre_roll_frames)
                             if not require_name:
                                 # Any sustained speech stops her immediately.
                                 stop_speaking_event.set()
@@ -325,14 +492,13 @@ def listen_for_barge_in(
                             break
                     else:
                         speech_run = 0
-                        frames = []  # discard blip
 
                 if not triggered:
                     return None  # she finished speaking (or a typed msg arrived) before you cut in
 
-                # Phase 2: keep recording until pause, same shape as _record_command_blocking.
+                # Phase 2: keep recording until pause, preserving pre-roll frames.
                 streaming_stt = transcribe.start_streaming()
-                if streaming_stt is not None:
+                if streaming_stt is not None and frames:
                     try:
                         streaming_stt.send(np.concatenate(frames).tobytes())
                     except Exception:
@@ -350,13 +516,16 @@ def listen_for_barge_in(
                         except Exception:
                             streaming_stt.disconnect()
                             streaming_stt = None
-                    if vad.is_speech(chunk.tobytes(), config.SAMPLE_RATE):
+                    if vad.is_speech(chunk):
                         silent_run = 0
                         total_speech_frames += 1
                     else:
                         silent_run += 1
                     if silent_run >= silence_frames_needed:
                         break
+
+                if not frames:
+                    continue
 
                 audio = np.concatenate(frames).astype(np.float32) / 32768.0
                 if streaming_stt is not None:
@@ -373,7 +542,6 @@ def listen_for_barge_in(
                     return audio
 
                 # Phrase-gated: only interrupt if name + "stop" were said.
-                # She keeps talking through the transcription round trip.
                 heard = transcribe.transcribe(audio)
                 if nameutil.is_stop_request(heard):
                     stop_speaking_event.set()
@@ -413,7 +581,10 @@ def _reap_and_recover(worker: threading.Thread) -> None:
             print(f"(deferred device re-scan failed: {e})")
 
 
-def record_command(text_queue: "Optional[queue.Queue]" = None) -> Optional[np.ndarray]:
+def record_command(
+    text_queue: "Optional[queue.Queue]" = None,
+    bypass_wake_word: bool = False,
+) -> Optional[np.ndarray]:
     """Record audio as float32 for Whisper, or None if no speech / mic hung /
     a typed message arrived on text_queue.
 
@@ -427,7 +598,9 @@ def record_command(text_queue: "Optional[queue.Queue]" = None) -> Optional[np.nd
 
     result_q: "queue.Queue" = queue.Queue(maxsize=1)
     worker = threading.Thread(
-        target=_record_command_blocking, args=(result_q, text_queue), daemon=True
+        target=_record_command_blocking,
+        args=(result_q, text_queue, bypass_wake_word),
+        daemon=True,
     )
     worker.start()
     worker.join(timeout)

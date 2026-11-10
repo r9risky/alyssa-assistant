@@ -48,5 +48,12 @@ class WindowMixin:
             )
 
     def _reset_position_only(self):
-        screen = QGuiApplication.primaryScreen().availableGeometry()
-        self.move(screen.left() + 24, screen.bottom() - self.height() - 24)
+        screen = (
+            QGuiApplication.primaryScreen()
+            or (QGuiApplication.screens()[0] if QGuiApplication.screens() else None)
+        )
+        if screen is not None:
+            geom = screen.availableGeometry()
+            self.move(geom.left() + 24, geom.bottom() - self.height() - 24)
+        else:
+            self.move(24, 200)

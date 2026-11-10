@@ -3,14 +3,18 @@
 import base64
 import difflib
 import importlib
+import io
 import json
 import os
 import queue
 import re
 import threading
 import time
+import wave
 from urllib.parse import urlencode
 
+import numpy as np
+import requests
 from faster_whisper import WhisperModel
 
 try:
@@ -30,6 +34,35 @@ _gpu_fallback_reason = None
 _dll_diagnostics = []
 _streamed_transcript = None
 _streamed_transcript_lock = threading.Lock()
+_partial_transcript_hooks = []
+_hooks_lock = threading.Lock()
+
+
+def register_partial_transcript_hook(hook):
+    """Register a callback hook for streaming or intermediate transcripts."""
+    with _hooks_lock:
+        if hook not in _partial_transcript_hooks:
+            _partial_transcript_hooks.append(hook)
+
+
+def unregister_partial_transcript_hook(hook):
+    """Unregister a previously registered transcript hook."""
+    with _hooks_lock:
+        if hook in _partial_transcript_hooks:
+            _partial_transcript_hooks.remove(hook)
+
+
+def _notify_partial_transcript_hooks(text: str):
+    """Dispatch transcript updates to all registered hooks."""
+    if not text:
+        return
+    with _hooks_lock:
+        hooks = list(_partial_transcript_hooks)
+    for hook in hooks:
+        try:
+            hook(text)
+        except Exception as e:
+            print(f"(Partial transcript hook error: {e})")
 
 
 class _RealtimeSTT:
@@ -77,6 +110,7 @@ class _RealtimeSTT:
                     self._partial = event.get("text", "")
                     if getattr(config, "DEBUG_PRINT_TRANSCRIPTS", True) and self._partial:
                         print(f"(STT partial: {self._partial!r})")
+                    _notify_partial_transcript_hooks(self._partial)
                 elif kind in ("committed_transcript", "final_transcript"):
                     self._results.put(event.get("text", ""))
                 elif kind and (kind.endswith("error") or kind in {"error", "rate_limited"}):
@@ -160,6 +194,8 @@ def cache_streaming_transcript(text: str) -> None:
     global _streamed_transcript
     with _streamed_transcript_lock:
         _streamed_transcript = text or None
+    if text:
+        _notify_partial_transcript_hooks(text)
 
 
 def _consume_streaming_transcript():
@@ -349,30 +385,190 @@ def preload():
         _get_model()
 
 
+def get_foreground_window_title() -> str:
+    """Return the title of the currently focused/active window.
+    Fast, safe, and non-blocking cross-platform implementation.
+    """
+    if os.name == "nt":
+        try:
+            import ctypes
+            user32 = ctypes.windll.user32
+            hwnd = user32.GetForegroundWindow()
+            if not hwnd:
+                return ""
+            length = user32.GetWindowTextLengthW(hwnd)
+            if length <= 0:
+                return ""
+            buf = ctypes.create_unicode_buffer(length + 1)
+            user32.GetWindowTextW(hwnd, buf, length + 1)
+            return buf.value.strip()
+        except Exception:
+            return ""
+    else:
+        try:
+            import subprocess
+            res = subprocess.run(
+                ["xdotool", "getactivewindow", "getwindowname"],
+                capture_output=True,
+                text=True,
+                timeout=0.1,
+            )
+            if res.returncode == 0:
+                return res.stdout.strip()
+        except Exception:
+            pass
+    return ""
+
+
+def build_contextual_prompt() -> str:
+    """Dynamically condition Whisper's decoder with current assistant state,
+    active window context, user nickname, tool names, and vocabulary corrections.
+    """
+    parts = []
+    base_prompt = getattr(config, "WHISPER_INITIAL_PROMPT", "")
+    if base_prompt:
+        parts.append(base_prompt.strip().rstrip("."))
+
+    name = getattr(config, "ASSISTANT_NAME", "Alyssa")
+    if name and name not in base_prompt:
+        parts.append(f"Assistant: {name}")
+
+    nickname = getattr(config, "USER_NICKNAME", "")
+    if nickname:
+        parts.append(f"User: {nickname}")
+
+    win_title = get_foreground_window_title()
+    if win_title:
+        # Keep title concise to save prompt tokens
+        clean_title = win_title[:60].strip()
+        parts.append(f"Active window: {clean_title}")
+
+    vocab = getattr(config, "VOCABULARY_CORRECTIONS", [])
+    vocab_words = []
+    for item in vocab:
+        if isinstance(item, (list, tuple)) and len(item) > 0:
+            target = item[0]
+            if target and target not in base_prompt:
+                vocab_words.append(target)
+    if vocab_words:
+        parts.append(f"Vocabulary: {', '.join(vocab_words)}")
+
+    prompt = ". ".join(p for p in parts if p)
+    if prompt and not prompt.endswith("."):
+        prompt += "."
+    return prompt
+
+
+def _audio_to_wav_bytes(audio) -> bytes:
+    """Convert audio input (numpy float32/int16 array or raw pcm bytes) into 16kHz mono WAV bytes."""
+    if isinstance(audio, np.ndarray):
+        if audio.dtype in (np.float32, np.float64):
+            pcm16 = (np.clip(audio, -1.0, 1.0) * 32767.0).astype(np.int16)
+        else:
+            pcm16 = audio.astype(np.int16)
+        raw_pcm = pcm16.tobytes()
+    elif isinstance(audio, (bytes, bytearray)):
+        raw_pcm = bytes(audio)
+    else:
+        raise TypeError(f"Unsupported audio type for WAV conversion: {type(audio)}")
+
+    sample_rate = int(getattr(config, "SAMPLE_RATE", 16000))
+    buf = io.BytesIO()
+    with wave.open(buf, "wb") as wf:
+        wf.setnchannels(1)
+        wf.setsampwidth(2)
+        wf.setframerate(sample_rate)
+        wf.writeframes(raw_pcm)
+    return buf.getvalue()
+
+
+_groq_session = None
+_groq_session_lock = threading.Lock()
+
+
+def _get_groq_session() -> requests.Session:
+    global _groq_session
+    if _groq_session is None:
+        with _groq_session_lock:
+            if _groq_session is None:
+                _groq_session = requests.Session()
+    return _groq_session
+
+
+def _transcribe_with_groq(audio, prompt: str = "") -> str:
+    """Transcribe audio via Groq Whisper Cloud API (~90ms round-trip).
+    Falls back to exception if key is missing, network fails, or non-200 status.
+    """
+    api_key = getattr(config, "GROQ_API_KEY", "")
+    if not api_key:
+        raise ValueError("Groq API key is not configured")
+
+    wav_bytes = _audio_to_wav_bytes(audio)
+    model = getattr(config, "STT_GROQ_MODEL", "whisper-large-v3-turbo")
+    lang = getattr(config, "STT_LANGUAGE", "en")
+
+    files = {
+        "file": ("audio.wav", wav_bytes, "audio/wav"),
+    }
+    data = {
+        "model": model,
+        "language": lang,
+        "response_format": "json",
+    }
+    if prompt:
+        data["prompt"] = prompt
+
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+    }
+    session = _get_groq_session()
+    resp = session.post(
+        "https://api.groq.com/openai/v1/audio/transcriptions",
+        headers=headers,
+        files=files,
+        data=data,
+        timeout=5.0,
+    )
+    if resp.status_code != 200:
+        raise RuntimeError(f"Groq API error ({resp.status_code}): {resp.text}")
+
+    raw_text = resp.json().get("text", "").strip()
+    return _apply_vocabulary_corrections(raw_text)
+
+
 def get_engine_status() -> str:
-    """Human-readable STT engine in use (model, device, precision).
-    Reflects reality: "auto" and GPU→CPU fallback. Safe before the model has loaded."""
+    """Human-readable STT engine in use (model, device, precision, provider).
+    Reflects reality: Groq Turbo Cloud, "auto", and GPU→CPU fallback. Safe before the model has loaded."""
     model_size = getattr(config, "WHISPER_MODEL_SIZE", "?")
+    provider = str(getattr(config, "STT_PROVIDER", "auto")).lower()
+    groq_key = getattr(config, "GROQ_API_KEY", "")
+    groq_active = (provider == "groq" or (provider == "auto" and bool(groq_key)))
+
+    device, compute_type = _resolve_device_and_compute_type() if _model is None else (
+        ("cuda" if _model_is_on_gpu else "cpu"), _model_compute_type
+    )
+    where = "GPU (CUDA)" if device == "cuda" else "CPU"
+
+    if groq_active and bool(groq_key):
+        groq_model = getattr(config, "STT_GROQ_MODEL", "whisper-large-v3-turbo")
+        return (
+            f"Hybrid STT: Groq Cloud Whisper ('{groq_model}', ~90ms LPU) active "
+            f"with automatic local fallback ('{model_size}' on {where})."
+        )
 
     if _model is None:
-        # Not loaded yet — report what it would resolve to without triggering the load.
-        device, compute_type = _resolve_device_and_compute_type()
-        where = "GPU (CUDA)" if device == "cuda" else "CPU"
         return (
             f"Whisper model '{model_size}' hasn't loaded yet - based on "
             f"current settings it will run on the {where} using {compute_type} "
             "precision once needed."
         )
 
-    where = "GPU (CUDA)" if _model_is_on_gpu else "CPU"
     base = (
         f"Whisper model '{model_size}' is loaded and running on the "
         f"{where} using {_model_compute_type} precision."
     )
     if not _model_is_on_gpu and _gpu_fallback_reason:
-        # Distinguishes "configured for CPU" from "GPU was tried and failed".
         base += f" (GPU was tried and failed, so this fell back to CPU: {_gpu_fallback_reason})"
-        # Point at the specific broken nvidia-*-cu12 package, if that's the cause.
         broken = [
             line for line in _dll_diagnostics
             if "couldn't import it" in line or "no 'bin'" in line or "failed (" in line
@@ -427,18 +623,37 @@ def transcribe(audio) -> str:
     result_text = _consume_streaming_transcript()
     if result_text is None:
         result_text = _transcribe_impl(audio)
+    if result_text:
+        _notify_partial_transcript_hooks(result_text)
     telemetry.log(f"[timing] transcribe: {time.time() - _t0:.2f}s")
     return result_text
 
 
 def _transcribe_impl(audio) -> str:
+    prompt = build_contextual_prompt()
+    provider = str(getattr(config, "STT_PROVIDER", "auto")).lower()
+    groq_key = getattr(config, "GROQ_API_KEY", "")
+
+    # Groq Cloud Whisper API for ~90ms ultra-fast transcription
+    should_try_groq = (provider == "groq") or (provider == "auto" and bool(groq_key))
+    if should_try_groq and bool(groq_key):
+        try:
+            return _transcribe_with_groq(audio, prompt=prompt)
+        except Exception as e:
+            print(f"(Groq STT failed, falling back to local Whisper: {e})")
+
     # Hold the cached model + device metadata until inference and any GPU
     # fallback finish. Settings reloads wait here.
     with _model_lock:
-        return _transcribe_impl_locked(audio)
+        try:
+            return _transcribe_impl_locked(audio, initial_prompt=prompt)
+        except TypeError:
+            return _transcribe_impl_locked(audio)
 
 
-def _transcribe_impl_locked(audio) -> str:
+def _transcribe_impl_locked(audio, initial_prompt: str | None = None) -> str:
+    if initial_prompt is None:
+        initial_prompt = build_contextual_prompt()
     model = _get_model()
     try:
         segments, _ = model.transcribe(
@@ -453,7 +668,7 @@ def _transcribe_impl_locked(audio) -> str:
             condition_on_previous_text=False,
             # Trim silence/noise; stops dead air from hallucinating into junk.
             vad_filter=True,
-            initial_prompt=getattr(config, "WHISPER_INITIAL_PROMPT", None),
+            initial_prompt=initial_prompt,
         )
         segments = list(segments)  # evaluate now — faster-whisper decodes lazily; GPU DLL failure can surface here
     except Exception as e:
@@ -488,7 +703,7 @@ def _transcribe_impl_locked(audio) -> str:
                 log_prob_threshold=getattr(config, "WHISPER_LOG_PROB_THRESHOLD", -1.0),
                 condition_on_previous_text=False,
                 vad_filter=True,
-                initial_prompt=getattr(config, "WHISPER_INITIAL_PROMPT", None),
+                initial_prompt=initial_prompt,
             )
         else:
             raise

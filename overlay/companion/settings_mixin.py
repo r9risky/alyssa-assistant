@@ -147,6 +147,13 @@ class SettingsMixin:
                 self.chatbar.apply_theme()
             if changed & {"chatbox_enabled", "chatbox_position", "scale"}:
                 self.chatbar.apply_enabled()
+        if getattr(self, "mini_player", None) is not None:
+            if theme_changed:
+                self.mini_player.apply_theme()
+            if changed & {"mini_player_enabled", "chatbox_enabled", "scale"}:
+                self.mini_player.apply_enabled()
+        if getattr(self, "hover_pill", None) is not None and theme_changed:
+            self.hover_pill.apply_theme()
         if self.tray is not None and theme_changed:
             from ..app_shell import _build_app_icon
 

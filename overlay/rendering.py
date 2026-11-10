@@ -51,6 +51,19 @@ DEFAULT_OVERLAY_SETTINGS = {
     "color_theme": "dark",  # default preset key from COLOR_THEMES
     "chatbox_enabled": True,  # show the typed-command box below/beside her
     "chatbox_position": "bottom",  # "bottom" | "left" | "right"
+    # -- Capri-inspired companion life & movement --
+    "wander_mode": "off",  # "off" | "rarely" | "sometimes" | "often" | "restless"
+    "perch_on_windows": True,
+    "sleep_after_minutes": 15,  # 0 = never sleep
+    "head_pats_enabled": True,
+    "cursor_ride_enabled": True,
+    "hover_pill_enabled": True,
+    "mini_player_enabled": False,
+    # -- Expressiveness & Animation Physics --
+    "idle_breathing_enabled": True,  # organic breathing oscillation
+    "cursor_gaze_enabled": True,  # micro-parallax tracking the mouse cursor
+    "emotes_enabled": True,  # mood emote badges (sparkles, hearts, thoughts, zzz)
+    "blinking_enabled": True,  # natural periodic micro-blinks
 }
 
 

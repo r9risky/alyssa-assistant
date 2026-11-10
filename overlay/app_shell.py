@@ -223,15 +223,29 @@ def run_with_assistant(assistant_loop_fn):
     window.bubble = bubble
     chatbar = ChatInputBar(window, settings, bridge)
     window.chatbar = chatbar
+    from .widgets import HoverPill, MiniPlayerWidget
+    from .call_panel import CallPanelWidget
+    from .game_hud import GameHudWidget
+    hover_pill = HoverPill(window, settings)
+    window.hover_pill = hover_pill
+    mini_player = MiniPlayerWidget(window, settings)
+    window.mini_player = mini_player
+    call_panel = CallPanelWidget(window, settings)
+    window.call_panel = call_panel
+    game_hud = GameHudWidget(window, settings)
+    window.game_hud = game_hud
 
     bridge.speak_signal.connect(bubble.show_message)
     bridge.thinking_signal.connect(bubble.show_thinking)
+    bridge.thinking_signal.connect(lambda: window.set_mood("thinking"))
+    bridge.mood_signal.connect(window.set_mood)
     # Bound QObject methods only (not lambdas): background emits auto-queue to the GUI thread.
     bridge.error_signal.connect(window.show_error)
     bridge.gemini_key_needed.connect(window.prompt_gemini_key_setup)
     bridge.reply_pending_signal.connect(bubble.on_reply_pending)
     bridge.talk_start_signal.connect(window.start_talking)
     bridge.talk_end_signal.connect(window.stop_talking)
+    bridge.talk_end_signal.connect(lambda: window.set_mood("neutral"))
     # Bubble linger/fade follows talk_start/talk_end, not a guess at show time.
     bridge.talk_start_signal.connect(bubble.on_talk_start)
     bridge.talk_end_signal.connect(bubble.on_talk_end)
@@ -240,6 +254,26 @@ def run_with_assistant(assistant_loop_fn):
 
     window.show()
     chatbar.apply_enabled()
+    mini_player.apply_enabled()
+
+    try:
+        from hotkeys import GlobalHotkeyManager
+        import actions
+        hotkey_mgr = GlobalHotkeyManager(
+            {
+                "talk": lambda: window.wake_up(),
+                "mute": lambda: actions.toggle_mute(),
+                "type": lambda: (chatbar.show(), chatbar.raise_(), chatbar.activateWindow(), chatbar.edit.setFocus()),
+                "hide": lambda: window.setVisible(not window.isVisible()),
+                "quiet": lambda: (setattr(config, "QUIET_MODE", not getattr(config, "QUIET_MODE", False)), hover_pill.refresh_state()),
+                "hop_off": lambda: window.stop_cursor_ride(),
+            }
+        )
+        hotkey_mgr.bind_qt_shortcuts(window)
+        hotkey_mgr.start()
+        window._hotkey_manager = hotkey_mgr
+    except Exception as e:
+        print(f"[hotkeys] Failed to initialize global hotkeys: {e}")
 
     # Qt may reinit the Windows console during setup — re-apply after the GUI is up.
     _set_console_visible(not getattr(config, "HIDE_CONSOLE_WINDOW", False))

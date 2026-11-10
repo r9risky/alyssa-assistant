@@ -11,6 +11,9 @@ import plugin_loader
 
 from . import bridges, confirmation
 
+if not hasattr(ctypes, "windll"):
+    ctypes.windll = None  # type: ignore[attr-defined]
+
 def get_datetime() -> str:
     """Returns the current local date and time."""
     now = datetime.datetime.now()
@@ -375,3 +378,27 @@ def run_diagnostics() -> str:
             detailed_lines.append(f"  Hint: {hint}")
 
     return "\n".join(detailed_lines)
+
+
+def recall_past_chats(query: str = "", date_hint: str = "") -> str:
+    """Search daily chat transcripts (transcripts/YYYY-MM-DD.md) by keyword or date ('today', 'yesterday', or YYYY-MM-DD)."""
+    matches = memory.search_transcripts(query=query, date_hint=date_hint, limit=8)
+    if not matches:
+        target = f" matching '{query}'" if query else ""
+        when = f" from {date_hint}" if date_hint else ""
+        return f"No saved chat transcript entries found{target}{when}."
+    return "Past chat transcript matches:\n" + "\n".join(f"- {m}" for m in matches)
+
+
+def update_user_profile(note: str, section: str = "Interests & Projects") -> str:
+    """Save or update a structured note about the user in me.md."""
+    return memory.update_user_profile_note(note, section=section)
+
+
+def set_quiet_mode(enabled: bool = True) -> str:
+    """Toggle Quiet Mode (suppresses proactive commentary, pop-in check-ins, and background alerts while still answering direct commands)."""
+    config.QUIET_MODE = bool(enabled)
+    if config.QUIET_MODE:
+        return "Quiet mode is on. I'll stay quiet until you talk to me or turn it off."
+    return "Quiet mode is off. I'm back to normal."
+

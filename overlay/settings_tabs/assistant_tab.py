@@ -5,18 +5,20 @@ from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QWidget, QFormLayout, QHBoxLayout, QLineEdit, QComboBox,
     QCheckBox, QSlider, QSpinBox, QPushButton, QLabel, QMessageBox,
+    QPlainTextEdit,
 )
 
 import config
 import credential_store
+import memory
 from brain.common import api_origin
 
 from ..credential_checks import (
     _extract_elevenlabs_voice_id, _fetch_custom_openai_models,
     _is_http_url, _patch_config_line, _percent_to_volume_str,
     _verify_anthropic_key, _verify_elevenlabs_key, _verify_gemini_key,
-    _verify_openai_key, _verify_spotify_credentials, _verify_youtube_key,
-    _volume_str_to_percent,
+    _verify_groq_key, _verify_openai_key, _verify_spotify_credentials,
+    _verify_youtube_key, _volume_str_to_percent,
 )
 from ..rendering import _BASE_DIR
 
@@ -219,6 +221,38 @@ class AssistantTabMixin:
             provider="youtube", verify=_verify_youtube_key, checking="Checking with YouTube…",
             extras=(self.youtube_status_label, youtube_link),
         )
+        form.addRow("", self._section_header("Cloud Speech Recognition (Groq Whisper)", "⚡"))
+        groq_intro = self._help_label(
+            "Ultra-fast speech-to-text (~90ms) on Groq LPUs. Falls back to local Whisper automatically if offline."
+        )
+        groq_intro.setStyleSheet(f"color: {self._t()['subtext']}; font-size: 11px;")
+        form.addRow("", groq_intro)
+
+        self._original_groq_key = getattr(config, "GROQ_API_KEY", "")
+        self.groq_key_status_label = self._help_label("")
+        groq_link = self._link_label(
+            "https://console.groq.com/keys", "Don't have one?", "Get a free Groq API key"
+        )
+        self.groq_key_edit, self.groq_key_row_label, self._groq_key_rows = self._build_api_key_row(
+            form, "Groq API key:", self._original_groq_key,
+            self.groq_key_status_label,
+            "Paste your Groq API key here (gsk_...)",
+            provider="groq", verify=_verify_groq_key, checking="Checking with Groq…",
+            extras=(self.groq_key_status_label, groq_link),
+        )
+
+        self.groq_model_edit = self._build_model_combo(getattr(config, "STT_GROQ_MODEL", "whisper-large-v3-turbo"))
+        form.addRow("Groq model:", self.groq_model_edit)
+
+        self.stt_provider_combo = QComboBox()
+        self.stt_provider_combo.addItem("Auto (Groq when key set, else Local)", "auto")
+        self.stt_provider_combo.addItem("Groq Cloud (Fast LPU, fallback Local)", "groq")
+        self.stt_provider_combo.addItem("Local Whisper only (Offline-first)", "local")
+        curr_stt = str(getattr(config, "STT_PROVIDER", "auto") or "auto").lower()
+        stt_idx = self.stt_provider_combo.findData(curr_stt)
+        self.stt_provider_combo.setCurrentIndex(stt_idx if stt_idx >= 0 else 0)
+        self.stt_provider_combo.currentIndexChanged.connect(self._queue_assistant_apply)
+        form.addRow("STT provider:", self.stt_provider_combo)
 
         form.addRow("", self._section_header("Voice & Behavior", "🔊"))
 
@@ -336,6 +370,22 @@ class AssistantTabMixin:
         self.confirm_check.toggled.connect(self._queue_assistant_apply)
         form.addRow("", self.confirm_check)
 
+        self.security_preset_combo = QComboBox()
+        self.security_preset_combo.addItem("Lockdown (Ask for every tool)", "lockdown")
+        self.security_preset_combo.addItem("Guarded (Allow read-only, ask for changes)", "guarded")
+        self.security_preset_combo.addItem("Trusted (Allow standard tools, ask for shell/files)", "trusted")
+        self.security_preset_combo.addItem("Blackwall (Autonomous — no prompts)", "blackwall")
+        current_preset = str(getattr(config, "SECURITY_PRESET", "trusted") or "trusted").strip().lower()
+        preset_idx = self.security_preset_combo.findData(current_preset)
+        self.security_preset_combo.setCurrentIndex(preset_idx if preset_idx >= 0 else 2)
+        self.security_preset_combo.currentIndexChanged.connect(self._queue_assistant_apply)
+        form.addRow("Security preset:", self.security_preset_combo)
+
+        self.quiet_mode_check = QCheckBox("Quiet mode (pause proactive screen lookout & check-ins)")
+        self.quiet_mode_check.setChecked(bool(getattr(config, "QUIET_MODE", False)))
+        self.quiet_mode_check.toggled.connect(self._queue_assistant_apply)
+        form.addRow("", self.quiet_mode_check)
+
         self.show_console_check = QCheckBox("Show command prompt")
         self.show_console_check.setChecked(not bool(getattr(config, "HIDE_CONSOLE_WINDOW", False)))
         self.show_console_check.toggled.connect(self._on_show_console_toggled)
@@ -364,10 +414,20 @@ class AssistantTabMixin:
         form.addRow("", self._section_header("Memory & Location", "🧾"))
 
         memory_intro = self._help_label(
-            "Short-term memory expires; saved facts persist in memory.json."
+            "Short-term memory expires; saved facts persist in memory.json & markdown notes."
         )
         memory_intro.setStyleSheet(f"color: {self._t()['subtext']}; font-size: 11px;")
         form.addRow("", memory_intro)
+
+        self.user_nickname_edit = QLineEdit(str(getattr(config, "USER_NICKNAME", "") or ""))
+        self.user_nickname_edit.setPlaceholderText("Optional nickname Alyssa calls you")
+        self.user_nickname_edit.textChanged.connect(self._queue_assistant_apply)
+        form.addRow("Your nickname:", self.user_nickname_edit)
+
+        self.remember_chats_check = QCheckBox("Save daily chat transcripts (recall past chats)")
+        self.remember_chats_check.setChecked(bool(getattr(config, "REMEMBER_CHATS_ENABLED", True)))
+        self.remember_chats_check.toggled.connect(self._queue_assistant_apply)
+        form.addRow("", self.remember_chats_check)
 
         self.conversation_turns_spin = QSpinBox()
         self.conversation_turns_spin.setRange(1, 50)
@@ -413,6 +473,28 @@ class AssistantTabMixin:
         )
         self.max_memories_in_prompt_spin.valueChanged.connect(self._queue_assistant_apply)
         form.addRow("Facts recalled per request:", self.max_memories_in_prompt_spin)
+
+        self.personality_edit = QPlainTextEdit()
+        self.personality_edit.setPlainText(memory.load_personality_notes())
+        self.personality_edit.setMaximumHeight(90)
+        form.addRow("Personality (personality.md):", self.personality_edit)
+
+        self.save_personality_btn = QPushButton("Save Personality Notes")
+        self.save_personality_btn.clicked.connect(
+            lambda: memory.save_personality_notes(self.personality_edit.toPlainText())
+        )
+        form.addRow("", self.save_personality_btn)
+
+        self.me_notes_edit = QPlainTextEdit()
+        self.me_notes_edit.setPlainText(memory.load_me_notes())
+        self.me_notes_edit.setMaximumHeight(90)
+        form.addRow("About You (me.md):", self.me_notes_edit)
+
+        self.save_me_notes_btn = QPushButton("Save About You Notes")
+        self.save_me_notes_btn.clicked.connect(
+            lambda: memory.save_me_notes(self.me_notes_edit.toPlainText())
+        )
+        form.addRow("", self.save_me_notes_btn)
 
         location_note = self._help_label(
             "Used for weather and location requests; no key needed."
@@ -485,6 +567,7 @@ class AssistantTabMixin:
             "openai": (self.openai_key_edit, self.openai_key_status_label, self.openai_model_edit, "models"),
             "anthropic": (self.anthropic_key_edit, self.anthropic_key_status_label, self.anthropic_model_edit, "models"),
             "elevenlabs": (self.elevenlabs_key_edit, self.elevenlabs_key_status_label, self.elevenlabs_voice_combo, "voices"),
+            "groq": (self.groq_key_edit, self.groq_key_status_label, self.groq_model_edit, "models"),
             "youtube": (self.youtube_key_edit, self.youtube_status_label, None, "items"),
         }[provider]
         edit._verify_btn.setEnabled(True)
@@ -670,6 +753,8 @@ class AssistantTabMixin:
             "SPEAK_RESPONSES": self.speak_check.isChecked(),
             "CAVEMAN_MODE": self.caveman_combo.currentData(),
             "CONFIRM_BEFORE_ACTIONS": self.confirm_check.isChecked(),
+            "SECURITY_PRESET": self.security_preset_combo.currentData() or "trusted",
+            "QUIET_MODE": self.quiet_mode_check.isChecked(),
             "HIDE_CONSOLE_WINDOW": not self.show_console_check.isChecked(),
             "SYSTEM_WATCH_ENABLED": self.system_watch_enabled_check.isChecked(),
             "SYSTEM_WATCH_INTERVAL_SECONDS": self.system_watch_interval_spin.value(),
@@ -678,6 +763,36 @@ class AssistantTabMixin:
             "WHISPER_COMPUTE_TYPE": self.whisper_compute_combo.currentText().strip() or "auto",
             "MICROPHONE_DEVICE": self.audio_input_combo.currentData() or "default",
             "AUDIO_OUTPUT_DEVICE": self.audio_output_combo.currentData() or "default",
+            "CALL_MODE_ENABLED": getattr(self, "call_mode_enabled_check", None) is not None and self.call_mode_enabled_check.isChecked(),
+            "CALL_APP": self.call_app_combo.currentData() if hasattr(self, "call_app_combo") else "auto",
+            "CALL_VIRTUAL_MIC_DEVICE": self.call_virtual_mic_combo.currentData() if hasattr(self, "call_virtual_mic_combo") else "CABLE Input",
+            "CALL_VIRTUAL_MIC_VOLUME": round(self.call_virtual_mic_volume_slider.value() / 100.0, 2) if hasattr(self, "call_virtual_mic_volume_slider") else 0.85,
+            "CALL_FRIENDS_CAN_ASK": getattr(self, "call_friends_can_ask_check", None) is not None and self.call_friends_can_ask_check.isChecked(),
+            "CALL_AUTO_JOIN_ENABLED": getattr(self, "call_auto_join_check", None) is not None and self.call_auto_join_check.isChecked(),
+            "CALL_BARGE_IN_TOLERANCE_SECONDS": round(float(self.call_barge_in_spin.value()), 2) if hasattr(self, "call_barge_in_spin") else 1.0,
+            "VAD_ENGINE": self.vad_engine_combo.currentData() or "auto",
+            "SILERO_VAD_THRESHOLD": round(self.vad_threshold_slider.value() / 100.0, 2),
+            "PRE_ROLL_BUFFER_MS": int(self.pre_roll_spin.value()),
+            "WAKE_WORD_MODE": self.wake_word_mode_combo.currentData() or "wake_word",
+            "WAKE_WORD_THRESHOLD": round(self.wake_sensitivity_slider.value() / 100.0, 2),
+            "WAKE_CHIME_ENABLED": self.wake_chime_check.isChecked(),
+            "WAKE_CHIME_VOLUME": round(self.wake_chime_volume_slider.value() / 100.0, 2),
+            "VOICE_DSP_ENABLED": self.voice_dsp_enabled_check.isChecked(),
+            "VOICE_PITCH_SEMITONES": round(float(self.voice_pitch_spin.value()), 2),
+            "VOICE_SPEED_FACTOR": round(float(self.voice_speed_spin.value()), 2),
+            "VOICE_ROBOT_AMOUNT": int(self.voice_robot_slider.value()),
+            "VOICE_GLITCH_AMOUNT": int(self.voice_glitch_slider.value()),
+            "VOICE_LAYERS_ENABLED": self.voice_layers_check.isChecked(),
+            "TYPING_SOUND_ENABLED": self.typing_sound_check.isChecked(),
+            "HOTKEYS_ENABLED": self.hotkeys_enabled_check.isChecked(),
+            "HOTKEY_TALK": self.hotkey_talk_edit.text().strip() or "ctrl+alt+v",
+            "HOTKEY_MUTE": self.hotkey_mute_edit.text().strip() or "ctrl+alt+n",
+            "HOTKEY_TYPE": self.hotkey_type_edit.text().strip() or "ctrl+alt+t",
+            "HOTKEY_HIDE": self.hotkey_hide_edit.text().strip() or "ctrl+alt+h",
+            "HOTKEY_QUIET": self.hotkey_quiet_edit.text().strip() or "ctrl+alt+p",
+            "HOTKEY_HOP_OFF": self.hotkey_hop_off_edit.text().strip() or "ctrl+alt+c",
+            "USER_NICKNAME": self.user_nickname_edit.text().strip(),
+            "REMEMBER_CHATS_ENABLED": self.remember_chats_check.isChecked(),
             "CONVERSATION_MEMORY_TURNS": self.conversation_turns_spin.value(),
             "CONVERSATION_TIMEOUT_SECONDS": self.conversation_timeout_spin.value(),
             "MAX_SAVED_MEMORIES": self.max_saved_memories_spin.value(),
@@ -691,6 +806,9 @@ class AssistantTabMixin:
             "ANTHROPIC_API_KEY": self.anthropic_key_edit.text().strip(),
             "CUSTOM_API_KEY": self.custom_key_edit.text().strip(),
             "ELEVENLABS_API_KEY": self.elevenlabs_key_edit.text().strip(),
+            "GROQ_API_KEY": self.groq_key_edit.text().strip(),
+            "STT_GROQ_MODEL": self.groq_model_edit.currentText().strip() or "whisper-large-v3-turbo",
+            "STT_PROVIDER": self.stt_provider_combo.currentData() or "auto",
             "SPOTIFY_CLIENT_ID": self.spotify_client_id_edit.text().strip(),
             "SPOTIFY_CLIENT_SECRET": self.spotify_client_secret_edit.text().strip(),
             "YOUTUBE_API_KEY": self.youtube_key_edit.text().strip(),
@@ -705,6 +823,7 @@ class AssistantTabMixin:
             "ANTHROPIC_API_KEY": self._original_anthropic_key,
             "CUSTOM_API_KEY": self._original_custom_key,
             "ELEVENLABS_API_KEY": self._original_elevenlabs_key,
+            "GROQ_API_KEY": self._original_groq_key,
             "SPOTIFY_CLIENT_ID": self._original_spotify_client_id,
             "SPOTIFY_CLIENT_SECRET": self._original_spotify_client_secret,
             "YOUTUBE_API_KEY": self._original_youtube_key,
@@ -755,6 +874,7 @@ class AssistantTabMixin:
             self._original_anthropic_key = self.anthropic_key_edit.text().strip() if "ANTHROPIC_API_KEY" not in failed else self._original_anthropic_key
             self._original_custom_key = self.custom_key_edit.text().strip() if "CUSTOM_API_KEY" not in failed else self._original_custom_key
             self._original_elevenlabs_key = self.elevenlabs_key_edit.text().strip() if "ELEVENLABS_API_KEY" not in failed else self._original_elevenlabs_key
+            self._original_groq_key = self.groq_key_edit.text().strip() if "GROQ_API_KEY" not in failed else self._original_groq_key
             self._original_spotify_client_id = self.spotify_client_id_edit.text().strip() if "SPOTIFY_CLIENT_ID" not in failed else self._original_spotify_client_id
             self._original_spotify_client_secret = self.spotify_client_secret_edit.text().strip() if "SPOTIFY_CLIENT_SECRET" not in failed else self._original_spotify_client_secret
             self._original_youtube_key = self.youtube_key_edit.text().strip() if "YOUTUBE_API_KEY" not in failed else self._original_youtube_key
@@ -767,6 +887,7 @@ class AssistantTabMixin:
                 )
 
         old_hide = config.HIDE_CONSOLE_WINDOW
+        old_preset = getattr(config, "SECURITY_PRESET", "trusted")
         old_whisper = (config.WHISPER_MODEL_SIZE, config.WHISPER_DEVICE, config.WHISPER_COMPUTE_TYPE)
         old_system_watch = (
             config.SYSTEM_WATCH_ENABLED, config.SYSTEM_WATCH_INTERVAL_SECONDS
@@ -775,6 +896,16 @@ class AssistantTabMixin:
         old_audio_output = getattr(config, "AUDIO_OUTPUT_DEVICE", "default")
         for key, value in values.items():
             setattr(config, key, value)
+
+        if old_preset != getattr(config, "SECURITY_PRESET", "trusted"):
+            try:
+                import actions
+                actions.apply_security_preset(config.SECURITY_PRESET)
+            except Exception:
+                pass
+        hotkey_mgr = getattr(self.companion, "_hotkey_manager", None)
+        if hotkey_mgr is not None and hasattr(hotkey_mgr, "reload_from_config"):
+            hotkey_mgr.reload_from_config()
 
         if old_system_watch != (
             config.SYSTEM_WATCH_ENABLED, config.SYSTEM_WATCH_INTERVAL_SECONDS

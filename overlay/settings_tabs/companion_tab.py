@@ -281,6 +281,59 @@ class CompanionTabMixin:
         self.dim_idle_spin.setValue(int(self.companion.settings.get("dim_when_idle_opacity", 55)))
         form.addRow("Dimmed level:", self.dim_idle_spin)
 
+        form.addRow("", self._section_header("Companion Life & Movement", "🐾"))
+        self.wander_mode_combo = QComboBox()
+        for label, val in (
+            ("Off", "off"),
+            ("Rarely", "rarely"),
+            ("Sometimes", "sometimes"),
+            ("Often", "often"),
+            ("Restless", "restless"),
+        ):
+            self.wander_mode_combo.addItem(label, val)
+        w_idx = self.wander_mode_combo.findData(self.companion.settings.get("wander_mode", "off"))
+        self.wander_mode_combo.setCurrentIndex(w_idx if w_idx >= 0 else 0)
+        form.addRow("Wandering:", self.wander_mode_combo)
+
+        self.perch_windows_check = QCheckBox("Perch on window top ledges")
+        self.perch_windows_check.setChecked(bool(self.companion.settings.get("perch_on_windows", True)))
+        form.addRow("", self.perch_windows_check)
+
+        self.sleep_after_spin = QSpinBox()
+        self.sleep_after_spin.setRange(0, 240)
+        self.sleep_after_spin.setSuffix(" min (0 = off)")
+        self.sleep_after_spin.setValue(int(self.companion.settings.get("sleep_after_minutes", 15)))
+        form.addRow("Nap after idle:", self.sleep_after_spin)
+
+        self.head_pats_check = QCheckBox("React to head pats (cursor rub)")
+        self.head_pats_check.setChecked(bool(self.companion.settings.get("head_pats_enabled", True)))
+        form.addRow("", self.head_pats_check)
+
+        self.cursor_ride_check = QCheckBox("Allow cursor riding (Shift + double-click)")
+        self.cursor_ride_check.setChecked(bool(self.companion.settings.get("cursor_ride_enabled", True)))
+        form.addRow("", self.cursor_ride_check)
+
+        self.mini_player_check = QCheckBox("Show mini music player bar")
+        self.mini_player_check.setChecked(bool(self.companion.settings.get("mini_player_enabled", False)))
+        form.addRow("", self.mini_player_check)
+
+        form.addRow("", self._section_header("Expressiveness & Physics", "✨"))
+        self.breathing_check = QCheckBox("Idle breathing physics")
+        self.breathing_check.setChecked(bool(self.companion.settings.get("idle_breathing_enabled", True)))
+        form.addRow("", self.breathing_check)
+
+        self.gaze_check = QCheckBox("Cursor gaze & parallax tracking")
+        self.gaze_check.setChecked(bool(self.companion.settings.get("cursor_gaze_enabled", True)))
+        form.addRow("", self.gaze_check)
+
+        self.emotes_check = QCheckBox("Dynamic mood emote badges")
+        self.emotes_check.setChecked(bool(self.companion.settings.get("emotes_enabled", True)))
+        form.addRow("", self.emotes_check)
+
+        self.blinking_check = QCheckBox("Natural periodic blinking")
+        self.blinking_check.setChecked(bool(self.companion.settings.get("blinking_enabled", True)))
+        form.addRow("", self.blinking_check)
+
         form_col.addLayout(form)
         top_row.addWidget(self._companion_form_panel, 0, 1)
         top_row.setColumnStretch(1, 1)
@@ -308,6 +361,16 @@ class CompanionTabMixin:
             (self.bounce_height_spin, self.bounce_height_spin.valueChanged),
             (self.dim_idle_check, self.dim_idle_check.toggled),
             (self.dim_idle_spin, self.dim_idle_spin.valueChanged),
+            (self.wander_mode_combo, self.wander_mode_combo.currentIndexChanged),
+            (self.perch_windows_check, self.perch_windows_check.toggled),
+            (self.sleep_after_spin, self.sleep_after_spin.valueChanged),
+            (self.head_pats_check, self.head_pats_check.toggled),
+            (self.cursor_ride_check, self.cursor_ride_check.toggled),
+            (self.mini_player_check, self.mini_player_check.toggled),
+            (self.breathing_check, self.breathing_check.toggled),
+            (self.gaze_check, self.gaze_check.toggled),
+            (self.emotes_check, self.emotes_check.toggled),
+            (self.blinking_check, self.blinking_check.toggled),
         ]:
             signal.connect(self._queue_companion_apply)
 
@@ -375,6 +438,16 @@ class CompanionTabMixin:
             "dim_when_idle_opacity": self.dim_idle_spin.value(),
             "color_theme": self.theme_combo.currentData(),
             "dark_mode": self.dark_mode_check.isChecked(),
+            "wander_mode": self.wander_mode_combo.currentData(),
+            "perch_on_windows": self.perch_windows_check.isChecked(),
+            "sleep_after_minutes": self.sleep_after_spin.value(),
+            "head_pats_enabled": self.head_pats_check.isChecked(),
+            "cursor_ride_enabled": self.cursor_ride_check.isChecked(),
+            "mini_player_enabled": self.mini_player_check.isChecked(),
+            "idle_breathing_enabled": self.breathing_check.isChecked(),
+            "cursor_gaze_enabled": self.gaze_check.isChecked(),
+            "emotes_enabled": self.emotes_check.isChecked(),
+            "blinking_enabled": self.blinking_check.isChecked(),
         }
 
     def _validated_image_path(self, edit: QLineEdit, setting_key: str) -> str:

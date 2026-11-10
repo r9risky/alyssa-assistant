@@ -270,6 +270,8 @@ def run_watcher_loop(bridge=None):
                 alert = None
             if alert:
                 print(f"[watcher] {w['name']}: {alert}")
+                if getattr(config, "QUIET_MODE", False):
+                    continue
                 announce = brain.dialogue._natural_announce_reply(
                     "proactive_alert", {"message": alert}
                 )
@@ -464,13 +466,17 @@ def run_assistant_loop(bridge=None):
     threading.Thread(target=brain.warm_up_connections, daemon=True).start()
     threading.Thread(target=voice.warm_up, daemon=True).start()
 
+    speculative_engine = brain.get_speculative_engine()
+    transcribe.register_partial_transcript_hook(speculative_engine.on_partial_transcript)
+
     if not run_preflight_checks(bridge):
         return  # message already shown; in GUI mode the window stays open
 
     if getattr(config, "ENABLE_BACKGROUND_WATCHER", True):
         threading.Thread(target=run_watcher_loop, args=(bridge,), daemon=True).start()
 
-    print(f"{config.ASSISTANT_NAME} is running (always listening, no wake word). Press Ctrl+C to quit.")
+    wake_mode = str(getattr(config, "WAKE_WORD_MODE", "wake_word") or "wake_word").lower()
+    print(f"{config.ASSISTANT_NAME} is running (listening mode: {wake_mode}). Press Ctrl+C to quit.")
     creator = getattr(config, "CREATOR_NAME", "")
     if creator:
         print(f"Made by {creator}.")
@@ -506,7 +512,12 @@ def run_assistant_loop(bridge=None):
                 was_interruption = True
                 print("(Picking up what you said while interrupting...)")
             elif typed_text is None:
-                audio = recorder.record_command(text_queue=text_queue)
+                bypass = (
+                    brain.has_pending_power_confirmation()
+                    or _grace_period_active()
+                    or was_interruption
+                )
+                audio = recorder.record_command(text_queue=text_queue, bypass_wake_word=bypass)
 
                 if audio is None:
                     # No speech this pass, or a typed message interrupted listen.
@@ -548,6 +559,7 @@ def run_assistant_loop(bridge=None):
             if brain.has_pending_power_confirmation():
                 command = text
             else:
+                wake_mode = str(getattr(config, "WAKE_WORD_MODE", "wake_word") or "wake_word").lower()
                 if typed_text is not None:
                     # Typed chat is addressed to her — skip name-gating, still strip name.
                     command = _strip_name_mention(text)
@@ -556,6 +568,9 @@ def run_assistant_loop(bridge=None):
                     command = _strip_name_mention(text)
                 elif _grace_period_active():
                     # She just asked a question — no name required.
+                    command = _strip_name_mention(text)
+                elif wake_mode == "wake_word":
+                    # Woken via neural wake word detector — accept command directly!
                     command = _strip_name_mention(text)
                 else:
                     command = _extract_command(text)
@@ -595,9 +610,11 @@ def run_assistant_loop(bridge=None):
             if bridge is not None:
                 bridge.thinking_signal.emit()
 
+            speculative_engine.speculate(command)
             reply, final_interrupt_audio = _stream_command_reply(
                 command, bridge, text_queue=text_queue
             )
+            speculative_engine.clear(force=True)
             if actions.consume_restart_request():
                 actions.relaunch_alyssa()
             pending_interrupt_audio = final_interrupt_audio

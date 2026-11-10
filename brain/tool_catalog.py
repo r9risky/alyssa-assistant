@@ -524,4 +524,74 @@ BASE_TOOLS = [
             "parameters": {"type": "object", "properties": {}, "required": []},
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "recall_past_chats",
+            "description": (
+                "Search daily chat transcripts from earlier today, yesterday, or a specific date "
+                "when the user asks 'do you remember when we talked about...', 'what did I say yesterday', "
+                "or references an earlier conversation."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": "Keyword or phrase to search for in past chat transcripts.",
+                    },
+                    "date_hint": {
+                        "type": "string",
+                        "description": "Optional date filter: 'today', 'yesterday', or 'YYYY-MM-DD'.",
+                    },
+                },
+                "required": [],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "update_user_profile",
+            "description": (
+                "Save a structured note about the user into me.md (e.g., preferred nickname, pronouns, "
+                "interests, projects, or setup preferences)."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "note": {
+                        "type": "string",
+                        "description": "Concise note about the user to save in me.md.",
+                    },
+                    "section": {
+                        "type": "string",
+                        "description": "Section heading in me.md (e.g., 'Name & Pronouns', 'Interests & Projects', 'Setup & Preferences').",
+                    },
+                },
+                "required": ["note"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "set_quiet_mode",
+            "description": (
+                "Turn Quiet Mode on or off. When Quiet Mode is on, proactive screen commentary, "
+                "pop-in check-ins, and background alerts are silenced until turned off."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "enabled": {
+                        "type": "boolean",
+                        "description": "True to enable Quiet Mode (silence proactive speech), False to disable it.",
+                    },
+                },
+                "required": ["enabled"],
+            },
+        },
+    },
 ]
+

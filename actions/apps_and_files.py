@@ -489,7 +489,12 @@ def _desktop_folder() -> str:
 
 def _resolve_placeholder_user_path(path: str) -> str:
     """Replaces an LLM's C:\\Users\\User placeholder with this PC's path."""
-    expanded = os.path.expandvars(os.path.expanduser(path)).replace("/", "\\")
+    expanded = os.path.expandvars(os.path.expanduser(path))
+    expanded = re.sub(
+        r"%([A-Za-z_][A-Za-z0-9_]*)%",
+        lambda m: os.environ.get(m.group(1), m.group(0)),
+        expanded,
+    ).replace("/", "\\")
     desktop_match = re.match(
         r"^[A-Za-z]:\\Users\\(?:user|username|<user>)\\Desktop(?:\\(.*))?$",
         expanded,
@@ -505,6 +510,8 @@ def _resolve_placeholder_user_path(path: str) -> str:
     )
     if home_match:
         return os.path.normpath(os.path.join(os.path.expanduser("~"), home_match.group(1) or ""))
+    if os.name != "nt" and "\\" in expanded and not re.match(r"^[A-Za-z]:\\", expanded):
+        expanded = expanded.replace("\\", os.sep)
     return os.path.normpath(expanded)
 
 

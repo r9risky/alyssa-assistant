@@ -1,3 +1,5 @@
+import math
+
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QColor, QMovie, QPainter, QPixmap, QRegion
 
@@ -55,28 +57,70 @@ class RenderingMixin:
     def _update_mask(self):
         if self._pixmap is None or self._pixmap.isNull():
             return
-        region = QRegion(self._pixmap.mask()).translated(0, int(self._bounce_offset))
+        total_y = int(
+            self._bounce_offset
+            + getattr(self, "_breathing_offset", 0.0)
+            + getattr(self, "_gaze_y_offset", 0.0)
+        )
+        total_x = int(getattr(self, "_gaze_x_offset", 0.0))
+        region = QRegion(self._pixmap.mask()).translated(total_x, total_y)
         # Keep the resize grip clickable even if that corner of the image is transparent.
         gx = self.width() - RESIZE_GRIP
         gy = self.height() - RESIZE_GRIP
         region += QRegion(gx, gy, RESIZE_GRIP, RESIZE_GRIP, QRegion.Ellipse)
+
+        # Ensure emote badge area is unclipped in the window mask
+        emote = getattr(self, "_current_emote", None)
+        if emote and self.settings.get("emotes_enabled", True):
+            badge_x = max(8, min(self.width() - 32, self.width() // 2 + 12))
+            float_y = total_y + 18 + int(math.sin(getattr(self, "_emote_float_phase", 0.0)) * 2.5)
+            region += QRegion(badge_x - 6, float_y - 22, 34, 30, QRegion.Rectangle)
+
         self.setMask(region)
 
     def paintEvent(self, event):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing)
+        draw_x = int(getattr(self, "_gaze_x_offset", 0.0))
+        draw_y = int(
+            self._bounce_offset
+            + getattr(self, "_breathing_offset", 0.0)
+            + getattr(self, "_gaze_y_offset", 0.0)
+        )
+
         if self._pixmap is not None:
-            painter.drawPixmap(0, int(self._bounce_offset), self._pixmap)
+            if getattr(self, "_blink_active", False) and self.settings.get("blinking_enabled", True):
+                # Subtle eye-squash micro-blink
+                squash_h = max(1, int(self._pixmap.height() * 0.93))
+                squashed = self._pixmap.scaled(
+                    self._pixmap.width(), squash_h, Qt.IgnoreAspectRatio, Qt.SmoothTransformation
+                )
+                squash_y = draw_y + (self._pixmap.height() - squash_h)
+                painter.drawPixmap(draw_x, squash_y, squashed)
+            else:
+                painter.drawPixmap(draw_x, draw_y, self._pixmap)
+
+        # Dynamic floating mood emote badge
+        emote = getattr(self, "_current_emote", None)
+        if emote and self.settings.get("emotes_enabled", True):
+            badge_font = painter.font()
+            badge_font.setPointSize(14)
+            painter.setFont(badge_font)
+            float_y = draw_y + 18 + int(math.sin(getattr(self, "_emote_float_phase", 0.0)) * 2.5)
+            badge_x = max(8, min(self.width() - 32, self.width() // 2 + 12))
+            painter.setPen(Qt.NoPen)
+            painter.setBrush(QColor(18, 18, 26, 210))
+            painter.drawRoundedRect(badge_x - 3, float_y - 18, 28, 24, 8, 8)
+            painter.setPen(QColor(255, 255, 255))
+            painter.drawText(badge_x, float_y, emote)
 
         gx = self.width() - RESIZE_GRIP
         gy = self.height() - RESIZE_GRIP
         t_grip = _theme(self.settings)
-        accent_hex = t_grip["accent"]
-        r = int(accent_hex[1:3], 16)
-        g = int(accent_hex[3:5], 16)
-        b = int(accent_hex[5:7], 16)
+        accent_color = QColor(t_grip.get("accent", "#6366F1"))
+        accent_color.setAlpha(80)
         painter.setPen(Qt.NoPen)
-        painter.setBrush(QColor(r, g, b, 80))
+        painter.setBrush(accent_color)
         painter.drawEllipse(gx, gy, RESIZE_GRIP, RESIZE_GRIP)
         painter.setPen(QColor(255, 255, 255, 180))
         for i in range(3):

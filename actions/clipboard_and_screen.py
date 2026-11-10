@@ -57,7 +57,14 @@ def take_screenshot() -> str:
 def describe_screen(question: str = "") -> str:
     """Describe screen or answer `question` (OLLAMA_VISION_MODEL / GEMINI_MODEL).
     In-memory screenshot only — never writes to disk."""
-    return bridges.describe_screen(question)
+    result = bridges.describe_screen(question)
+    if result and not str(result).startswith("Couldn't"):
+        try:
+            import memory
+            memory.record_screen_observation(str(result))
+        except Exception:
+            pass
+    return result
 
 
 def click_screen_element(description: str, double_click: bool = False, confirmed: bool = False) -> str:

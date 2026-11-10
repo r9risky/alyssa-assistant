@@ -11,8 +11,10 @@ from .clipboard_and_screen import (
     click_screen_element, describe_screen, read_clipboard, set_clipboard, take_screenshot,
 )
 from .confirmation import (
-    VoiceConfirmationRequired, set_critical_confirmation_callback,
-    set_power_confirmation_callback, tool_confirmation_context,
+    SECURITY_PRESETS, VoiceConfirmationRequired, apply_security_preset,
+    get_preset_permissions, requires_confirmation,
+    set_critical_confirmation_callback, set_power_confirmation_callback,
+    tool_confirmation_context,
 )
 from .bridges import configure_brain_services
 from .input_sim import press_keys, type_text
@@ -22,8 +24,9 @@ from .media import (
 )
 from .music import play_music
 from .system import (
-    forget_fact, get_datetime, remember_fact, reset_conversation, run_diagnostics,
-    search_files, system_power_action,
+    forget_fact, get_datetime, recall_past_chats, remember_fact,
+    reset_conversation, run_diagnostics, search_files, set_quiet_mode,
+    system_power_action, update_user_profile,
 )
 from .windows import (
     close_window, maximize_window, minimize_window, show_desktop, snap_window, switch_window,
@@ -39,6 +42,9 @@ _BUILTIN_FUNCTIONS = {
     "run_command": run_command,
     "remember_fact": remember_fact,
     "forget_fact": forget_fact,
+    "recall_past_chats": recall_past_chats,
+    "update_user_profile": update_user_profile,
+    "set_quiet_mode": set_quiet_mode,
     "search_files": search_files,
     "media_play_pause": media_play_pause,
     "media_next_track": media_next_track,

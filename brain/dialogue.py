@@ -199,8 +199,38 @@ _CAVEMAN_INSTRUCTIONS = {
 
 
 def _build_system_prompt(user_text: str = "") -> str:
-    """Base prompt plus remembered facts (injected every request)."""
+    """Base prompt plus custom personality, user profile, screen memory, and remembered facts."""
     base = _compact_system_prompt()
+    nickname = str(getattr(ui_config, "USER_NICKNAME", "") or "").strip()
+    if nickname:
+        base += f"\n\nThe user's preferred name or nickname is '{nickname}'. Address them naturally when appropriate."
+    try:
+        personality_path = memory.get_personality_path()
+        if os.path.exists(personality_path):
+            custom_persona = memory.load_personality_notes()
+            if custom_persona:
+                base += f"\n\nCustom personality notes (personality.md):\n{custom_persona}"
+        me_path = memory.get_me_notes_path()
+        if os.path.exists(me_path):
+            me_notes = memory.load_me_notes()
+            if me_notes and me_notes != memory.DEFAULT_ME_MARKDOWN.strip():
+                base += f"\n\nUser profile notes (me.md):\n{me_notes}"
+        if getattr(config, "SCREEN_WATCH_KEEP_CAUGHT_UP", True):
+            screen_obs = memory.get_recent_screen_observations(limit=5)
+            if screen_obs:
+                obs_lines = "\n".join(f"- [{o['time_str']}] {o['summary']}" for o in screen_obs)
+                base += f"\n\nRecent screen observations (last 3 hours):\n{obs_lines}"
+        if user_text and re.search(
+            r"\b(?:remember\s+when|talked\s+about|said\s+yesterday|earlier\s+chat|past\s+chat|yesterday)\b",
+            user_text,
+            re.IGNORECASE,
+        ):
+            hint = "yesterday" if "yesterday" in user_text.lower() else ""
+            transcript_hits = memory.search_transcripts(query="", date_hint=hint, limit=4)
+            if transcript_hits:
+                base += "\n\nRecent chat transcript excerpts:\n" + "\n".join(f"- {h}" for h in transcript_hits)
+    except Exception:
+        pass
     caveman_level = getattr(ui_config, "CAVEMAN_MODE", None)
     if caveman_level in _CAVEMAN_INSTRUCTIONS:
         base += _CAVEMAN_INSTRUCTIONS[caveman_level]
@@ -579,7 +609,7 @@ def _get_strip_filler_patterns(assistant_name: str):
         re.compile(r"^(?:can|could|would)\s+you\s+(?:please\s+)?", re.IGNORECASE),
         re.compile(r"^please\s+", re.IGNORECASE),
         re.compile(r"^just\s+", re.IGNORECASE),
-        re.compile(r"^hey\s+" + re.escape(assistant_name) + r"[,]?\s+", re.IGNORECASE),
+        re.compile(r"^(?:hey\s+)?" + re.escape(assistant_name) + r"[,]?\s+", re.IGNORECASE),
     ]
 
 
@@ -798,6 +828,71 @@ def _handle_pre_model_intent(user_text: str):
         _remember_turn(user_text, reply)
         return reply
 
+    if re.fullmatch(
+        r"\s*(?:go\s+quiet|be\s+quiet|quiet\s+mode(?:\s+on)?|turn\s+on\s+quiet\s+mode)[.!]?\s*",
+        user_text or "",
+        re.IGNORECASE,
+    ):
+        reply = actions.set_quiet_mode(True)
+        _remember_turn(user_text, reply)
+        return reply
+
+    if re.fullmatch(
+        r"\s*(?:stop\s+being\s+quiet|quiet\s+mode\s+off|turn\s+off\s+quiet\s+mode|unmute\s+quiet\s+mode)[.!]?\s*",
+        user_text or "",
+        re.IGNORECASE,
+    ):
+        reply = actions.set_quiet_mode(False)
+        _remember_turn(user_text, reply)
+        return reply
+
+    # Capri-inspired mid-job asides (fast status & instant stop)
+    try:
+        from actions.asides import ACTIVE_JOB, AsideKind, classify_aside, format_status_reply
+        if ACTIVE_JOB.is_active:
+            aside_kind = classify_aside(user_text)
+            if aside_kind == AsideKind.STOP:
+                ACTIVE_JOB.request_cancel()
+                reply = "Stopping what I'm doing right now."
+                _remember_turn(user_text, reply)
+                return reply
+            elif aside_kind == AsideKind.STATUS:
+                reply = format_status_reply(ACTIVE_JOB)
+                _remember_turn(user_text, reply)
+                return reply
+    except Exception:
+        pass
+
+    # Fast watch-along & gaming co-pilot deterministic triggers
+    try:
+        cleaned_text = _strip_leading_filler(user_text or "").strip().lower()
+        if re.search(r"^(?:watch (?:this|that)(?: (?:video|stream|film|movie|show))? with me|let'?s watch (?:this|that)(?: together)?|react to (?:this|that))$", cleaned_text):
+            from plugins.watch_along import start_watch_along
+            reply = start_watch_along({"title": "the screen"})
+            _remember_turn(user_text, reply)
+            return reply
+        if re.search(r"^(?:stop watching|end watch[- ]along|we'?re done watching)$", cleaned_text):
+            from plugins.watch_along import WATCH_ALONG_SESSION, stop_watch_along
+            if WATCH_ALONG_SESSION.active:
+                reply = stop_watch_along({})
+                _remember_turn(user_text, reply)
+                return reply
+        if re.search(r"^(?:clip that!?|clip (?:the )?last \d+ seconds?|save clip)$", cleaned_text):
+            from actions.clips import save_replay_clip
+            m = re.search(r"(\d+)\s*sec", cleaned_text)
+            sec = int(m.group(1)) if m else 30
+            res = save_replay_clip(seconds=sec)
+            reply = res.get("message", "Clip recorded!")
+            _remember_turn(user_text, reply)
+            return reply
+        if re.search(r"^(?:fake crash|crash your pc|choom overflow|fake bsod)$", cleaned_text):
+            from actions.desktop_chaos import show_fake_crash
+            reply = show_fake_crash()
+            _remember_turn(user_text, reply)
+            return reply
+    except Exception:
+        pass
+
     for handler in (
         _handle_creator_question,
         _handle_model_question,
@@ -808,6 +903,38 @@ def _handle_pre_model_intent(user_text: str):
         if reply is not None:
             _remember_turn(user_text, reply)
             return reply
+
+    if getattr(ui_config, "FAST_TOOL_RESPONSES", True):
+        from .speculative import get_speculative_engine
+        engine = get_speculative_engine()
+        cleaned = _strip_leading_filler(user_text or "")
+        intents = engine.parse_speculative_intents(cleaned)
+        for tool_name, args in intents:
+            if tool_name == "get_datetime":
+                if re.search(
+                    r"^(?:(?:what(?:'s|\s+is)?|tell\s+me(?:\s+what)?)\s+(?:the\s+)?(?:time|date|day)(?:\s+is\s+it)?|current\s+time|tell\s+me\s+(?:the\s+)?time)\b",
+                    cleaned,
+                    re.IGNORECASE,
+                ):
+                    cached = engine.get_result("get_datetime", args)
+                    res = cached if cached is not None else actions.get_datetime()
+                    reply = str(res)
+                    _remember_turn(user_text, reply)
+                    return reply
+            elif tool_name == "get_weather":
+                if re.search(
+                    r"^(?:(?:what(?:'s|\s+is)?|tell\s+me)\s+(?:the\s+)?weather|how(?:'s|\s+is)?\s+the\s+weather|weather\s+forecast)\b",
+                    cleaned,
+                    re.IGNORECASE,
+                ):
+                    func = actions.FUNCTIONS.get("get_weather")
+                    if func is not None:
+                        cached = engine.get_result("get_weather", args)
+                        res = cached if cached is not None else func(**args)
+                        reply = str(res)
+                        _remember_turn(user_text, reply)
+                        return reply
+
     return None
 
 
@@ -914,17 +1041,26 @@ def _execute_tool_call(
     if func is None:
         output = f"Unknown tool: {name}"
     else:
-        if on_partial_reply is not None and not getattr(ui_config, "CONFIRM_BEFORE_ACTIONS", False):
-            announce = _natural_announce_reply(name, arguments)
-            if announce:
-                on_partial_reply(announce)
-        try:
-            with actions.tool_confirmation_context(name, arguments):
-                output = func(**arguments)
-        except actions.VoiceConfirmationRequired:
-            output = "VOICE_CONFIRMATION_REQUIRED"
-        except Exception as error:
-            output = f"Error running {name}: {error}"
+        from .speculative import get_speculative_engine, SAFE_SPECULATIVE_TOOLS
+
+        spec_result = None
+        if name in SAFE_SPECULATIVE_TOOLS:
+            spec_result = get_speculative_engine().get_result(name, arguments)
+
+        if spec_result is not None:
+            output = spec_result
+        else:
+            if on_partial_reply is not None and not getattr(ui_config, "CONFIRM_BEFORE_ACTIONS", False):
+                announce = _natural_announce_reply(name, arguments)
+                if announce:
+                    on_partial_reply(announce)
+            try:
+                with actions.tool_confirmation_context(name, arguments):
+                    output = func(**arguments)
+            except actions.VoiceConfirmationRequired:
+                output = "VOICE_CONFIRMATION_REQUIRED"
+            except Exception as error:
+                output = f"Error running {name}: {error}"
     return output, untrusted_output, False, opened_app, untrusted_output
 
 

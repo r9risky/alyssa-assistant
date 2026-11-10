@@ -29,12 +29,31 @@ async def _synthesize(text: str, out_path: str):
         await _synthesize_edge(text, out_path)
 
 async def _synthesize_edge(text: str, out_path: str):
+    rate_str = getattr(config, "EDGE_TTS_RATE", "+0%")
+    pitch_str = getattr(config, "EDGE_TTS_PITCH", "+0Hz")
+    if getattr(config, "VOICE_DSP_ENABLED", False):
+        try:
+            base_rate = int(str(rate_str).strip().rstrip("%") or "0")
+        except ValueError:
+            base_rate = 0
+        speed_factor = float(getattr(config, "VOICE_SPEED_FACTOR", 1.0) or 1.0)
+        combined_rate = max(-50, min(100, base_rate + int(round((speed_factor - 1.0) * 100))))
+        rate_str = f"{combined_rate:+d}%"
+
+        try:
+            base_pitch = int(str(pitch_str).strip().rstrip("Hz").rstrip("hz") or "0")
+        except ValueError:
+            base_pitch = 0
+        semitones = float(getattr(config, "VOICE_PITCH_SEMITONES", 0.0) or 0.0)
+        combined_pitch = max(-50, min(50, base_pitch + int(round(semitones * 6.0))))
+        pitch_str = f"{combined_pitch:+d}Hz"
+
     communicate = edge_tts.Communicate(
         text,
         config.EDGE_TTS_VOICE,
-        rate=getattr(config, "EDGE_TTS_RATE", "+0%"),
+        rate=rate_str,
         volume=getattr(config, "EDGE_TTS_VOLUME", "+0%"),
-        pitch=getattr(config, "EDGE_TTS_PITCH", "+0Hz"),
+        pitch=pitch_str,
     )
     await communicate.save(out_path)
 

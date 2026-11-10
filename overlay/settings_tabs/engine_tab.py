@@ -25,7 +25,7 @@ class EngineTabMixin:
 
         self.whisper_model_combo = QComboBox()
         self.whisper_model_combo.setEditable(True)
-        whisper_models = ["tiny.en", "base.en", "small.en", "medium.en", "large-v3", "large-v3-turbo"]
+        whisper_models = ["tiny.en", "base.en", "small.en", "medium.en", "large-v3", "large-v3-turbo", "distil-large-v3"]
         self.whisper_model_combo.addItems(whisper_models)
         current_model = getattr(config, "WHISPER_MODEL_SIZE", "base.en")
         if current_model not in whisper_models:

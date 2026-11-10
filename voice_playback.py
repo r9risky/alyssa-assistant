@@ -8,6 +8,11 @@ import time
 
 import sounddevice as sd
 
+try:
+    import numpy as np
+except ImportError:
+    np = None
+
 from config import AUDIO_SETTINGS as config
 import telemetry
 
@@ -31,8 +36,12 @@ def _configured_output_device():
     if isinstance(configured, int):
         return configured
     needle = str(configured).lower()
-    for index, device in enumerate(sd.query_devices()):
-        if device["max_output_channels"] > 0 and needle in device["name"].lower():
+    try:
+        devices = sd.query_devices() if sd is not None else []
+    except Exception:
+        devices = []
+    for index, device in enumerate(devices):
+        if device.get("max_output_channels", 0) > 0 and needle in device.get("name", "").lower():
             return index
     return None  # falls back to default rather than failing playback
 
@@ -44,9 +53,34 @@ def _configured_output_device_name():
     if not configured or str(configured).lower() == "default":
         return None
     needle = str(configured).lower()
-    for device in sd.query_devices():
-        if device["max_output_channels"] > 0 and needle in device["name"].lower():
+    try:
+        devices = sd.query_devices() if sd is not None else []
+    except Exception:
+        devices = []
+    for device in devices:
+        if device.get("max_output_channels", 0) > 0 and needle in device.get("name", "").lower():
             return device["name"]
+    return None
+
+
+def _configured_virtual_mic_device():
+    """sounddevice output index matching CALL_VIRTUAL_MIC_DEVICE (e.g. 'CABLE Input'),
+    or None if disabled, not in call mode, or device not found."""
+    if not getattr(config, "CALL_MODE_ENABLED", False):
+        return None
+    configured = getattr(config, "CALL_VIRTUAL_MIC_DEVICE", None)
+    if not configured or str(configured).lower() in ("none", "off", "disabled", ""):
+        return None
+    if isinstance(configured, int):
+        return configured
+    needle = str(configured).lower()
+    try:
+        devices = sd.query_devices() if sd is not None else []
+    except Exception:
+        devices = []
+    for index, device in enumerate(devices):
+        if device.get("max_output_channels", 0) > 0 and needle in device.get("name", "").lower():
+            return index
     return None
 
 
@@ -275,6 +309,12 @@ class StreamingSpeaker:
 
     def _queue_audio(self, chunk):
         if not self.interrupted:
+            if chunk and getattr(config, "VOICE_DSP_ENABLED", False):
+                try:
+                    import voice_dsp
+                    chunk = voice_dsp.process_pcm16_mono(chunk, sample_rate=24000)
+                except Exception:
+                    pass
             self._audio.put(chunk)
 
     def _finish_audio(self):
@@ -291,6 +331,39 @@ class StreamingSpeaker:
         )
         buffered = bytearray()
         stream = None
+        vmic_stream = None
+        vmic_device = _configured_virtual_mic_device()
+        vmic_vol = float(getattr(config, "CALL_VIRTUAL_MIC_VOLUME", 1.0))
+
+        def _open_vmic():
+            if vmic_device is not None:
+                try:
+                    s = sd.RawOutputStream(
+                        samplerate=24000,
+                        channels=1,
+                        dtype="int16",
+                        blocksize=buffer_bytes // 2,
+                        latency="low",
+                        device=vmic_device,
+                    )
+                    s.start()
+                    return s
+                except Exception:
+                    return None
+            return None
+
+        def _write_vmic(data: bytes):
+            if vmic_stream is not None and data:
+                try:
+                    if abs(vmic_vol - 1.0) < 0.02:
+                        vmic_stream.write(data)
+                    else:
+                        import numpy as np
+                        arr = (np.frombuffer(data, dtype=np.int16).astype(np.float32) * vmic_vol)
+                        vmic_stream.write(np.clip(arr, -32768, 32767).astype(np.int16).tobytes())
+                except Exception:
+                    pass
+
         try:
             while not self.interrupted:
                 chunk = self._audio.get()
@@ -306,8 +379,11 @@ class StreamingSpeaker:
                                 device=_configured_output_device(),
                             )
                             stream.start()
+                            vmic_stream = _open_vmic()
                             self._start_playback()
-                        stream.write(bytes(buffered))
+                        raw_data = bytes(buffered)
+                        stream.write(raw_data)
+                        _write_vmic(raw_data)
                     return
                 buffered.extend(chunk)
                 if stream is None and len(buffered) >= buffer_bytes:
@@ -320,9 +396,12 @@ class StreamingSpeaker:
                         device=_configured_output_device(),
                     )
                     stream.start()
+                    vmic_stream = _open_vmic()
                     self._start_playback()
                 if stream is not None and buffered:
-                    stream.write(bytes(buffered))
+                    raw_data = bytes(buffered)
+                    stream.write(raw_data)
+                    _write_vmic(raw_data)
                     buffered.clear()
         except Exception as exc:
             self._audio_error = exc
@@ -333,6 +412,11 @@ class StreamingSpeaker:
                     stream.abort() if self.interrupted else stream.stop()
                 finally:
                     stream.close()
+            if vmic_stream is not None:
+                try:
+                    vmic_stream.abort() if self.interrupted else vmic_stream.stop()
+                finally:
+                    vmic_stream.close()
             self._audio_done.set()
 
 
@@ -356,6 +440,45 @@ def warm_up():
         print(f"(voice warm-up failed, continuing: {e})")
 
 
+def _play_file_to_virtual_mic(path: str, stop_event=None):
+    vmic_device = _configured_virtual_mic_device()
+    if vmic_device is None:
+        return
+    try:
+        if path.lower().endswith(".wav"):
+            import wave
+            with wave.open(path, "rb") as wf:
+                sr = wf.getframerate()
+                ch = wf.getnchannels()
+                sw = wf.getsampwidth()
+                if sw == 2:
+                    vmic_vol = float(getattr(config, "CALL_VIRTUAL_MIC_VOLUME", 1.0))
+                    vmic_stream = sd.RawOutputStream(
+                        samplerate=sr,
+                        channels=ch,
+                        dtype="int16",
+                        device=vmic_device,
+                    )
+                    vmic_stream.start()
+                    try:
+                        chunk_size = sr // 10
+                        while not (stop_event and stop_event.is_set()):
+                            data = wf.readframes(chunk_size)
+                            if not data:
+                                break
+                            if abs(vmic_vol - 1.0) < 0.02:
+                                vmic_stream.write(data)
+                            else:
+                                import numpy as np
+                                arr = (np.frombuffer(data, dtype=np.int16).astype(np.float32) * vmic_vol)
+                                vmic_stream.write(np.clip(arr, -32768, 32767).astype(np.int16).tobytes())
+                    finally:
+                        vmic_stream.stop()
+                        vmic_stream.close()
+    except Exception:
+        pass
+
+
 def _play(path: str, stop_event=None) -> bool:
     """Play *path* to completion, or stop when *stop_event* is set.
     True if finished on its own, False if cut off."""
@@ -366,6 +489,8 @@ def _play(path: str, stop_event=None) -> bool:
         volume = getattr(config, "EDGE_TTS_VOLUME", "+0%")
         music.set_volume(_volume_str_to_gain(volume))
         music.play()
+        if _configured_virtual_mic_device() is not None:
+            threading.Thread(target=_play_file_to_virtual_mic, args=(path, stop_event), daemon=True).start()
         while music.get_busy():
             current_volume = getattr(config, "EDGE_TTS_VOLUME", "+0%")
             if current_volume != volume:
