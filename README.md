@@ -88,6 +88,12 @@ drag in PyAutoGUI or require an active desktop session; the couple of things
 `actions` needs from `brain` (vision, resetting a conversation) get injected
 through `actions/bridges.py` instead of a direct import.
 
+Audio, voice, and system utilities are organized into clean packages:
+- `audio/`: Recording, VAD, Whisper/Groq transcription, Edge/ElevenLabs speech synthesis, playback, DSP, wake-word detection, and call audio isolation.
+- `core/`: Keyring credential storage, startup logging, telemetry, name mention matching, hotkeys, and semantic memory.
+- Root shims (`recorder.py`, `transcribe.py`, `voice.py`, `memory.py`, etc.) are preserved for 100% backward compatibility.
+- Experimental Capri features (fake BSOD pranks, replay clipping, watch-along) are cleanly decoupled with explicit configuration switches in `config.py` (`DESKTOP_CHAOS_ENABLED`, `WATCH_ALONG_ENABLED`, `REPLAY_BUFFER_ENABLED`).
+
 Mostly this exists so I can swap out the automation layer or add a plugin
 without provider logic breaking, and so I can unit-test the provider/dialogue
 code without a GUI attached.

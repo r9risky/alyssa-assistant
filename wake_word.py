@@ -156,7 +156,7 @@ class WakeWordDetector:
         """
         audio = pcm_data.astype(np.float32) / 32768.0
         rms = np.sqrt(np.mean(audio ** 2))
-        if rms < 0.012:
+        if rms < 0.003:
             return 0.0
 
         num_frames = 10
@@ -196,28 +196,28 @@ class WakeWordDetector:
         peak_idx = int(np.argmax(sib_ratio_list))
 
         # Alyssa requires:
-        # 1. Sibilance peak occurs in middle-to-late region (frames 2 to 8)
-        # 2. Peak zero-crossing rate is substantial (> 0.22)
-        # 3. Peak spectral centroid is high (> 3600 Hz)
+        # 1. Sibilance peak occurs after initial voicing (frames 1 to 9)
+        # 2. Peak zero-crossing rate is present (> 0.10)
+        # 3. Peak spectral centroid is high (> 2200 Hz)
         # 4. Voiced energy exists prior to the sibilance (frames 0 to peak_idx)
-        if peak_idx < 1 or peak_idx > 8:
+        if peak_idx < 1 or peak_idx > 9:
             return 0.0
 
         zcr_at_peak = zcr_list[peak_idx]
         centroid_at_peak = centroid_list[peak_idx]
 
-        if zcr_at_peak < 0.18 or centroid_at_peak < 3200:
+        if zcr_at_peak < 0.10 or centroid_at_peak < 2200:
             return 0.0
 
         prior_low_energy = max(low_energy_list[:peak_idx]) if peak_idx > 0 else 0.0
-        if prior_low_energy < 0.005:
+        if prior_low_energy < 0.001:
             return 0.0
 
         # Score computation
-        sibilance_score = min(1.0, max_sib / 1.5)
-        zcr_score = min(1.0, zcr_at_peak / 0.45)
-        centroid_score = min(1.0, (centroid_at_peak - 3000) / 2500)
-        voiced_score = min(1.0, prior_low_energy * 20.0)
+        sibilance_score = min(1.0, max_sib / 1.2)
+        zcr_score = min(1.0, zcr_at_peak / 0.35)
+        centroid_score = min(1.0, max(0.0, (centroid_at_peak - 2000) / 3000))
+        voiced_score = min(1.0, prior_low_energy * 50.0)
 
         confidence = 0.35 * sibilance_score + 0.30 * zcr_score + 0.25 * centroid_score + 0.10 * voiced_score
         return float(np.clip(confidence, 0.0, 1.0))

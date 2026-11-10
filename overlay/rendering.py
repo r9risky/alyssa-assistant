@@ -3,7 +3,7 @@ import os
 import sys
 
 from PySide6.QtCore import Qt, QSize
-from PySide6.QtGui import QPixmap, QPainter
+from PySide6.QtGui import QPixmap, QPainter, QMovie
 from PySide6.QtSvg import QSvgRenderer
 
 if getattr(sys, "frozen", False):

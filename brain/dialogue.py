@@ -1,5 +1,6 @@
 import inspect
 import json
+import os
 import random
 import re
 import time
@@ -229,8 +230,8 @@ def _build_system_prompt(user_text: str = "") -> str:
             transcript_hits = memory.search_transcripts(query="", date_hint=hint, limit=4)
             if transcript_hits:
                 base += "\n\nRecent chat transcript excerpts:\n" + "\n".join(f"- {h}" for h in transcript_hits)
-    except Exception:
-        pass
+    except Exception as e:
+        telemetry.log(f"[prompt] Non-critical error loading personality/notes context: {e}")
     caveman_level = getattr(ui_config, "CAVEMAN_MODE", None)
     if caveman_level in _CAVEMAN_INSTRUCTIONS:
         base += _CAVEMAN_INSTRUCTIONS[caveman_level]
@@ -882,6 +883,8 @@ def _handle_pre_model_intent(user_text: str):
     try:
         cleaned_text = _strip_leading_filler(user_text or "").strip().lower()
         if re.search(r"^(?:watch (?:this|that)(?: (?:video|stream|film|movie|show))? with me|let'?s watch (?:this|that)(?: together)?|react to (?:this|that))$", cleaned_text):
+            if not getattr(config, "WATCH_ALONG_ENABLED", True):
+                return "Watch-along mode is currently disabled in Settings."
             from plugins.watch_along import start_watch_along
             reply = start_watch_along({"title": "the screen"})
             _remember_turn(user_text, reply)
@@ -893,6 +896,8 @@ def _handle_pre_model_intent(user_text: str):
                 _remember_turn(user_text, reply)
                 return reply
         if re.search(r"^(?:clip that!?|clip (?:the )?last \d+ seconds?|save clip)$", cleaned_text):
+            if not getattr(config, "REPLAY_BUFFER_ENABLED", True):
+                return "Replay buffer clipping is currently disabled in Settings."
             from actions.clips import save_replay_clip
             m = re.search(r"(\d+)\s*sec", cleaned_text)
             sec = int(m.group(1)) if m else 30
@@ -901,6 +906,8 @@ def _handle_pre_model_intent(user_text: str):
             _remember_turn(user_text, reply)
             return reply
         if re.search(r"^(?:fake crash|crash your pc|choom overflow|fake bsod)$", cleaned_text):
+            if not getattr(config, "DESKTOP_CHAOS_ENABLED", True):
+                return "Desktop chaos pranks are currently disabled in Settings."
             from actions.desktop_chaos import show_fake_crash
             reply = show_fake_crash()
             _remember_turn(user_text, reply)

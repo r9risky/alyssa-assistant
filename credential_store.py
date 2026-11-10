@@ -79,6 +79,11 @@ def set_secret(name: str, value: str) -> bool:
         return False
 
 
+def clear_secret(name: str) -> bool:
+    """Remove a secret from secure storage. Returns True on success."""
+    return set_secret(name, "")
+
+
 def get_json_secret(name: str):
     """JSON from secure storage, or None if absent/invalid."""
     raw = get_secret(name)

@@ -193,19 +193,69 @@ def _configured_input_device():
     raise RuntimeError(f"No compatible microphone matching {configured!r} was found")
 
 
+class _DownmixingStream:
+    """Wraps an InputStream to transparently downmix multi-channel audio to mono."""
+
+    def __init__(self, raw_stream):
+        self._raw = raw_stream
+
+    def read(self, frames):
+        data, overflow = self._raw.read(frames)
+        if hasattr(data, "ndim") and data.ndim > 1 and data.shape[1] > 1:
+            data = np.mean(data, axis=1, dtype=data.dtype)
+        return data, overflow
+
+    def __enter__(self):
+        self._raw.__enter__()
+        return self
+
+    def __exit__(self, *args):
+        return self._raw.__exit__(*args)
+
+    def __getattr__(self, name):
+        return getattr(self._raw, name)
+
+
 @contextlib.contextmanager
 def _open_stream(**kwargs):
-    """sd.InputStream(**kwargs), tracked so _reap_and_recover knows if any stream is live."""
+    """sd.InputStream(**kwargs), tracked so _reap_and_recover knows if any stream is live.
+    Automatically falls back to stereo (downmixed to mono) if 1-channel input is rejected.
+    """
     global _active_streams
     kwargs.setdefault("device", _configured_input_device())
-    with sd.InputStream(**kwargs) as stream:
+    orig_channels = kwargs.get("channels", 1)
+    stream = None
+    try:
+        stream = sd.InputStream(**kwargs)
+    except Exception as e:
+        if orig_channels == 1:
+            try:
+                stereo_kwargs = dict(kwargs)
+                stereo_kwargs["channels"] = 2
+                raw = sd.InputStream(**stereo_kwargs)
+                stream = _DownmixingStream(raw)
+            except Exception:
+                raise e
+        else:
+            raise e
+
+    with stream as s:
         with _active_streams_lock:
             _active_streams += 1
         try:
-            yield stream
+            yield s
         finally:
             with _active_streams_lock:
                 _active_streams -= 1
+
+
+_last_wake_word_triggered = False
+
+
+def was_wake_word_triggered() -> bool:
+    """True if the most recent recording was triggered via the wake word detector."""
+    return bool(_last_wake_word_triggered)
+
 
 # Adaptive silence (ADAPTIVE_SILENCE_* in config). Session-only WPS EMA;
 # resets to the config default on restart.
@@ -278,6 +328,8 @@ def _record_command_blocking(
     Puts (audio_or_None, error_or_None) on result_q, or never returns if stream.read() hangs.
 
     If text_queue is given (typed chat), abandon the pass as soon as a message arrives."""
+    global _last_wake_word_triggered
+    _last_wake_word_triggered = False
     try:
         vad = VoiceActivityDetector(
             sample_rate=config.SAMPLE_RATE,
@@ -348,6 +400,7 @@ def _record_command_blocking(
                     if use_wake_word and ww_detector is not None:
                         triggered, score = ww_detector.process_frame(chunk)
                         if triggered:
+                            _last_wake_word_triggered = True
                             heard_speech = True
                             frames = list(pre_roll_frames)
                             total_speech_frames = len(frames)
@@ -360,7 +413,7 @@ def _record_command_blocking(
                                 except Exception as e:
                                     streaming_stt.disconnect()
                                     streaming_stt = None
-                    else:
+                    if not heard_speech:
                         if is_speech:
                             speech_run += 1
                             if speech_run >= min_speech_frames:

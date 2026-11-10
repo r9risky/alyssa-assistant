@@ -333,19 +333,23 @@ def _strip_name_mention(text: str) -> str:
     return nameutil.strip_name_at_span(text, span)
 
 
-def run_preflight_checks(bridge=None) -> bool:
+def run_preflight_checks(bridge=None, notify: bool = True) -> bool:
     """Verify the configured LLM provider is reachable before the listen loop.
     Console (bridge is None): print and exit on failure. GUI: report via bridge
     so Settings stays reachable."""
 
-    print("Running startup preflight checks...")
+    if notify:
+        print("Running startup preflight checks...")
 
     def _fail(message: str) -> bool:
-        print(message)
-        if bridge is not None:
-            bridge.error_signal.emit(message)
-            return False
-        sys.exit(1)
+        if notify:
+            print(message)
+            if bridge is not None:
+                bridge.error_signal.emit(message)
+                return False
+        if bridge is None:
+            sys.exit(1)
+        return False
 
     def _require_key(key_value, provider_name, env_var, bridge_obj):
         if key_value:
@@ -361,30 +365,34 @@ def run_preflight_checks(bridge=None) -> bool:
 
     if config.LLM_PROVIDER == "gemini":
         if not config.GEMINI_API_KEY:
-            print(
-                "NOTE: GEMINI_API_KEY isn't set yet.\n"
-                "Set it as an environment variable, e.g. in PowerShell:\n"
-                '    setx GEMINI_API_KEY "your-key-here"\n'
-                "(close and reopen your terminal after running that), or paste it "
-                "directly into config.py - see the comments there, or right-click "
-                "the companion and use the Settings window."
-            )
-            if bridge is not None:
-                bridge.gemini_key_needed.emit()
-                return False
-            sys.exit(1)
-        print("Startup preflight checks passed.")
+            if notify:
+                print(
+                    "NOTE: GEMINI_API_KEY isn't set yet.\n"
+                    "Set it as an environment variable, e.g. in PowerShell:\n"
+                    '    setx GEMINI_API_KEY "your-key-here"\n'
+                    "(close and reopen your terminal after running that), or paste it "
+                    "directly into config.py - see the comments there, or right-click "
+                    "the companion and use the Settings window."
+                )
+                if bridge is not None:
+                    bridge.gemini_key_needed.emit()
+                    return False
+            if bridge is None:
+                sys.exit(1)
+            return False
+        if notify:
+            print("Startup preflight checks passed.")
         return True
 
     if config.LLM_PROVIDER == "openai":
         result = _require_key(config.OPENAI_API_KEY, "OpenAI", "OPENAI_API_KEY", bridge)
-        if result:
+        if result and notify:
             print("Startup preflight checks passed.")
         return result
 
     if config.LLM_PROVIDER == "anthropic":
         result = _require_key(config.ANTHROPIC_API_KEY, "Anthropic", "ANTHROPIC_API_KEY", bridge)
-        if result:
+        if result and notify:
             print("Startup preflight checks passed.")
         return result
 
@@ -396,7 +404,8 @@ def run_preflight_checks(bridge=None) -> bool:
                 "Groq, OpenRouter, Together, or a local LM Studio/vLLM server), "
                 "or right-click the companion and use the Settings window."
             )
-        print("Startup preflight checks passed.")
+        if notify:
+            print("Startup preflight checks passed.")
         return True
 
     try:
@@ -473,7 +482,9 @@ def run_assistant_loop(bridge=None):
 
     # In GUI mode, if preflight checks fail (e.g. fresh install without API key),
     # keep the assistant thread alive in standby instead of dying silently.
-    while not run_preflight_checks(bridge):
+    first_preflight = True
+    while not run_preflight_checks(bridge, notify=first_preflight):
+        first_preflight = False
         if bridge is None:
             return  # In console mode, preflight checks already exited or reported
         try:
@@ -586,13 +597,20 @@ def run_assistant_loop(bridge=None):
                 elif _grace_period_active():
                     # She just asked a question — no name required.
                     command = _strip_name_mention(text)
-                elif wake_mode == "wake_word":
-                    # Woken via neural wake word detector — accept command directly!
+                elif wake_mode == "always_listening":
+                    # Always listening mode ("No wake word"): accept command directly!
                     command = _strip_name_mention(text)
+                elif wake_mode == "wake_word":
+                    if recorder.was_wake_word_triggered():
+                        # Acoustic / neural wake word detector triggered and chimed
+                        command = _strip_name_mention(text)
+                    else:
+                        # Acoustic trigger wasn't caught in real-time, check if Whisper transcribed the name
+                        command = _extract_command(text)
+                        if command is None:
+                            continue  # didn't mention Alyssa - ignore
                 else:
-                    command = _extract_command(text)
-                    if command is None:
-                        continue  # didn't mention Alyssa - ignore
+                    command = _strip_name_mention(text)
 
                 if not command.strip():
                     # Name only — ask what they want.

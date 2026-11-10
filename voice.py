@@ -20,11 +20,13 @@ from voice_synthesis import (
 )
 
 __all__ = [
-    "asyncio", "base64", "json", "os", "queue", "re", "tempfile",
-    "threading", "time", "urlencode", "edge_tts", "requests", "sd",
-    "websocket_connect", "config", "telemetry", "pygame", "reinit_mixer",
-    "list_edge_voices", "list_elevenlabs_voices", "StreamingSpeaker",
-    "warm_up", "speak",
+    "StreamingSpeaker",
+    "warm_up",
+    "reinit_mixer",
+    "speak",
+    "list_edge_voices",
+    "list_elevenlabs_voices",
+    "websocket_connect",
 ]
 
 _MODULES = (_playback, _synthesis)

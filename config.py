@@ -8,6 +8,8 @@ CREATOR_NAME = "Riya"
 ASSISTANT_NAME_ALIASES = [
     "alyssa", "alissa", "alisa", "alysa", "aleesa", "aleessa",
     "alicia", "elisa", "elissa", "melissa", "larissa",
+    "eliza", "elysia", "elyssa", "allissa", "allisa", "alissia",
+    "alisha", "alysha", "ahlyssa", "uhlyssa", "lisa",
     "capri", "capri-desktop",
 ]
 
@@ -63,6 +65,7 @@ WHISPER_INITIAL_PROMPT = (
     "Arknights Endfield."
 )
 VOCABULARY_CORRECTIONS = [
+    ("Alyssa", ["eliza", "elyssa", "elysia", "allissa", "allisa", "alissia", "alisha", "alysha", "ahlyssa", "uhlyssa"]),
     ("Arknights Endfield", ["arknights and field", "arc knights endfield", "arc nights and field"]),
 ]
 
@@ -88,7 +91,7 @@ SILERO_VAD_THRESHOLD = 0.50  # 0.0 to 1.0 speech probability
 PRE_ROLL_BUFFER_MS = 400  # ms of rolling audio prepended to speech to prevent clipped starts
 WAKE_WORD_MODE = 'always_listening'  # "always_listening", "wake_word", or "push_to_talk"
 WAKE_WORD_NAME = 'Alyssa'
-WAKE_WORD_THRESHOLD = 0.65  # 0.0 to 1.0 confidence
+WAKE_WORD_THRESHOLD = 0.50  # 0.0 to 1.0 confidence
 WAKE_CHIME_ENABLED = True  # Play pleasant confirmation chime on wake-up
 WAKE_CHIME_VOLUME = 0.5  # 0.0 to 1.0
 WAKE_WORD_MODEL_PATH = ''  # Optional path to custom ONNX wake word model
@@ -215,6 +218,14 @@ HOTKEY_HOP_OFF = 'ctrl+alt+c'
 HUSK_MODE_ENABLED = False
 HUSK_PORT = 47831
 HUSK_WATCH_CLAUDE_CODE = True
+
+# Capri-inspired Modular Extensions & Toggles
+EXTENSIONS_ENABLED = True
+DESKTOP_CHAOS_ENABLED = True  # Set False for a prank-free desktop (disables fake BSOD & clones)
+WATCH_ALONG_ENABLED = True   # Screen stream reaction mode
+REPLAY_BUFFER_ENABLED = True # 30s rolling replay buffer ("clip that!")
+GAME_COPILOT_ENABLED = True  # Visual game detection & controls assistant
+MINI_GAMES_ENABLED = True    # Desktop ink overlay & mini-games
 
 
 class _SettingsView:
@@ -380,6 +391,12 @@ class PluginSettings(_SettingsView):
     AUTO_DETECT_LOCATION: bool
     LOCATION_CACHE_MINUTES: int
     REMINDER_UPCOMING_WINDOW_HOURS: int
+    EXTENSIONS_ENABLED: bool
+    DESKTOP_CHAOS_ENABLED: bool
+    WATCH_ALONG_ENABLED: bool
+    REPLAY_BUFFER_ENABLED: bool
+    GAME_COPILOT_ENABLED: bool
+    MINI_GAMES_ENABLED: bool
 
 
 class UISettings(_SettingsView):
@@ -415,6 +432,7 @@ UI_SETTINGS = UISettings(*UISettings.__annotations__)
 DIALOGUE_SETTINGS = _SettingsView(
     *ProviderSettings.__annotations__,
     *MemorySettings.__annotations__,
+    *PluginSettings.__annotations__,
     *UISettings.__annotations__,
 )
 

@@ -22,8 +22,11 @@ def check_and_install_pyinstaller():
         import PyInstaller
         print(f"[build] PyInstaller {PyInstaller.__version__} detected.")
     except ImportError:
-        print("[build] PyInstaller not found. Installing via pip...")
-        subprocess.check_call([sys.executable, "-m", "pip", "install", "pyinstaller"])
+        print("[build] PyInstaller not found. Installing...")
+        try:
+            subprocess.check_call([sys.executable, "-m", "pip", "install", "pyinstaller"])
+        except Exception:
+            subprocess.check_call(["uv", "pip", "install", "pyinstaller"])
 
 
 def run_pyinstaller_build():
@@ -46,6 +49,12 @@ def post_process_bundle():
     print("[build] Post-processing output distribution...")
     if not OUTPUT_FOLDER.is_dir():
         raise RuntimeError(f"Expected output folder not found: {OUTPUT_FOLDER}")
+
+    # Ensure Alyssa.exe exists in bundle across all build platforms
+    exe_path = OUTPUT_FOLDER / "Alyssa.exe"
+    elf_path = OUTPUT_FOLDER / "Alyssa"
+    if elf_path.is_file() and not exe_path.is_file():
+        shutil.copy2(elf_path, exe_path)
 
     # Copy config.py next to the executable so user can edit settings without rebuild
     shutil.copy2(ROOT_DIR / "config.py", OUTPUT_FOLDER / "config.py")
@@ -79,7 +88,8 @@ def post_process_bundle():
             if file.is_file():
                 zf.write(file, arcname=file.relative_to(DIST_DIR))
 
-    print(f"\n[build] SUCCESS! Executable built at: {OUTPUT_FOLDER / 'Alyssa.exe'}")
+    target_exe = exe_path if exe_path.is_file() else elf_path
+    print(f"\n[build] SUCCESS! Executable built at: {target_exe}")
     print(f"[build] Packaged zip archive: {zip_path}\n")
 
 
