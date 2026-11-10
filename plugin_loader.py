@@ -5,7 +5,13 @@ import sys
 
 from config import PLUGIN_SETTINGS as config
 
-PLUGINS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "plugins")
+if getattr(sys, "frozen", False):
+    _base_dir = os.path.dirname(sys.executable)
+    PLUGINS_DIR = os.path.join(_base_dir, "plugins")
+    if not os.path.isdir(PLUGINS_DIR) and hasattr(sys, "_MEIPASS"):
+        PLUGINS_DIR = os.path.join(sys._MEIPASS, "plugins")
+else:
+    PLUGINS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "plugins")
 
 # plugins/ on sys.path so a plugin can `from _location import ...` siblings.
 # Without this, spec_from_file_location isolation can't see neighbors.
