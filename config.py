@@ -8,6 +8,7 @@ CREATOR_NAME = "Riya"
 ASSISTANT_NAME_ALIASES = [
     "alyssa", "alissa", "alisa", "alysa", "aleesa", "aleessa",
     "alicia", "elisa", "elissa", "melissa", "larissa",
+    "capri", "capri-desktop",
 ]
 
 
@@ -55,7 +56,7 @@ WHISPER_DEVICE = 'auto'
 WHISPER_COMPUTE_TYPE = 'auto'
 WHISPER_CPU_THREADS = 0
 WHISPER_NUM_WORKERS = 1
-WHISPER_LOG_PROB_THRESHOLD = -1.0
+WHISPER_LOG_PROB_THRESHOLD = -1.5
 WHISPER_INITIAL_PROMPT = (
     "Alyssa, open Chrome, open Notepad, open Spotify, open Windows Explorer, "
     "search for files, delete file, run command, remember that, type this, "
@@ -78,7 +79,7 @@ CALL_BARGE_IN_TOLERANCE_SECONDS = 1.0  # Yields only if someone speaks over her 
 CALL_AUTO_JOIN_ENABLED = True  # Automatically click Join Voice / Join Meeting
 
 SAMPLE_RATE = 16000
-SILENCE_SECONDS = 0.30
+SILENCE_SECONDS = 0.80
 MAX_RECORD_SECONDS = 15
 VAD_AGGRESSIVENESS = 2
 MIN_SPEECH_MS = 120
@@ -93,8 +94,8 @@ WAKE_CHIME_VOLUME = 0.5  # 0.0 to 1.0
 WAKE_WORD_MODEL_PATH = ''  # Optional path to custom ONNX wake word model
 
 ADAPTIVE_SILENCE_ENABLED = True
-ADAPTIVE_SILENCE_MIN_SECONDS = 0.24
-ADAPTIVE_SILENCE_MAX_SECONDS = 0.42
+ADAPTIVE_SILENCE_MIN_SECONDS = 0.45
+ADAPTIVE_SILENCE_MAX_SECONDS = 1.20
 ADAPTIVE_SILENCE_FAST_WPS = 3.3
 ADAPTIVE_SILENCE_SLOW_WPS = 1.3
 ADAPTIVE_SILENCE_EMA_ALPHA = 0.3

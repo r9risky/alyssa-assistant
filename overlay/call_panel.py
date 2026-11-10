@@ -15,13 +15,19 @@ from __future__ import annotations
 import math
 import time
 
-from PySide6.QtCore import QPointF, QRect, QRectF, Qt, QTimer
+from PySide6.QtCore import QObject, QPointF, QRect, QRectF, Qt, QTimer, Signal
 from PySide6.QtGui import QColor, QFont, QPainter, QPainterPath, QPen
 from PySide6.QtWidgets import QHBoxLayout, QLabel, QPushButton, QVBoxLayout, QWidget
 
 from call_ears import get_call_session
 from .widgets import _TopmostWindowMixin
 from .theming import _rgba, _theme
+
+
+class _CallPanelSignals(QObject):
+    state_changed = Signal()
+    caption_received = Signal(str, str)
+    levels_updated = Signal(float, float, float)
 
 
 class CallPanelWidget(_TopmostWindowMixin, QWidget):
@@ -43,10 +49,15 @@ class CallPanelWidget(_TopmostWindowMixin, QWidget):
         # UI Layout
         self._init_ui()
 
-        # Connect session listeners
-        self.session.add_state_listener(self._on_session_state)
-        self.session.add_caption_listener(self._on_caption)
-        self.session.add_levels_listener(self._on_levels)
+        # Thread-safe signal bridge for background audio thread callbacks
+        self._bus = _CallPanelSignals()
+        self._bus.state_changed.connect(self._on_session_state)
+        self._bus.caption_received.connect(self._on_caption)
+        self._bus.levels_updated.connect(self._on_levels)
+
+        self.session.add_state_listener(self._bus.state_changed.emit)
+        self.session.add_caption_listener(self._bus.caption_received.emit)
+        self.session.add_levels_listener(self._bus.levels_updated.emit)
 
         # 30 FPS animation & clock timer
         self._anim_timer = QTimer(self)

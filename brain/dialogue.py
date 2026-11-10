@@ -846,6 +846,21 @@ def _handle_pre_model_intent(user_text: str):
         _remember_turn(user_text, reply)
         return reply
 
+    if re.fullmatch(
+        r"\s*(?:stop(?:\s+(?:it|that|this|everything|now))?|cancel(?:\s+(?:it|that|this|everything))?|abort(?:\s+(?:it|that|this|mission|task))?|never\s*mind(?:\s+(?:that|it|about\s+it))?|nvm|shut\s*up|dismiss)[.!]?\s*",
+        user_text or "",
+        re.IGNORECASE,
+    ):
+        try:
+            from actions.asides import ACTIVE_JOB
+            if ACTIVE_JOB.is_active:
+                ACTIVE_JOB.request_cancel()
+        except Exception:
+            pass
+        reply = "Got it, stopping."
+        _remember_turn(user_text, reply)
+        return reply
+
     # Capri-inspired mid-job asides (fast status & instant stop)
     try:
         from actions.asides import ACTIVE_JOB, AsideKind, classify_aside, format_status_reply
@@ -888,6 +903,19 @@ def _handle_pre_model_intent(user_text: str):
         if re.search(r"^(?:fake crash|crash your pc|choom overflow|fake bsod)$", cleaned_text):
             from actions.desktop_chaos import show_fake_crash
             reply = show_fake_crash()
+            _remember_turn(user_text, reply)
+            return reply
+        if re.search(r"^(?:hang\s*up|leave\s+(?:the\s+)?call|end\s+(?:the\s+)?call|disconnect\s+(?:from\s+)?(?:the\s+)?call)$", cleaned_text):
+            from plugins.call_mode import leave_call
+            reply = leave_call({})
+            _remember_turn(user_text, reply)
+            return reply
+        if re.search(r"^join\s+(?:the\s+)?(?:([a-zA-Z0-9]+)\s+)?call(?:[,]?\s*(?:tell\s+them\s+|and\s+tell\s+them\s+|say\s+)(.+))?$", cleaned_text):
+            m_join = re.search(r"^join\s+(?:the\s+)?(?:([a-zA-Z0-9]+)\s+)?call(?:[,]?\s*(?:tell\s+them\s+|and\s+tell\s+them\s+|say\s+)(.+))?$", cleaned_text)
+            app_arg = m_join.group(1) or "Discord"
+            msg_arg = m_join.group(2) or ""
+            from plugins.call_mode import join_call
+            reply = join_call({"app": app_arg, "message": msg_arg})
             _remember_turn(user_text, reply)
             return reply
     except Exception:

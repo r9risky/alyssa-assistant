@@ -98,7 +98,8 @@ class CallSession:
             self.connected_at = time.time()
             self.errand = None
             self.pending_request = None
-            config.CALL_MODE_ENABLED = True
+            import config as root_config
+            root_config.CALL_MODE_ENABLED = True
         self._notify_state_change()
 
     def end_call(self):
@@ -109,7 +110,8 @@ class CallSession:
             self.level_you = 0.0
             self.level_her = 0.0
             self.level_call = 0.0
-            config.CALL_MODE_ENABLED = False
+            import config as root_config
+            root_config.CALL_MODE_ENABLED = False
         self._notify_state_change()
 
     def set_errand(self, action: str, ask: str = "", ttl_seconds: float = 120.0):
@@ -187,7 +189,12 @@ def get_call_session() -> CallSession:
 
 
 def is_call_mode_active() -> bool:
-    return bool(getattr(config, "CALL_MODE_ENABLED", False) or _session_instance.enabled)
+    import config as root_config
+    return bool(
+        getattr(root_config, "CALL_MODE_ENABLED", False)
+        or getattr(config, "CALL_MODE_ENABLED", False)
+        or _session_instance.enabled
+    )
 
 
 def sanitize_call_transcript(text: str, is_from_call: bool = False) -> str:

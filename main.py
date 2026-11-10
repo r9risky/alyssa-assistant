@@ -469,8 +469,27 @@ def run_assistant_loop(bridge=None):
     speculative_engine = brain.get_speculative_engine()
     transcribe.register_partial_transcript_hook(speculative_engine.on_partial_transcript)
 
-    if not run_preflight_checks(bridge):
-        return  # message already shown; in GUI mode the window stays open
+    text_queue = getattr(bridge, "text_queue", None) if bridge is not None else None
+
+    # In GUI mode, if preflight checks fail (e.g. fresh install without API key),
+    # keep the assistant thread alive in standby instead of dying silently.
+    while not run_preflight_checks(bridge):
+        if bridge is None:
+            return  # In console mode, preflight checks already exited or reported
+        try:
+            typed_text = text_queue.get(timeout=2.0) if text_queue is not None else None
+        except queue.Empty:
+            typed_text = None
+
+        if typed_text:
+            text = typed_text.strip()
+            if text:
+                msg = (
+                    "I need an API key to think! Please right-click me, open Settings, "
+                    "and enter your Gemini (or OpenAI / Anthropic) API key."
+                )
+                print(f"[preflight] User typed {text!r} but LLM is not configured yet.")
+                speak(msg, bridge)
 
     if getattr(config, "ENABLE_BACKGROUND_WATCHER", True):
         threading.Thread(target=run_watcher_loop, args=(bridge,), daemon=True).start()
@@ -480,8 +499,6 @@ def run_assistant_loop(bridge=None):
     creator = getattr(config, "CREATOR_NAME", "")
     if creator:
         print(f"Made by {creator}.")
-    # Via speak() so GUI fills the bubble and plays TTS, mouth animation via bridge.
-    text_queue = getattr(bridge, "text_queue", None) if bridge is not None else None
 
     # Barge-in audio from interrupting the previous reply; consumed below so
     # you don't repeat yourself. None on ordinary passes.

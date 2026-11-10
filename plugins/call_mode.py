@@ -10,10 +10,9 @@ Inspired by Capri Desktop's `CallMode.cs`:
 from __future__ import annotations
 
 import random
+import threading
 import time
 from typing import Optional
-
-from PySide6.QtCore import QTimer
 
 from call_ears import get_call_session, parse_call_friend_intent
 import config
@@ -75,11 +74,15 @@ def join_call(
         spoken_text = f"{base_intro} What game or music are we putting on today?"
 
     # Queue message to call
-    session.post_caption("Alyssa", spoken_text)
+    asst_name = getattr(config, "ASSISTANT_NAME", "Alyssa")
+    session.post_caption(asst_name, spoken_text)
 
     try:
         import voice_playback
-        QTimer.singleShot(500, lambda: voice_playback.speak(spoken_text))
+        def _speak_delayed():
+            time.sleep(0.5)
+            voice_playback.speak(spoken_text)
+        threading.Thread(target=_speak_delayed, daemon=True).start()
     except Exception:
         pass
 
@@ -119,7 +122,7 @@ def relay_to_call(args: Optional[dict] = None, message: str = "", **kwargs) -> s
     if not cleaned:
         return "No message specified."
 
-    session.post_caption("Alyssa", cleaned)
+    session.post_caption(getattr(config, "ASSISTANT_NAME", "Alyssa"), cleaned)
     try:
         import voice_playback
         voice_playback.speak(cleaned)

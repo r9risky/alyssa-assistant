@@ -716,8 +716,9 @@ def _transcribe_impl_locked(audio, initial_prompt: str | None = None) -> str:
             continue
         if segment.no_speech_prob > 0.6:
             continue  # model itself thinks this was probably non-speech
-        if segment.avg_logprob < -1.0:
-            continue  # very low confidence in what it transcribed
+        logprob_thresh = float(getattr(config, "WHISPER_LOG_PROB_THRESHOLD", -1.5))
+        if segment.avg_logprob < logprob_thresh:
+            continue  # low confidence in what it transcribed
         kept.append(text)
 
     result = " ".join(kept).strip()

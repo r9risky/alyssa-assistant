@@ -310,3 +310,31 @@ class TestMidJobAsidesAndChaos:
         assert hud._minimized is True
         hud.toggle_minimized()
         assert hud._minimized is False
+
+    def test_capri_alias_recognition(self):
+        import nameutil
+        assert nameutil.contains_name("Hey Capri, join the Discord call")
+        assert nameutil.contains_name("Capri what is the weather")
+        span = nameutil.find_name_span("Hey Capri, what's up")
+        assert span is not None
+        assert nameutil.strip_name_at_span("Hey Capri, what's up", span) == "what's up"
+
+    def test_pre_model_stop_and_call_triggers(self):
+        import brain.dialogue as dialogue
+        res_stop = dialogue._handle_pre_model_intent("stop")
+        assert res_stop == "Got it, stopping."
+        res_cancel = dialogue._handle_pre_model_intent("cancel it")
+        assert res_cancel == "Got it, stopping."
+
+        res_leave = dialogue._handle_pre_model_intent("hang up")
+        assert "call" in res_leave.lower()
+
+        res_join = dialogue._handle_pre_model_intent("join Discord call tell them I will be on in 15")
+        assert "discord" in res_join.lower()
+
+    def test_call_panel_signals_thread_safe(self):
+        from overlay.call_panel import CallPanelWidget, _CallPanelSignals
+        panel = CallPanelWidget(None, {})
+        assert hasattr(panel, "_bus")
+        assert isinstance(panel._bus, _CallPanelSignals)
+
