@@ -474,6 +474,24 @@ def _play_file_to_virtual_mic(path: str, stop_event=None):
                 pcm_bytes = None
 
         if pcm_bytes is None:
+            # Universal decoding via Pygame Sound (handles mp3, wav, ogg)
+            try:
+                import pygame
+                snd = pygame.mixer.Sound(path)
+                arr = pygame.sndarray.array(snd)
+                if arr is not None and arr.size > 0:
+                    init_res = pygame.mixer.get_init()
+                    if init_res:
+                        sr = init_res[0]
+                    if arr.ndim > 1:
+                        ch = arr.shape[1]
+                    else:
+                        ch = 1
+                    pcm_bytes = arr.astype(np.int16).tobytes()
+            except Exception:
+                pcm_bytes = None
+
+        if pcm_bytes is None:
             # Fallback or MP3 decoding via PyAV
             try:
                 import av

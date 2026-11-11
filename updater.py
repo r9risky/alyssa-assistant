@@ -28,7 +28,7 @@ RELEASE_REPOSITORY = "alyssa-assistant"
 LATEST_RELEASE_URL = (
     f"https://api.github.com/repos/{RELEASE_OWNER}/{RELEASE_REPOSITORY}/releases/latest"
 )
-CURRENT_VERSION = "v1.5.5"
+CURRENT_VERSION = "v1.5.6"
 TRANSACTION_DIR = ".alyssa-update-transaction"
 COMMITTED_TRANSACTION_DIR = ".alyssa-update-committed"
 MAX_CHECKSUM_BYTES = 1024 * 1024

@@ -20,11 +20,11 @@ def wsola_time_stretch(x: np.ndarray, stretch: float, sample_rate: int = 24000) 
     if abs(stretch - 1.0) < 1e-3 or x.size < 64:
         return x
 
-    win_size = int(round(sample_rate * 0.025))  # ~25ms analysis window (600 samples @ 24kHz)
+    win_size = int(round(sample_rate * 0.030))  # 30ms analysis window
     win_size = max(64, min(win_size - (win_size % 4), max(64, x.size // 2)))
     hop_out = max(16, win_size // 4)  # 75% overlap for ripple-free synthesis
     overlap_len = win_size - hop_out
-    tolerance = hop_out
+    tolerance = max(16, int(round(sample_rate * 0.015)))  # ~15ms max pitch period search
 
     n_in = x.size
     n_out = int(round(n_in * stretch))
@@ -33,7 +33,7 @@ def wsola_time_stretch(x: np.ndarray, stretch: float, sample_rate: int = 24000) 
         return np.interp(idx, np.arange(n_in, dtype=np.float32), x).astype(np.float32)
 
     hann = np.hanning(win_size).astype(np.float32)
-    hann_overlap = hann[:overlap_len]
+    hann_overlap = np.hanning(overlap_len).astype(np.float32)
     hop_in = hop_out / stretch
 
     out = np.zeros(n_out + win_size + hop_out, dtype=np.float32)
@@ -44,31 +44,33 @@ def wsola_time_stretch(x: np.ndarray, stretch: float, sample_rate: int = 24000) 
 
     curr_out = hop_out
     last_in = 0
+    step_idx = 1
 
     while curr_out < n_out:
-        target_in = int(round(last_in + hop_in))
+        # True nominal input progression preventing cumulative search drift
+        target_in = int(round(step_idx * hop_in))
         search_start = max(0, target_in - tolerance)
         search_end = min(n_in - win_size, target_in + tolerance)
 
-        if search_start >= search_end:
-            best_in = max(0, min(n_in - win_size, target_in))
+        # Reference template: natural continuation of previous input segment
+        ref_pos = min(n_in - overlap_len, max(0, last_in + hop_out))
+        ref_seg = x[ref_pos : ref_pos + overlap_len] * hann_overlap
+        ref_norm = float(np.linalg.norm(ref_seg))
+
+        if search_start < search_end and ref_norm > 1e-4:
+            cand_len = (search_end - search_start) + overlap_len
+            candidates = x[search_start : search_start + cand_len]
+            corr = np.correlate(candidates, ref_seg, mode="valid")
+            best_in = search_start + int(np.argmax(corr))
         else:
-            ref_overlap = out[curr_out : curr_out + overlap_len]
-            ref_seg = ref_overlap * hann_overlap
-            ref_norm = float(np.linalg.norm(ref_seg))
-            if ref_norm > 1e-4:
-                cand_len = (search_end - search_start) + overlap_len
-                candidates = x[search_start : search_start + cand_len]
-                corr = np.correlate(candidates, ref_seg, mode="valid")
-                best_in = search_start + int(np.argmax(corr))
-            else:
-                best_in = max(0, min(n_in - win_size, target_in))
+            best_in = max(0, min(n_in - win_size, target_in))
 
         chunk = x[best_in : best_in + win_size] * hann
         out[curr_out : curr_out + win_size] += chunk
         weight[curr_out : curr_out + win_size] += hann
         last_in = best_in
         curr_out += hop_out
+        step_idx += 1
 
     mask = weight[:n_out] > 1e-4
     result = out[:n_out].copy()
@@ -217,34 +219,35 @@ def synthesize_typing_blip(
 
 def process_audio_file(input_path: str) -> str | None:
     """Decode input_path, apply voice DSP effects (pitch, speed, robot, glitch, layers),
-    and write to a temporary WAV file. Returns the path to the temp WAV, or None if DSP is disabled or fails."""
+    and write to a temporary WAV file. Returns the path to the temp WAV, or None if DSP is disabled,
+    neutral, or fails."""
     if not getattr(config, "VOICE_DSP_ENABLED", False):
         return None
     if not input_path or not os.path.isfile(input_path):
+        return None
+
+    pitch = float(getattr(config, "VOICE_PITCH_SEMITONES", 0.0) or 0.0)
+    speed = float(getattr(config, "VOICE_SPEED_FACTOR", 1.0) or 1.0)
+    layers = bool(getattr(config, "VOICE_LAYERS_ENABLED", False))
+    robot = int(getattr(config, "VOICE_ROBOT_AMOUNT", 0) or 0)
+    glitch = int(getattr(config, "VOICE_GLITCH_AMOUNT", 0) or 0)
+
+    # If all DSP settings are at neutral defaults, bypass processing cleanly
+    if (
+        abs(pitch) < 0.05
+        and abs(speed - 1.0) < 0.02
+        and not layers
+        and robot <= 0
+        and glitch <= 0
+    ):
         return None
 
     try:
         sample_rate = 24000
         samples = None
 
-        # 1. Try decoding via PyAV first (handles mp3, wav, ogg, etc.)
-        try:
-            import av
-            container = av.open(input_path)
-            resampler = av.AudioResampler(format="s16", layout="mono", rate=sample_rate)
-            frames = []
-            for frame in container.decode(audio=0):
-                for r in resampler.resample(frame):
-                    frames.append(r.to_ndarray().flatten())
-            container.close()
-            if frames:
-                raw_int16 = np.concatenate(frames)
-                samples = raw_int16.astype(np.float32) / 32768.0
-        except Exception:
-            samples = None
-
-        # 2. Fallback for .wav if PyAV is unavailable or errored
-        if samples is None and input_path.lower().endswith(".wav"):
+        # 1. Native wave module first for uncompressed .wav (preserves exact 24kHz/native rate)
+        if input_path.lower().endswith(".wav"):
             try:
                 with wave.open(input_path, "rb") as wf:
                     sr = wf.getframerate()
@@ -260,8 +263,77 @@ def process_audio_file(input_path: str) -> str | None:
             except Exception:
                 samples = None
 
+        # 2. Try decoding via PyAV if available (fast C-API, resamples directly to 24kHz)
+        if samples is None:
+            try:
+                import av
+                container = av.open(input_path)
+                resampler = av.AudioResampler(format="s16", layout="mono", rate=24000)
+                frames = []
+                for frame in container.decode(audio=0):
+                    for r in resampler.resample(frame):
+                        frames.append(r.to_ndarray().flatten())
+                container.close()
+                if frames:
+                    raw_int16 = np.concatenate(frames)
+                    samples = raw_int16.astype(np.float32) / 32768.0
+                    sample_rate = 24000
+            except Exception:
+                samples = None
+
+        # 3. Universal Pygame Sound decoder (handles mp3, wav, ogg via SDL, always bundled)
+        if samples is None:
+            try:
+                import pygame
+                if not pygame.mixer.get_init():
+                    try:
+                        import voice_playback
+                        voice_playback._ensure_mixer()
+                    except Exception:
+                        pygame.mixer.init(frequency=24000, size=-16, channels=1)
+                snd = pygame.mixer.Sound(input_path)
+                arr = pygame.sndarray.array(snd)
+                if arr is not None and arr.size > 0:
+                    init_res = pygame.mixer.get_init()
+                    detected_sr = init_res[0] if init_res else 24000
+                    if arr.ndim > 1:
+                        arr = arr.mean(axis=1)
+                    samples = arr.astype(np.float32) / 32768.0
+                    sample_rate = detected_sr
+            except Exception:
+                samples = None
+
+        # 4. ffmpeg CLI fallback if present
+        if samples is None:
+            try:
+                import shutil
+                import subprocess
+                if shutil.which("ffmpeg"):
+                    proc = subprocess.run(
+                        ["ffmpeg", "-v", "quiet", "-i", input_path, "-f", "s16le", "-ac", "1", "-ar", "24000", "pipe:1"],
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.DEVNULL,
+                        check=False,
+                        timeout=5,
+                    )
+                    if proc.returncode == 0 and proc.stdout:
+                        arr = np.frombuffer(proc.stdout, dtype=np.int16)
+                        if arr.size > 0:
+                            samples = arr.astype(np.float32) / 32768.0
+                            sample_rate = 24000
+            except Exception:
+                pass
+
         if samples is None or samples.size == 0:
             return None
+
+        # Normalize sample rate to 24000 Hz if needed
+        if sample_rate != 24000:
+            target_n = int(round(samples.size * 24000.0 / float(sample_rate)))
+            if target_n > 0:
+                idx = np.linspace(0, samples.size - 1, target_n, dtype=np.float32)
+                samples = np.interp(idx, np.arange(samples.size, dtype=np.float32), samples).astype(np.float32)
+                sample_rate = 24000
 
         # Process through DSP chain
         processed = process_samples(samples, sample_rate=sample_rate)

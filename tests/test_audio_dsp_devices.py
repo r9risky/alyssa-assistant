@@ -44,20 +44,38 @@ def dummy_wav():
 
 @pytest.fixture
 def dummy_mp3(dummy_wav):
-    """Create a temporary MP3 file encoded from dummy_wav via PyAV."""
-    import av
+    """Create a temporary MP3 file encoded from dummy_wav via PyAV or ffmpeg."""
     fd, path = tempfile.mkstemp(suffix=".mp3")
     os.close(fd)
-    inp = av.open(dummy_wav)
-    out = av.open(path, "w")
-    stream = out.add_stream("mp3", rate=24000)
-    for frame in inp.decode(audio=0):
-        for packet in stream.encode(frame):
+    encoded = False
+    try:
+        import av
+        inp = av.open(dummy_wav)
+        out = av.open(path, "w")
+        stream = out.add_stream("mp3", rate=24000)
+        for frame in inp.decode(audio=0):
+            for packet in stream.encode(frame):
+                out.mux(packet)
+        for packet in stream.encode():
             out.mux(packet)
-    for packet in stream.encode():
-        out.mux(packet)
-    inp.close()
-    out.close()
+        inp.close()
+        out.close()
+        encoded = True
+    except Exception:
+        encoded = False
+
+    if not encoded:
+        import shutil
+        import subprocess
+        if shutil.which("ffmpeg"):
+            subprocess.run(
+                ["ffmpeg", "-y", "-i", dummy_wav, "-b:a", "128k", path],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                check=False,
+            )
+            encoded = True
+
     yield path
     if os.path.exists(path):
         os.remove(path)
@@ -66,6 +84,16 @@ def dummy_mp3(dummy_wav):
 class TestVoiceDSPProcessing:
     def test_process_audio_file_disabled_by_default(self, dummy_wav):
         with patch.object(config, "VOICE_DSP_ENABLED", False):
+            out_path = voice_dsp.process_audio_file(dummy_wav)
+            assert out_path is None
+
+    def test_process_audio_file_neutral_bypass(self, dummy_wav):
+        with patch.object(config, "VOICE_DSP_ENABLED", True), \
+             patch.object(config, "VOICE_PITCH_SEMITONES", 0.0), \
+             patch.object(config, "VOICE_SPEED_FACTOR", 1.0), \
+             patch.object(config, "VOICE_ROBOT_AMOUNT", 0), \
+             patch.object(config, "VOICE_GLITCH_AMOUNT", 0), \
+             patch.object(config, "VOICE_LAYERS_ENABLED", False):
             out_path = voice_dsp.process_audio_file(dummy_wav)
             assert out_path is None
 
@@ -100,6 +128,25 @@ class TestVoiceDSPProcessing:
                 assert wf.getframerate() == 24000
                 assert wf.getnframes() > 1000
             os.remove(out_path)
+
+    def test_process_audio_file_mp3_without_av(self, dummy_mp3):
+        """Verify that MP3 decoding and DSP works 100% reliably even if PyAV is not installed."""
+        import builtins
+        real_import = builtins.__import__
+
+        def fake_import(name, *args, **kwargs):
+            if name == "av":
+                raise ImportError("No module named 'av'")
+            return real_import(name, *args, **kwargs)
+
+        with patch.object(builtins, "__import__", side_effect=fake_import):
+            with patch.object(config, "VOICE_DSP_ENABLED", True), \
+                 patch.object(config, "VOICE_PITCH_SEMITONES", 1.0):
+                out_path = voice_dsp.process_audio_file(dummy_mp3)
+                assert out_path is not None
+                assert os.path.isfile(out_path)
+                assert out_path.endswith(".wav")
+                os.remove(out_path)
 
     def test_process_audio_file_nonexistent(self):
         with patch.object(config, "VOICE_DSP_ENABLED", True):
