@@ -41,7 +41,8 @@ def _configured_output_device():
     except Exception:
         devices = []
     for index, device in enumerate(devices):
-        if device.get("max_output_channels", 0) > 0 and needle in device.get("name", "").lower():
+        name = device.get("name", "")
+        if device.get("max_output_channels", 0) > 0 and (needle in name.lower() or name.lower() in needle):
             return index
     return None  # falls back to default rather than failing playback
 
@@ -90,7 +91,8 @@ def _configured_virtual_mic_device():
     except Exception:
         devices = []
     for index, device in enumerate(devices):
-        if device.get("max_output_channels", 0) > 0 and needle in device.get("name", "").lower():
+        name = device.get("name", "")
+        if device.get("max_output_channels", 0) > 0 and (needle in name.lower() or name.lower() in needle):
             return index
     return None
 

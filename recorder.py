@@ -182,7 +182,17 @@ def _find_configured_device(needle):
             )
             return index
         except Exception:
-            continue
+            pass
+        # Native hardware sample rate fallback (e.g. 48000 or 44100 on WASAPI / Bluetooth)
+        def_sr = int(round(float(device.get("default_samplerate", 0))))
+        if def_sr and def_sr != config.SAMPLE_RATE:
+            try:
+                sd.check_input_settings(
+                    device=index, channels=min(2, max_ch), dtype="int16", samplerate=def_sr
+                )
+                return index
+            except Exception:
+                continue
     return fallback
 
 
@@ -251,9 +261,44 @@ class _DownmixingStream:
     def read(self, frames):
         data, overflow = self._raw.read(frames)
         if hasattr(data, "ndim") and data.ndim > 1 and data.shape[1] > 1:
-            # Average in a wider type — summing int16 channels in int16 wraps on loud speech.
             data = data.astype(np.int32).mean(axis=1).astype(data.dtype)
         return data, overflow
+
+    def __enter__(self):
+        self._raw.__enter__()
+        return self
+
+    def __exit__(self, *args):
+        return self._raw.__exit__(*args)
+
+    def __getattr__(self, name):
+        return getattr(self._raw, name)
+
+
+class _ResamplingStream:
+    """Wraps an InputStream running at a native sample rate (e.g. 44100 or 48000 Hz)
+    and downsamples/downmixes on read to 16000 Hz mono int16 PCM."""
+
+    def __init__(self, raw_stream, in_rate: int, out_rate: int = 16000):
+        self._raw = raw_stream
+        self._in_rate = int(in_rate)
+        self._out_rate = int(out_rate)
+
+    def read(self, frames):
+        frames_in = max(1, int(round(frames * self._in_rate / self._out_rate)))
+        data, overflow = self._raw.read(frames_in)
+        if hasattr(data, "ndim") and data.ndim > 1 and data.shape[1] > 1:
+            data = data.astype(np.int32).mean(axis=1).astype(data.dtype)
+        data = np.asarray(data).flatten()
+        if data.size == 0:
+            return np.zeros(frames, dtype=np.int16), overflow
+        if self._in_rate == self._out_rate:
+            return data[:frames], overflow
+        idx = np.linspace(0, data.size - 1, frames, dtype=np.float32)
+        resampled = np.interp(
+            idx, np.arange(data.size, dtype=np.float32), data.astype(np.float32)
+        ).astype(np.int16)
+        return resampled, overflow
 
     def __enter__(self):
         self._raw.__enter__()
@@ -269,41 +314,80 @@ class _DownmixingStream:
 @contextlib.contextmanager
 def _open_stream(**kwargs):
     """sd.InputStream(**kwargs), tracked so _reap_and_recover knows if any stream is live.
-    Automatically falls back to stereo (downmixed to mono) if 1-channel input is rejected.
+    Automatically falls back to stereo/multichannel (downmixed to mono) and native sample rates
+    (resampled to 16kHz) if requested settings are rejected by the hardware.
     """
     global _active_streams
     kwargs.setdefault("device", _configured_input_device())
-    orig_channels = kwargs.get("channels", 1)
+    req_rate = kwargs.get("samplerate", config.SAMPLE_RATE)
+    req_channels = kwargs.get("channels", 1)
+
+    dev_info = {}
+    try:
+        target_dev = kwargs.get("device")
+        raw_info = (
+            sd.query_devices(target_dev)
+            if target_dev is not None
+            else sd.query_devices(kind="input")
+        )
+        if isinstance(raw_info, dict):
+            dev_info = raw_info
+        elif isinstance(raw_info, list) and isinstance(target_dev, int) and 0 <= target_dev < len(raw_info) and isinstance(raw_info[target_dev], dict):
+            dev_info = raw_info[target_dev]
+    except Exception:
+        pass
+
+    native_rate = (
+        int(round(float(dev_info.get("default_samplerate", req_rate))))
+        if dev_info
+        else req_rate
+    )
+    native_channels = (
+        int(dev_info.get("max_input_channels", req_channels))
+        if dev_info
+        else req_channels
+    )
+
     stream = None
     try:
         stream = sd.InputStream(**kwargs)
-    except Exception as e:
-        if orig_channels == 1:
+    except Exception as e_initial:
+        last_exc = e_initial
+        # Try stereo @ requested sample rate
+        if req_channels == 1:
             try:
                 stereo_kwargs = dict(kwargs)
                 stereo_kwargs["channels"] = 2
                 raw = sd.InputStream(**stereo_kwargs)
                 stream = _DownmixingStream(raw)
-            except Exception:
+            except Exception as e:
+                last_exc = e
+
+        # Try multi-channel @ requested sample rate
+        if stream is None and native_channels > 2:
+            try:
+                multi_kwargs = dict(kwargs)
+                multi_kwargs["channels"] = native_channels
+                raw = sd.InputStream(**multi_kwargs)
+                stream = _DownmixingStream(raw)
+            except Exception as e:
+                last_exc = e
+
+        # Try native hardware sample rate (e.g. 48000 or 44100 Hz on WASAPI / Bluetooth)
+        if stream is None and native_rate != req_rate:
+            for ch in [req_channels, min(2, max(1, native_channels)), native_channels]:
                 try:
-                    target_dev = kwargs.get("device")
-                    dev_info = (
-                        sd.query_devices(target_dev)
-                        if target_dev is not None
-                        else sd.query_devices(kind="input")
-                    )
-                    native_channels = int(dev_info.get("max_input_channels", 0))
-                    if native_channels > 2:
-                        multi_kwargs = dict(kwargs)
-                        multi_kwargs["channels"] = native_channels
-                        raw = sd.InputStream(**multi_kwargs)
-                        stream = _DownmixingStream(raw)
-                    else:
-                        raise e
-                except Exception:
-                    raise e
-        else:
-            raise e
+                    resamp_kwargs = dict(kwargs)
+                    resamp_kwargs["samplerate"] = native_rate
+                    resamp_kwargs["channels"] = ch
+                    raw = sd.InputStream(**resamp_kwargs)
+                    stream = _ResamplingStream(raw, in_rate=native_rate, out_rate=req_rate)
+                    break
+                except Exception as e:
+                    last_exc = e
+
+        if stream is None:
+            raise last_exc
 
     with stream as s:
         with _active_streams_lock:
@@ -765,5 +849,6 @@ def record_command(
 
     audio, error = result_q.get()
     if error is not None:
-        raise error
+        print(f"(Microphone recording encountered error: {error}, retrying...)")
+        return None
     return audio

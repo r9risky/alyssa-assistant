@@ -191,6 +191,47 @@ class TestMicrophoneMatchingAndFallback:
                 idx = recorder._find_configured_device("condenser")
                 assert idx == 0
 
+    def test_find_configured_device_native_samplerate_fallback(self):
+        fake_devices = [
+            {"name": "Bluetooth Hands-Free Mic", "max_input_channels": 1, "default_samplerate": 48000.0},
+        ]
+        def fake_check(device, channels, dtype, samplerate):
+            if samplerate != 48000:
+                raise ValueError("Only 48kHz supported natively")
+            return True
+
+        with patch("recorder.sd.query_devices", return_value=fake_devices):
+            with patch("recorder.sd.check_input_settings", side_effect=fake_check):
+                idx = recorder._find_configured_device("bluetooth")
+                assert idx == 0
+
+    def test_resampling_stream_downsampling(self):
+        class MockRaw:
+            def __init__(self):
+                self.sr = 48000
+            def read(self, frames):
+                data = np.full((frames, 2), 1000, dtype=np.int16)
+                return data, False
+            def __enter__(self): return self
+            def __exit__(self, *args): pass
+
+        stream = recorder._ResamplingStream(MockRaw(), in_rate=48000, out_rate=16000)
+        with stream as s:
+            data, overflow = s.read(512)
+            assert len(data) == 512
+            assert data.dtype == np.int16
+            assert not overflow
+
+    def test_record_command_graceful_recovery_on_error(self):
+        """Worker thread error must be caught and return None without crashing."""
+        with patch("recorder._talk_request.is_set", return_value=False), \
+             patch("recorder._record_command_blocking") as mock_blocking:
+            def fake_blocking(result_q, *args, **kwargs):
+                result_q.put((None, RuntimeError("Device disconnected")))
+            mock_blocking.side_effect = fake_blocking
+            res = recorder.record_command()
+            assert res is None
+
     def test_configured_input_device_fallback_on_missing(self):
         """When configured mic is not plugged in, must fall back to None (system default) instead of crashing."""
         with patch.object(config, "MICROPHONE_DEVICE", "Missing USB Headset Mic"), \
