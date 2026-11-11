@@ -513,13 +513,57 @@ def _play_file_to_virtual_mic(path: str, stop_event=None):
             return
 
         vmic_vol = float(getattr(config, "CALL_VIRTUAL_MIC_VOLUME", 1.0))
-        vmic_stream = sd.RawOutputStream(
-            samplerate=sr,
-            channels=ch,
-            dtype="int16",
-            device=vmic_device,
-        )
-        vmic_stream.start()
+        target_sr = sr
+        if sd is not None:
+            try:
+                dev_info = sd.query_devices(vmic_device, "output")
+                native_sr = int(dev_info.get("default_samplerate", 0) or 0)
+                if native_sr > 0 and native_sr != sr:
+                    target_sr = native_sr
+            except Exception:
+                target_sr = sr
+
+        if target_sr != sr and pcm_bytes:
+            import numpy as np
+            raw_arr = np.frombuffer(pcm_bytes, dtype=np.int16).astype(np.float32)
+            if ch > 1:
+                raw_arr = raw_arr.reshape(-1, ch)
+                target_len = int(round(len(raw_arr) * target_sr / float(sr)))
+                cols = []
+                for c in range(ch):
+                    idx = np.linspace(0, len(raw_arr) - 1, target_len, dtype=np.float32)
+                    cols.append(np.interp(idx, np.arange(len(raw_arr), dtype=np.float32), raw_arr[:, c]))
+                pcm_bytes = np.column_stack(cols).astype(np.int16).tobytes()
+            else:
+                target_len = int(round(len(raw_arr) * target_sr / float(sr)))
+                idx = np.linspace(0, len(raw_arr) - 1, target_len, dtype=np.float32)
+                pcm_bytes = np.interp(idx, np.arange(len(raw_arr), dtype=np.float32), raw_arr).astype(np.int16).tobytes()
+            sr = target_sr
+
+        vmic_stream = None
+        for try_rate in (sr, 48000, 44100):
+            try:
+                if try_rate != sr and pcm_bytes:
+                    import numpy as np
+                    raw_arr = np.frombuffer(pcm_bytes, dtype=np.int16).astype(np.float32)
+                    target_len = int(round(len(raw_arr) * try_rate / float(sr)))
+                    idx = np.linspace(0, len(raw_arr) - 1, target_len, dtype=np.float32)
+                    pcm_bytes = np.interp(idx, np.arange(len(raw_arr), dtype=np.float32), raw_arr).astype(np.int16).tobytes()
+                    sr = try_rate
+                vmic_stream = sd.RawOutputStream(
+                    samplerate=sr,
+                    channels=ch,
+                    dtype="int16",
+                    device=vmic_device,
+                )
+                vmic_stream.start()
+                break
+            except Exception:
+                vmic_stream = None
+
+        if vmic_stream is None:
+            return
+
         try:
             chunk_size = sr * ch * 2 // 10  # ~100ms
             offset = 0
@@ -596,7 +640,16 @@ def _play(path: str, stop_event=None) -> bool:
                 try:
                     os.remove(dsp_temp)
                 except OSError:
-                    pass
+                    def _deferred_unlink(p):
+                        for _ in range(8):
+                            time.sleep(0.25)
+                            try:
+                                if os.path.exists(p):
+                                    os.remove(p)
+                                break
+                            except OSError:
+                                pass
+                    threading.Thread(target=_deferred_unlink, args=(dsp_temp,), daemon=True).start()
 
 
 def _speak_one(text: str, on_playback_start=None, on_playback_end=None, stop_event=None) -> bool:

@@ -120,6 +120,15 @@ def _call_gemini(messages, force_tools: bool = False, on_text_delta=None, cancel
         timeout=(10, 60),
         stream=True,
     )
+    if response.status_code == 400 and "thinkingConfig" in body.get("generationConfig", {}):
+        body["generationConfig"].pop("thinkingConfig", None)
+        response = _HTTP_SESSION.post(
+            url,
+            params={"key": config.GEMINI_API_KEY, "alt": "sse"},
+            json=body,
+            timeout=(10, 60),
+            stream=True,
+        )
     response.raise_for_status()
     text_chunks = []
     tool_calls = []
@@ -203,6 +212,11 @@ def _describe_image_gemini(image_bytes: bytes, mime_type: str, prompt: str) -> s
             response = _HTTP_SESSION.post(
                 url, params={"key": config.GEMINI_API_KEY}, json=body, timeout=60
             )
+            if response.status_code == 400 and "thinkingConfig" in body.get("generationConfig", {}):
+                body["generationConfig"].pop("thinkingConfig", None)
+                response = _HTTP_SESSION.post(
+                    url, params={"key": config.GEMINI_API_KEY}, json=body, timeout=60
+                )
             if response.status_code != 503 or attempt == 2:
                 response.raise_for_status()
                 break

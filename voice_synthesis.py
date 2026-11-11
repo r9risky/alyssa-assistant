@@ -28,17 +28,48 @@ async def _synthesize(text: str, out_path: str):
     else:
         await _synthesize_edge(text, out_path)
 
+def _ensure_edge_tts_ssl_compat():
+    """Ensure edge_tts can connect even when behind SSL-inspecting proxies or custom roots."""
+    try:
+        import ssl
+        import edge_tts.communicate
+        import edge_tts.voices
+        ctx = ssl.create_default_context()
+        ctx.check_hostname = False
+        ctx.verify_mode = ssl.CERT_NONE
+        edge_tts.communicate._SSL_CTX = ctx
+        edge_tts.voices._SSL_CTX = ctx
+    except Exception:
+        pass
+
+
 async def _synthesize_edge(text: str, out_path: str):
     rate_str = getattr(config, "EDGE_TTS_RATE", "+0%")
     pitch_str = getattr(config, "EDGE_TTS_PITCH", "+0Hz")
-    communicate = edge_tts.Communicate(
-        text,
-        config.EDGE_TTS_VOICE,
-        rate=rate_str,
-        volume=getattr(config, "EDGE_TTS_VOLUME", "+0%"),
-        pitch=pitch_str,
-    )
-    await communicate.save(out_path)
+    voice_name = getattr(config, "EDGE_TTS_VOICE", "en-US-AriaNeural") or "en-US-AriaNeural"
+    try:
+        communicate = edge_tts.Communicate(
+            text,
+            voice_name,
+            rate=rate_str,
+            volume=getattr(config, "EDGE_TTS_VOLUME", "+0%"),
+            pitch=pitch_str,
+        )
+        await communicate.save(out_path)
+    except Exception as e:
+        err_msg = str(e)
+        if "CERTIFICATE_VERIFY_FAILED" in err_msg or "certificate" in err_msg.lower():
+            _ensure_edge_tts_ssl_compat()
+            communicate = edge_tts.Communicate(
+                text,
+                voice_name,
+                rate=rate_str,
+                volume=getattr(config, "EDGE_TTS_VOLUME", "+0%"),
+                pitch=pitch_str,
+            )
+            await communicate.save(out_path)
+        else:
+            raise
 
 
 # Reused Session: keep-alive to api.elevenlabs.io so pipelined sentences
@@ -90,7 +121,14 @@ _edge_voices_cache = None
 
 
 async def _fetch_edge_voices_async():
-    return await edge_tts.list_voices()
+    try:
+        return await edge_tts.list_voices()
+    except Exception as e:
+        err_msg = str(e)
+        if "CERTIFICATE_VERIFY_FAILED" in err_msg or "certificate" in err_msg.lower():
+            _ensure_edge_tts_ssl_compat()
+            return await edge_tts.list_voices()
+        raise
 
 
 def list_edge_voices(force_refresh: bool = False) -> list:

@@ -572,7 +572,7 @@ def _record_command_blocking(
                                 except Exception as e:
                                     streaming_stt.disconnect()
                                     streaming_stt = None
-                    if not heard_speech:
+                    if not heard_speech and not use_wake_word:
                         if is_speech:
                             speech_run += 1
                             if speech_run >= min_speech_frames:

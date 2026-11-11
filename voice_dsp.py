@@ -195,10 +195,26 @@ def process_pcm16_mono(pcm_bytes: bytes, sample_rate: int = 24000) -> bytes:
     """Process 16-bit signed mono PCM bytes through the Voice DSP chain."""
     if not pcm_bytes or not getattr(config, "VOICE_DSP_ENABLED", False):
         return pcm_bytes
+    pitch = float(getattr(config, "VOICE_PITCH_SEMITONES", 0.0) or 0.0)
+    speed = float(getattr(config, "VOICE_SPEED_FACTOR", 1.0) or 1.0)
+    layers = bool(getattr(config, "VOICE_LAYERS_ENABLED", False))
+    robot = int(getattr(config, "VOICE_ROBOT_AMOUNT", 0) or 0)
+    glitch = int(getattr(config, "VOICE_GLITCH_AMOUNT", 0) or 0)
+    if (
+        abs(pitch) < 0.05
+        and abs(speed - 1.0) < 0.02
+        and not layers
+        and robot <= 0
+        and glitch <= 0
+    ):
+        return pcm_bytes
+
     usable = len(pcm_bytes) - (len(pcm_bytes) % 2)
     if usable <= 0:
         return pcm_bytes
     samples = np.frombuffer(pcm_bytes[:usable], dtype=np.int16).astype(np.float32) / 32768.0
+    if samples.size < 512:
+        return pcm_bytes
     processed = process_samples(samples, sample_rate=sample_rate)
     int_samples = np.clip(processed * 32767.0, -32768, 32767).astype(np.int16)
     return int_samples.tobytes()
@@ -273,6 +289,8 @@ def process_audio_file(input_path: str) -> str | None:
                 for frame in container.decode(audio=0):
                     for r in resampler.resample(frame):
                         frames.append(r.to_ndarray().flatten())
+                for r in resampler.resample(None):
+                    frames.append(r.to_ndarray().flatten())
                 container.close()
                 if frames:
                     raw_int16 = np.concatenate(frames)

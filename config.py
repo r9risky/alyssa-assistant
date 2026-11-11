@@ -23,10 +23,10 @@ OLLAMA_URL = "http://localhost:11434/api/chat"
 OLLAMA_KEEP_ALIVE = "10m"
 
 GEMINI_API_KEY = _cred.get_secret('GEMINI_API_KEY')  # env always wins
-GEMINI_MODEL = 'gemini-3.5-flash-lite'
+GEMINI_MODEL = 'gemini-2.5-flash'
 
 OPENAI_API_KEY = _cred.get_secret('OPENAI_API_KEY')  # env always wins
-OPENAI_MODEL = 'gpt-5-mini'
+OPENAI_MODEL = 'gpt-4o-mini'
 OPENAI_BASE_URL = "https://api.openai.com/v1"
 
 SPOTIFY_CLIENT_ID = _cred.get_secret('SPOTIFY_CLIENT_ID')  # env always wins
@@ -34,7 +34,7 @@ SPOTIFY_CLIENT_SECRET = _cred.get_secret('SPOTIFY_CLIENT_SECRET')  # env always 
 YOUTUBE_API_KEY = _cred.get_secret('YOUTUBE_API_KEY')  # env always wins
 
 ANTHROPIC_API_KEY = _cred.get_secret('ANTHROPIC_API_KEY')  # env always wins
-ANTHROPIC_MODEL = 'claude-sonnet-5'
+ANTHROPIC_MODEL = 'claude-3-7-sonnet-latest'
 
 CUSTOM_API_KEY = _cred.get_secret('CUSTOM_API_KEY')  # env var is CUSTOM_LLM_API_KEY; always wins
 CUSTOM_BASE_URL = 'https://openrouter.ai/api/v1'
@@ -58,7 +58,7 @@ WHISPER_DEVICE = 'auto'
 WHISPER_COMPUTE_TYPE = 'auto'
 WHISPER_CPU_THREADS = 0
 WHISPER_NUM_WORKERS = 1
-WHISPER_LOG_PROB_THRESHOLD = -1.5
+WHISPER_LOG_PROB_THRESHOLD = -2.0
 WHISPER_INITIAL_PROMPT = (
     "Alyssa, open Chrome, open Notepad, open Spotify, open Windows Explorer, "
     "search for files, delete file, run command, remember that, type this, "
@@ -82,7 +82,7 @@ CALL_BARGE_IN_TOLERANCE_SECONDS = 1.0  # Yields only if someone speaks over her 
 CALL_AUTO_JOIN_ENABLED = True  # Automatically click Join Voice / Join Meeting
 
 SAMPLE_RATE = 16000
-SILENCE_SECONDS = 0.80
+SILENCE_SECONDS = 0.95
 MAX_RECORD_SECONDS = 15
 VAD_AGGRESSIVENESS = 2
 MIN_SPEECH_MS = 120
@@ -97,8 +97,8 @@ WAKE_CHIME_VOLUME = 0.5  # 0.0 to 1.0
 WAKE_WORD_MODEL_PATH = ''  # Optional path to custom ONNX wake word model
 
 ADAPTIVE_SILENCE_ENABLED = True
-ADAPTIVE_SILENCE_MIN_SECONDS = 0.45
-ADAPTIVE_SILENCE_MAX_SECONDS = 1.20
+ADAPTIVE_SILENCE_MIN_SECONDS = 0.75
+ADAPTIVE_SILENCE_MAX_SECONDS = 1.50
 ADAPTIVE_SILENCE_FAST_WPS = 3.3
 ADAPTIVE_SILENCE_SLOW_WPS = 1.3
 ADAPTIVE_SILENCE_EMA_ALPHA = 0.3
@@ -110,7 +110,7 @@ SPECULATIVE_TIMEOUT_SECONDS = 3.0
 SPEAK_RESPONSES = True
 TTS_PROVIDER = 'edge'  # "edge" or "elevenlabs"
 
-EDGE_TTS_VOICE = 'ja-JP-NanamiNeural'
+EDGE_TTS_VOICE = 'en-US-AriaNeural'
 EDGE_TTS_RATE = "+0%"
 EDGE_TTS_VOLUME = '+0%'
 EDGE_TTS_PITCH = "+0Hz"

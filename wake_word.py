@@ -58,13 +58,14 @@ class WakeWordDetector:
         self._idx_low = (self._freq_bins >= 300) & (self._freq_bins <= 2500)
         self._idx_high = (self._freq_bins >= 4000) & (self._freq_bins <= 7500)
 
+        self._speech_hangover = 0
         self._init_vad()
         self._init_onnx(model_path)
 
     def _init_vad(self):
         try:
-            from recorder import VoiceActivityDetector
-            self._vad = VoiceActivityDetector(
+            import recorder
+            self._vad = recorder.VoiceActivityDetector(
                 sample_rate=self.sample_rate,
                 aggressiveness=2,
                 threshold=float(getattr(config, "SILERO_VAD_THRESHOLD", 0.50)),
@@ -98,6 +99,7 @@ class WakeWordDetector:
         """Reset internal rolling audio buffer and state."""
         self._buffer.fill(0)
         self._last_trigger_time = 0.0
+        self._speech_hangover = 0
         if self._vad is not None:
             self._vad.reset()
 
@@ -115,8 +117,24 @@ class WakeWordDetector:
             self._buffer[:-chunk_len] = self._buffer[chunk_len:]
             self._buffer[-chunk_len:] = chunk
 
-        # Stage 1: Fast VAD Pre-filter. If not speech, skip feature computation.
-        if self._vad is not None and not self._vad.is_speech(chunk):
+        # Stage 1: Fast VAD Pre-filter with speech hangover.
+        # Checks VAD or RMS energy; hangover keeps evaluating through /s/ and trailing pauses.
+        is_speech = False
+        if self._vad is not None:
+            try:
+                is_speech = self._vad.is_speech(chunk)
+            except Exception:
+                is_speech = False
+        if not is_speech and chunk.size > 0:
+            rms = float(np.sqrt(np.mean((chunk.astype(np.float32) / 32768.0) ** 2)))
+            is_speech = rms >= 0.008
+
+        if is_speech:
+            self._speech_hangover = 15  # ~480ms hangover
+        elif self._speech_hangover > 0:
+            self._speech_hangover -= 1
+
+        if not is_speech and self._speech_hangover <= 0:
             return False, 0.0
 
         # Stage 2: Compute wake score
