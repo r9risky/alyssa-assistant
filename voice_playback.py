@@ -48,18 +48,29 @@ def _configured_output_device():
 
 def _configured_output_device_name():
     """Like _configured_output_device(), but the matched device's exact name
-    (pygame mixer takes a name, not a sounddevice index)."""
+    (pygame mixer takes an SDL2 name, not a sounddevice index). Checks
+    pygame._sdl2.audio first, falling back to sounddevice query_devices()."""
     configured = getattr(config, "AUDIO_OUTPUT_DEVICE", None)
     if not configured or str(configured).lower() == "default":
         return None
     needle = str(configured).lower()
     try:
+        import pygame._sdl2.audio as sdl2_audio
+        sdl_names = sdl2_audio.get_audio_device_names(False)
+        for name in sdl_names:
+            if needle in name.lower() or name.lower() in needle:
+                return name
+    except Exception:
+        pass
+
+    try:
         devices = sd.query_devices() if sd is not None else []
     except Exception:
         devices = []
     for device in devices:
-        if device.get("max_output_channels", 0) > 0 and needle in device.get("name", "").lower():
-            return device["name"]
+        name = device.get("name", "")
+        if device.get("max_output_channels", 0) > 0 and (needle in name.lower() or name.lower() in needle):
+            return name
     return None
 
 
@@ -445,36 +456,69 @@ def _play_file_to_virtual_mic(path: str, stop_event=None):
     if vmic_device is None:
         return
     try:
+        pcm_bytes = None
+        sr = 24000
+        ch = 1
+
         if path.lower().endswith(".wav"):
-            import wave
-            with wave.open(path, "rb") as wf:
-                sr = wf.getframerate()
-                ch = wf.getnchannels()
-                sw = wf.getsampwidth()
-                if sw == 2:
-                    vmic_vol = float(getattr(config, "CALL_VIRTUAL_MIC_VOLUME", 1.0))
-                    vmic_stream = sd.RawOutputStream(
-                        samplerate=sr,
-                        channels=ch,
-                        dtype="int16",
-                        device=vmic_device,
-                    )
-                    vmic_stream.start()
-                    try:
-                        chunk_size = sr // 10
-                        while not (stop_event and stop_event.is_set()):
-                            data = wf.readframes(chunk_size)
-                            if not data:
-                                break
-                            if abs(vmic_vol - 1.0) < 0.02:
-                                vmic_stream.write(data)
-                            else:
-                                import numpy as np
-                                arr = (np.frombuffer(data, dtype=np.int16).astype(np.float32) * vmic_vol)
-                                vmic_stream.write(np.clip(arr, -32768, 32767).astype(np.int16).tobytes())
-                    finally:
-                        vmic_stream.stop()
-                        vmic_stream.close()
+            try:
+                import wave
+                with wave.open(path, "rb") as wf:
+                    if wf.getsampwidth() == 2:
+                        sr = wf.getframerate()
+                        ch = wf.getnchannels()
+                        pcm_bytes = wf.readframes(wf.getnframes())
+            except Exception:
+                pcm_bytes = None
+
+        if pcm_bytes is None:
+            # Fallback or MP3 decoding via PyAV
+            try:
+                import av
+                container = av.open(path)
+                resampler = av.AudioResampler(format="s16", layout="mono", rate=24000)
+                chunks = []
+                for frame in container.decode(audio=0):
+                    for r in resampler.resample(frame):
+                        chunks.append(r.to_ndarray().tobytes())
+                container.close()
+                if chunks:
+                    pcm_bytes = b"".join(chunks)
+                    sr = 24000
+                    ch = 1
+            except Exception:
+                pass
+
+        if not pcm_bytes:
+            return
+
+        vmic_vol = float(getattr(config, "CALL_VIRTUAL_MIC_VOLUME", 1.0))
+        vmic_stream = sd.RawOutputStream(
+            samplerate=sr,
+            channels=ch,
+            dtype="int16",
+            device=vmic_device,
+        )
+        vmic_stream.start()
+        try:
+            chunk_size = sr * ch * 2 // 10  # ~100ms
+            offset = 0
+            while not (stop_event and stop_event.is_set()) and offset < len(pcm_bytes):
+                data = pcm_bytes[offset : offset + chunk_size]
+                offset += chunk_size
+                if not data:
+                    break
+                if abs(vmic_vol - 1.0) < 0.02:
+                    vmic_stream.write(data)
+                else:
+                    import numpy as np
+                    arr = (np.frombuffer(data, dtype=np.int16).astype(np.float32) * vmic_vol)
+                    vmic_stream.write(np.clip(arr, -32768, 32767).astype(np.int16).tobytes())
+        finally:
+            try:
+                vmic_stream.stop()
+            finally:
+                vmic_stream.close()
     except Exception:
         pass
 
@@ -484,13 +528,28 @@ def _play(path: str, stop_event=None) -> bool:
     True if finished on its own, False if cut off."""
     _ensure_mixer()
     music = pygame.mixer.music
-    music.load(path)
+    play_path = path
+    dsp_temp = None
+    if getattr(config, "VOICE_DSP_ENABLED", False):
+        try:
+            import voice_dsp
+            dsp_temp = voice_dsp.process_audio_file(path)
+            if dsp_temp:
+                play_path = dsp_temp
+        except Exception as e:
+            print(f"(voice DSP processing failed, falling back to original: {e})")
+
+    vmic_thread = None
     try:
+        music.load(play_path)
         volume = getattr(config, "EDGE_TTS_VOLUME", "+0%")
         music.set_volume(_volume_str_to_gain(volume))
         music.play()
         if _configured_virtual_mic_device() is not None:
-            threading.Thread(target=_play_file_to_virtual_mic, args=(path, stop_event), daemon=True).start()
+            vmic_thread = threading.Thread(
+                target=_play_file_to_virtual_mic, args=(play_path, stop_event), daemon=True
+            )
+            vmic_thread.start()
         while music.get_busy():
             current_volume = getattr(config, "EDGE_TTS_VOLUME", "+0%")
             if current_volume != volume:
@@ -504,7 +563,20 @@ def _play(path: str, stop_event=None) -> bool:
         try:
             music.stop()
         finally:
-            music.unload()
+            try:
+                music.unload()
+            except Exception:
+                pass
+            if vmic_thread is not None:
+                try:
+                    vmic_thread.join(timeout=0.25)
+                except Exception:
+                    pass
+            if dsp_temp:
+                try:
+                    os.remove(dsp_temp)
+                except OSError:
+                    pass
 
 
 def _speak_one(text: str, on_playback_start=None, on_playback_end=None, stop_event=None) -> bool:

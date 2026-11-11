@@ -1,6 +1,10 @@
 """Capri-inspired Voice DSP Effects (Pitch, Speed, Robot, Glitch, Voice Layers) & Typing Blip."""
 
-from __future__ import annotations
+import io
+import os
+import tempfile
+import threading
+import wave
 
 import numpy as np
 
@@ -155,5 +159,110 @@ def synthesize_typing_blip(
     n = max(1, int(sample_rate * duration_ms / 1000.0))
     t = np.arange(n, dtype=np.float32) / float(sample_rate)
     envelope = np.exp(-t * 140.0)
-    wave = 0.18 * np.sin(2.0 * np.pi * freq_hz * t) * envelope
-    return np.clip(wave * 32767.0, -32768, 32767).astype(np.int16).tobytes()
+    wave_pcm = 0.18 * np.sin(2.0 * np.pi * freq_hz * t) * envelope
+    return np.clip(wave_pcm * 32767.0, -32768, 32767).astype(np.int16).tobytes()
+
+
+def process_audio_file(input_path: str) -> str | None:
+    """Decode input_path, apply voice DSP effects (pitch, speed, robot, glitch, layers),
+    and write to a temporary WAV file. Returns the path to the temp WAV, or None if DSP is disabled or fails."""
+    if not getattr(config, "VOICE_DSP_ENABLED", False):
+        return None
+    if not input_path or not os.path.isfile(input_path):
+        return None
+
+    try:
+        sample_rate = 24000
+        samples = None
+
+        # 1. Try decoding via PyAV first (handles mp3, wav, ogg, etc.)
+        try:
+            import av
+            container = av.open(input_path)
+            resampler = av.AudioResampler(format="s16", layout="mono", rate=sample_rate)
+            frames = []
+            for frame in container.decode(audio=0):
+                for r in resampler.resample(frame):
+                    frames.append(r.to_ndarray().flatten())
+            container.close()
+            if frames:
+                raw_int16 = np.concatenate(frames)
+                samples = raw_int16.astype(np.float32) / 32768.0
+        except Exception:
+            samples = None
+
+        # 2. Fallback for .wav if PyAV is unavailable or errored
+        if samples is None and input_path.lower().endswith(".wav"):
+            try:
+                with wave.open(input_path, "rb") as wf:
+                    sr = wf.getframerate()
+                    ch = wf.getnchannels()
+                    sw = wf.getsampwidth()
+                    raw = wf.readframes(wf.getnframes())
+                    if sw == 2 and raw:
+                        arr = np.frombuffer(raw, dtype=np.int16)
+                        if ch > 1:
+                            arr = arr.reshape(-1, ch).mean(axis=1).astype(np.int16)
+                        samples = arr.astype(np.float32) / 32768.0
+                        sample_rate = sr
+            except Exception:
+                samples = None
+
+        if samples is None or samples.size == 0:
+            return None
+
+        # Process through DSP chain
+        processed = process_samples(samples, sample_rate=sample_rate)
+        int_samples = np.clip(processed * 32767.0, -32768, 32767).astype(np.int16)
+
+        # Write to temporary WAV
+        temp_wav = tempfile.NamedTemporaryFile(suffix=".wav", delete=False)
+        temp_wav_path = temp_wav.name
+        temp_wav.close()
+
+        with wave.open(temp_wav_path, "wb") as wf:
+            wf.setnchannels(1)
+            wf.setsampwidth(2)
+            wf.setframerate(sample_rate)
+            wf.writeframes(int_samples.tobytes())
+
+        return temp_wav_path
+    except Exception as exc:
+        print(f"(voice DSP process_audio_file failed: {exc})")
+        return None
+
+
+_typing_blip_sound = None
+_typing_blip_lock = threading.Lock()
+
+
+def play_typing_blip():
+    """Play subtle typing blip sound if TYPING_SOUND_ENABLED is True."""
+    if not getattr(config, "TYPING_SOUND_ENABLED", False):
+        return
+    global _typing_blip_sound
+    try:
+        import pygame
+        if not pygame.mixer.get_init():
+            try:
+                import voice_playback
+                voice_playback._ensure_mixer()
+            except Exception:
+                pygame.mixer.init(frequency=24000, size=-16, channels=1, buffer=512)
+        if _typing_blip_sound is None:
+            with _typing_blip_lock:
+                if _typing_blip_sound is None:
+                    raw_pcm = synthesize_typing_blip(sample_rate=24000, duration_ms=18, freq_hz=880.0)
+                    bio = io.BytesIO()
+                    with wave.open(bio, "wb") as wf:
+                        wf.setnchannels(1)
+                        wf.setsampwidth(2)
+                        wf.setframerate(24000)
+                        wf.writeframes(raw_pcm)
+                    bio.seek(0)
+                    _typing_blip_sound = pygame.mixer.Sound(bio)
+                    _typing_blip_sound.set_volume(0.35)
+        if _typing_blip_sound is not None:
+            _typing_blip_sound.play()
+    except Exception:
+        pass

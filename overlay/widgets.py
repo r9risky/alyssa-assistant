@@ -174,6 +174,11 @@ class SpeechBubble(_TopmostWindowMixin, QWidget):
         self.label.adjustSize()
         self._resize_to_content()
         self.reposition()
+        try:
+            import voice_dsp
+            voice_dsp.play_typing_blip()
+        except Exception:
+            pass
 
     def copy_to_clipboard(self) -> str:
         """Copy the full bubble reply to the clipboard and briefly display `> sys: copied`."""
@@ -254,6 +259,11 @@ class SpeechBubble(_TopmostWindowMixin, QWidget):
         self._pos_anim.setEndValue(target_pos)
         self._pos_anim.setEasingCurve(QEasingCurve.OutCubic)
         self._show_group.start()
+        try:
+            import voice_dsp
+            voice_dsp.play_typing_blip()
+        except Exception:
+            pass
 
         # Stay until show_message clears _thinking; long safety net if upstream hangs.
         self._thinking_timer.start(450)
@@ -325,6 +335,11 @@ class SpeechBubble(_TopmostWindowMixin, QWidget):
         self._pos_anim.setEndValue(target_pos)
         self._pos_anim.setEasingCurve(QEasingCurve.OutCubic)
         self._show_group.start()
+        try:
+            import voice_dsp
+            voice_dsp.play_typing_blip()
+        except Exception:
+            pass
 
         # Hide by ~4x linger even if talk_end never fires.
         seconds = max(1, int(self.settings.get("bubble_seconds", 7)))
@@ -373,6 +388,8 @@ class SpeechBubble(_TopmostWindowMixin, QWidget):
 
     def _compute_position(self) -> QPoint:
         cw = self.companion
+        if cw is None:
+            return QPoint(100, 100)
         x = cw.x() + cw.width() // 2 - self.width() // 2
         y = cw.y() - self.height() - 4
 

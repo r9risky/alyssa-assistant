@@ -153,11 +153,17 @@ _startup_device_wait_used = False
 
 def _find_configured_device(needle):
     """First input index whose name matches *needle*. Prefers
-    check_input_settings() success; falls back to the first name match if
+    check_input_settings() success (1-channel or stereo fallback); falls back to the first name match if
     every variant fails (Windows lists the same device per host API)."""
     fallback = None
-    for index, device in enumerate(sd.query_devices()):
-        if device["max_input_channels"] <= 0 or needle not in device["name"].lower():
+    try:
+        devices = sd.query_devices()
+    except Exception:
+        devices = []
+    for index, device in enumerate(devices):
+        dev_name = device.get("name", "")
+        max_ch = int(device.get("max_input_channels", 0))
+        if max_ch <= 0 or (needle not in dev_name.lower() and dev_name.lower() not in needle):
             continue
         if fallback is None:
             fallback = index
@@ -165,9 +171,18 @@ def _find_configured_device(needle):
             sd.check_input_settings(
                 device=index, channels=1, dtype="int16", samplerate=config.SAMPLE_RATE
             )
+            return index
+        except Exception:
+            pass
+        # USB microphones & audio interfaces often reject 1-channel queries but support 2-channel
+        try:
+            test_ch = min(2, max_ch)
+            sd.check_input_settings(
+                device=index, channels=test_ch, dtype="int16", samplerate=config.SAMPLE_RATE
+            )
+            return index
         except Exception:
             continue
-        return index
     return fallback
 
 
@@ -211,8 +226,20 @@ def _configured_input_device():
             f"(Gave up waiting for microphone {configured!r} after "
             f"{_STARTUP_DEVICE_WAIT_SECONDS:.0f}s.)"
         )
+    else:
+        # Quick re-scan in case device was plugged in or selected after startup
+        with _recovery_lock:
+            try:
+                sd._terminate()
+                sd._initialize()
+                index = _find_configured_device(needle)
+                if index is not None:
+                    return index
+            except Exception:
+                pass
 
-    raise RuntimeError(f"No compatible microphone matching {configured!r} was found")
+    print(f"(Microphone {configured!r} not found, falling back to default recording device)")
+    return None
 
 
 class _DownmixingStream:
@@ -258,7 +285,23 @@ def _open_stream(**kwargs):
                 raw = sd.InputStream(**stereo_kwargs)
                 stream = _DownmixingStream(raw)
             except Exception:
-                raise e
+                try:
+                    target_dev = kwargs.get("device")
+                    dev_info = (
+                        sd.query_devices(target_dev)
+                        if target_dev is not None
+                        else sd.query_devices(kind="input")
+                    )
+                    native_channels = int(dev_info.get("max_input_channels", 0))
+                    if native_channels > 2:
+                        multi_kwargs = dict(kwargs)
+                        multi_kwargs["channels"] = native_channels
+                        raw = sd.InputStream(**multi_kwargs)
+                        stream = _DownmixingStream(raw)
+                    else:
+                        raise e
+                except Exception:
+                    raise e
         else:
             raise e
 

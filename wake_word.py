@@ -239,7 +239,11 @@ class WakeWordDetector:
             if pygame is None:
                 return
             if not pygame.mixer.get_init():
-                pygame.mixer.init(frequency=44100, size=-16, channels=1, buffer=512)
+                try:
+                    import voice_playback
+                    voice_playback._ensure_mixer()
+                except Exception:
+                    pygame.mixer.init(frequency=44100, size=-16, channels=1, buffer=512)
             if self._chime_sound is None:
                 base_dir = os.path.dirname(os.path.abspath(__file__))
                 chime_path = os.path.join(base_dir, "assets", "wake_chime.wav")
