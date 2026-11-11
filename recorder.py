@@ -37,6 +37,7 @@ class VoiceActivityDetector:
         self._session = None
         self._state = np.zeros((2, 1, 128), dtype=np.float32)
         self._sr_tensor = np.array([sample_rate], dtype=np.int64)
+        self._context = np.zeros(self._context_size, dtype=np.float32)
         self._webrtc_vad = webrtcvad.Vad(aggressiveness)
 
         configured_engine = str(getattr(config, "VAD_ENGINE", "auto") or "auto").strip().lower()
@@ -65,8 +66,31 @@ class VoiceActivityDetector:
         except Exception:
             self.engine = "webrtc"
 
+    @property
+    def _window(self) -> int:
+        return 512 if self.sample_rate == 16000 else 256
+
+    @property
+    def _context_size(self) -> int:
+        # Silero v5 expects the tail of the previous window prepended to each
+        # window (64 samples @16kHz, 32 @8kHz). Without it, the model scores
+        # real speech near 0.0 and nothing ever triggers.
+        return 64 if self.sample_rate == 16000 else 32
+
     def reset(self):
         self._state = np.zeros((2, 1, 128), dtype=np.float32)
+        self._context = np.zeros(self._context_size, dtype=np.float32)
+
+    def _silero_prob(self, window: np.ndarray) -> float:
+        if getattr(self, "_context", None) is None or self._context.size != self._context_size:
+            self._context = np.zeros(self._context_size, dtype=np.float32)
+        input_tensor = np.concatenate([self._context, window])[np.newaxis, :]
+        out, self._state = self._session.run(
+            None,
+            {"input": input_tensor, "state": self._state, "sr": self._sr_tensor},
+        )
+        self._context = window[-self._context_size:].copy()
+        return float(out[0][0])
 
     def is_speech(self, chunk_pcm: np.ndarray | bytes) -> bool:
         if self.engine == "silero" and self._session is not None:
@@ -79,20 +103,18 @@ class VoiceActivityDetector:
                         if chunk_pcm.dtype == np.int16
                         else chunk_pcm.astype(np.float32)
                     )
+                samples = samples.reshape(-1)
 
-                n = samples.size
-                if n < 512:
-                    padded = np.zeros(512, dtype=np.float32)
-                    padded[:n] = samples
-                    input_tensor = padded[np.newaxis, :]
-                else:
-                    input_tensor = samples[:512][np.newaxis, :]
-
-                out, self._state = self._session.run(
-                    None,
-                    {"input": input_tensor, "state": self._state, "sr": self._sr_tensor},
-                )
-                prob = float(out[0][0])
+                window = self._window
+                if samples.size < window:
+                    padded = np.zeros(window, dtype=np.float32)
+                    padded[: samples.size] = samples
+                    samples = padded
+                # Run every full window so the recurrent state/context stay continuous.
+                usable = samples.size - (samples.size % window)
+                prob = 0.0
+                for start in range(0, usable, window):
+                    prob = max(prob, self._silero_prob(samples[start:start + window]))
                 thresh = float(getattr(config, "SILERO_VAD_THRESHOLD", self.threshold))
                 return prob >= thresh
             except Exception:
@@ -202,7 +224,8 @@ class _DownmixingStream:
     def read(self, frames):
         data, overflow = self._raw.read(frames)
         if hasattr(data, "ndim") and data.ndim > 1 and data.shape[1] > 1:
-            data = np.mean(data, axis=1, dtype=data.dtype)
+            # Average in a wider type — summing int16 channels in int16 wraps on loud speech.
+            data = data.astype(np.int32).mean(axis=1).astype(data.dtype)
         return data, overflow
 
     def __enter__(self):
@@ -250,6 +273,15 @@ def _open_stream(**kwargs):
 
 
 _last_wake_word_triggered = False
+
+# Push-to-talk: the talk hotkey sets this; record_command consumes it.
+_talk_request = threading.Event()
+_PUSH_TO_TALK_POLL_SECONDS = 0.25
+
+
+def request_push_to_talk() -> None:
+    """Arm the next listening pass (talk hotkey). Bypasses wake-word gating."""
+    _talk_request.set()
 
 
 def was_wake_word_triggered() -> bool:
@@ -647,6 +679,20 @@ def record_command(
     (see _reap_and_recover — must not happen while any stream is open).
 
     text_queue: typed-chat queue; a message interrupts an in-progress listen."""
+    wake_mode = str(getattr(config, "WAKE_WORD_MODE", "always_listening") or "always_listening").lower()
+    if wake_mode == "push_to_talk" and not bypass_wake_word:
+        # Wait briefly for the talk hotkey instead of returning instantly
+        # (which spun the main loop and never opened the mic).
+        if not _talk_request.wait(_PUSH_TO_TALK_POLL_SECONDS):
+            return None
+        _talk_request.clear()
+        bypass_wake_word = True
+        print("(Push-to-talk: listening...)")
+    elif _talk_request.is_set():
+        # Talk hotkey in wake-word mode: skip the wake word for this pass.
+        _talk_request.clear()
+        bypass_wake_word = True
+
     timeout = config.MAX_RECORD_SECONDS + _WATCHDOG_GRACE_SECONDS
 
     result_q: "queue.Queue" = queue.Queue(maxsize=1)

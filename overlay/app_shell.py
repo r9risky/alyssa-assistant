@@ -259,9 +259,10 @@ def run_with_assistant(assistant_loop_fn):
     try:
         from hotkeys import GlobalHotkeyManager
         import actions
+        import recorder
         hotkey_mgr = GlobalHotkeyManager(
             {
-                "talk": lambda: window.wake_up(),
+                "talk": lambda: (recorder.request_push_to_talk(), window.wake_up()),
                 "mute": lambda: actions.toggle_mute(),
                 "type": lambda: (chatbar.show(), chatbar.raise_(), chatbar.activateWindow(), chatbar.edit.setFocus()),
                 "hide": lambda: window.setVisible(not window.isVisible()),
