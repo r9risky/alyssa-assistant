@@ -16,6 +16,7 @@ import re
 import shutil
 import stat
 import subprocess
+import sys
 import tempfile
 import zipfile
 from urllib.parse import unquote, urlsplit
@@ -27,7 +28,7 @@ RELEASE_REPOSITORY = "alyssa-assistant"
 LATEST_RELEASE_URL = (
     f"https://api.github.com/repos/{RELEASE_OWNER}/{RELEASE_REPOSITORY}/releases/latest"
 )
-CURRENT_VERSION = "v1.5.3"
+CURRENT_VERSION = "v1.5.4"
 TRANSACTION_DIR = ".alyssa-update-transaction"
 COMMITTED_TRANSACTION_DIR = ".alyssa-update-committed"
 MAX_CHECKSUM_BYTES = 1024 * 1024
@@ -374,6 +375,15 @@ def _release_asset_metadata(release: dict[str, object], tag: str) -> dict[str, o
     ]
     if len(preferred) == 1:
         archives = preferred
+    elif len(archives) > 1:
+        win_preferred = [
+            asset
+            for asset in archives
+            if "windows" in str(asset["name"]).lower()
+        ]
+        if len(win_preferred) == 1:
+            archives = win_preferred
+
     if len(archives) != 1:
         raise RuntimeError("The GitHub release must contain exactly one Alyssa ZIP asset.")
 
@@ -749,12 +759,25 @@ def _safe_extract(archive_path: Path, destination: Path) -> Path:
             with archive.open(info) as source, target.open("wb") as output:
                 shutil.copyfileobj(source, output)
 
-    if len(roots) != 1:
-        raise RuntimeError("The release archive has an unexpected layout.")
-    root = destination / roots.pop()
-    required_files = ("main.py", "config.py")
-    has_overlay = (root / "overlay.py").is_file() or (root / "overlay" / "__init__.py").is_file()
-    if not all((root / name).is_file() for name in required_files) or not has_overlay:
+    if len(roots) == 1:
+        candidate = destination / next(iter(roots))
+        if candidate.is_dir() and (
+            (candidate / "config.py").is_file()
+            or (candidate / "Alyssa.exe").is_file()
+            or (candidate / "Alyssa").is_file()
+            or (candidate / "main.py").is_file()
+        ):
+            root = candidate
+        else:
+            root = destination
+    else:
+        root = destination
+
+    has_exe = (root / "Alyssa.exe").is_file() or (root / "Alyssa").is_file()
+    has_source = (root / "main.py").is_file() and (
+        (root / "overlay.py").is_file() or (root / "overlay" / "__init__.py").is_file()
+    )
+    if not (root / "config.py").is_file() or not (has_exe or has_source):
         raise RuntimeError("The release archive is missing required Alyssa files.")
     return root
 
@@ -850,6 +873,25 @@ def _recover_incomplete_update(install_root: Path) -> bool:
     if state.get("phase") == "committed":
         _finish_transaction(install_root, transaction_root)
         return True
+    if state.get("phase") == "pending_restart":
+        staged_root = transaction_root / "new"
+        try:
+            for change in state.get("changes", []):
+                if not isinstance(change, dict):
+                    continue
+                relative, destination = _journal_destination(install_root, change.get("path"))
+                if change.get("delete") is True:
+                    destination.unlink(missing_ok=True)
+                else:
+                    staged = staged_root / relative
+                    if staged.is_file():
+                        _atomic_copy(staged, destination)
+            _finish_transaction(install_root, transaction_root)
+            bat = install_root / "apply_update.bat"
+            bat.unlink(missing_ok=True)
+            return True
+        except (PermissionError, OSError):
+            return False
     try:
         _rollback_transaction(install_root, transaction_root)
     except Exception as error:
@@ -947,28 +989,103 @@ def _prepare_update_transaction(
     return transaction_root
 
 
+def _prepare_restart_updater(
+    install_root: Path, transaction_root: Path, staged_root: Path
+) -> Path:
+    bat_path = install_root / "apply_update.bat"
+    bat_content = (
+        "@echo off\r\n"
+        "setlocal\r\n"
+        "set \"PID=%~1\"\r\n"
+        "set \"INSTALL_ROOT=%~2\"\r\n"
+        "set \"STAGED_ROOT=%~3\"\r\n"
+        "set \"TARGET_EXE=%~4\"\r\n"
+        "\r\n"
+        "if not \"%PID%\"==\"\" (\r\n"
+        ":wait_loop\r\n"
+        "    timeout /t 1 /nobreak >nul 2>&1\r\n"
+        "    tasklist /fi \"PID eq %PID%\" 2>nul | find \"%PID%\" >nul\r\n"
+        "    if not errorlevel 1 goto wait_loop\r\n"
+        ")\r\n"
+        "\r\n"
+        "timeout /t 1 /nobreak >nul 2>&1\r\n"
+        "\r\n"
+        "rem Copy all staged files into install directory\r\n"
+        "xcopy \"%STAGED_ROOT%\\*\" \"%INSTALL_ROOT%\\\" /E /Y /Q /H /R >nul 2>&1\r\n"
+        "\r\n"
+        "rem Remove transaction directory\r\n"
+        f"rd /s /q \"{transaction_root}\" >nul 2>&1\r\n"
+        "\r\n"
+        "rem Re-launch Alyssa\r\n"
+        "if exist \"%TARGET_EXE%\" (\r\n"
+        "    start \"\" \"%TARGET_EXE%\"\r\n"
+        ") else if exist \"%INSTALL_ROOT%\\Alyssa.exe\" (\r\n"
+        "    start \"\" \"%INSTALL_ROOT%\\Alyssa.exe\"\r\n"
+        ") else if exist \"%INSTALL_ROOT%\\scripts\\start_alyssa.bat\" (\r\n"
+        "    start \"\" \"%INSTALL_ROOT%\\scripts\\start_alyssa.bat\"\r\n"
+        ")\r\n"
+        "\r\n"
+        "(goto) 2>nul & del \"%~f0\"\r\n"
+        "exit\r\n"
+    )
+    bat_path.write_text(bat_content, encoding="utf-8")
+    return bat_path
+
+
+def _is_locked_file_error(error: Exception) -> bool:
+    """True if error is a Windows sharing violation or running process file lock."""
+    if sys.platform == "win32":
+        winerror = getattr(error, "winerror", None)
+        if winerror in (32, 5):  # ERROR_SHARING_VIOLATION, ERROR_ACCESS_DENIED
+            return True
+        if isinstance(error, PermissionError):
+            return True
+    return False
+
+
 def _commit_update_transaction(install_root: Path, transaction_root: Path) -> None:
     state = _load_transaction_state(transaction_root)
     state["phase"] = "committing"
     _write_transaction_state(transaction_root, state)
     staged_root = transaction_root / "new"
+    locked_changes = []
     try:
         for change in state["changes"]:
             if not isinstance(change, dict):
                 raise RuntimeError("The update journal is invalid.")
             relative, destination = _journal_destination(install_root, change.get("path"))
             if change.get("delete") is True:
-                destination.unlink(missing_ok=True)
+                try:
+                    destination.unlink(missing_ok=True)
+                except Exception as err:
+                    if _is_locked_file_error(err):
+                        locked_changes.append(change)
+                    else:
+                        raise
             else:
                 staged = staged_root / relative
                 if not staged.is_file():
                     raise RuntimeError("The staged update is incomplete.")
-                _atomic_copy(staged, destination)
+                try:
+                    _atomic_copy(staged, destination)
+                except Exception as err:
+                    if _is_locked_file_error(err):
+                        locked_changes.append(change)
+                    else:
+                        raise
+
+        if locked_changes:
+            _prepare_restart_updater(install_root, transaction_root, staged_root)
+            state["phase"] = "pending_restart"
+            _write_transaction_state(transaction_root, state)
+            return
+
         state["phase"] = "committed"
         _write_transaction_state(transaction_root, state)
     except Exception:
-        _rollback_transaction(install_root, transaction_root)
-        raise
+        if not locked_changes:
+            _rollback_transaction(install_root, transaction_root)
+            raise
     try:
         _finish_transaction(install_root, transaction_root)
     except OSError:

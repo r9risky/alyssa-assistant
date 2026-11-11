@@ -209,5 +209,5 @@ class UpdatesTabMixin:
             f"color: {self._t()['success']}; font-size: 11.5px;"
         )
         self.update_status_label.setText(
-            f"Updated to {detail}. Click Restart Alyssa to run the new version."
+            f"Update {detail} ready! Click Restart Alyssa to apply and run the new version."
         )

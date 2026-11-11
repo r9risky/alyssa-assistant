@@ -694,5 +694,77 @@ class UpdaterTests(unittest.TestCase):
         self.assertTrue(target.restart_alyssa_btn.enabled)
 
 
+    def test_safe_extract_supports_binary_standalone_bundle(self):
+        archive_bytes = io.BytesIO()
+        with zipfile.ZipFile(archive_bytes, "w") as zipped:
+            zipped.writestr("Alyssa/Alyssa.exe", "MZ-stub-content")
+            zipped.writestr("Alyssa/config.py", "TEST_KEY = 'val'\n")
+            zipped.writestr("Alyssa/_internal/library.dll", "dll-content")
+
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            archive = root / "Alyssa-Windows-x64.zip"
+            archive.write_bytes(archive_bytes.getvalue())
+            extracted_root = updater._safe_extract(archive, root / "extracted")
+            self.assertTrue((extracted_root / "Alyssa.exe").is_file())
+            self.assertTrue((extracted_root / "config.py").is_file())
+
+    def test_release_asset_metadata_prefers_windows_zip_if_multiple(self):
+        release = {
+            "assets": [
+                {
+                    "name": "source-bundle.zip",
+                    "browser_download_url": "https://github.com/r9risky/alyssa-assistant/releases/download/v1.6.0/source-bundle.zip",
+                    "digest": "sha256:" + "a" * 64,
+                },
+                {
+                    "name": "Alyssa-Windows-x64.zip",
+                    "browser_download_url": "https://github.com/r9risky/alyssa-assistant/releases/download/v1.6.0/Alyssa-Windows-x64.zip",
+                    "digest": "sha256:" + "b" * 64,
+                },
+            ]
+        }
+        metadata = updater._release_asset_metadata(release, "v1.6.0")
+        self.assertEqual(metadata["archive_name"], "Alyssa-Windows-x64.zip")
+        self.assertEqual(metadata["sha256"], "b" * 64)
+
+    def test_locked_files_prepare_restart_helper_and_pending_restart(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            install = Path(temporary) / "install"
+            release = Path(temporary) / "release"
+            install.mkdir()
+            release.mkdir()
+
+            (install / "Alyssa.exe").write_bytes(b"old-exe")
+            (release / "Alyssa.exe").write_bytes(b"new-exe")
+            (install / "config.py").write_text("API_KEY = 'mine'\n", encoding="utf-8")
+            (release / "config.py").write_text("API_KEY = ''\n", encoding="utf-8")
+
+            real_copy = updater._atomic_copy
+
+            def simulated_sharing_violation(source, destination):
+                if destination.name == "Alyssa.exe":
+                    err = PermissionError("The process cannot access the file because it is being used by another process")
+                    err.winerror = 32
+                    raise err
+                return real_copy(source, destination)
+
+            with (
+                patch.object(updater.sys, "platform", "win32"),
+                patch.object(updater, "_atomic_copy", side_effect=simulated_sharing_violation),
+            ):
+                updater._apply_release(release, install, {"Alyssa.exe"})
+
+            state = updater._load_transaction_state(install / updater.TRANSACTION_DIR)
+            self.assertEqual(state["phase"], "pending_restart")
+            self.assertTrue((install / "apply_update.bat").is_file())
+
+            # Verify that recovery completes when the lock clears on next launch
+            self.assertTrue(updater._recover_incomplete_update(install))
+            self.assertEqual((install / "Alyssa.exe").read_bytes(), b"new-exe")
+            self.assertFalse((install / updater.TRANSACTION_DIR).exists())
+
+
 if __name__ == "__main__":
     unittest.main()
+

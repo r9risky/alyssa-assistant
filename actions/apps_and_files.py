@@ -82,6 +82,28 @@ def consume_restart_request() -> bool:
 
 def relaunch_alyssa():
     """Replaces this process with a fresh Alyssa instance."""
+    from overlay.rendering import _BASE_DIR
+    from pathlib import Path
+    import subprocess
+
+    install_root = Path(_BASE_DIR)
+    bat_path = install_root / "apply_update.bat"
+
+    if sys.platform == "win32" and bat_path.is_file():
+        staged_root = install_root / ".alyssa-update-transaction" / "new"
+        target_exe = sys.executable if getattr(sys, "frozen", False) else ""
+        cmd = [
+            "cmd.exe", "/c", str(bat_path),
+            str(os.getpid()),
+            str(install_root),
+            str(staged_root),
+            str(target_exe),
+        ]
+        CREATE_NO_WINDOW = 0x08000000
+        DETACHED_PROCESS = 0x00000008
+        subprocess.Popen(cmd, creationflags=CREATE_NO_WINDOW | DETACHED_PROCESS, close_fds=True)
+        sys.exit(0)
+
     args = [sys.executable] + (sys.argv[1:] if getattr(sys, "frozen", False) else sys.argv)
     os.execv(sys.executable, args)
 

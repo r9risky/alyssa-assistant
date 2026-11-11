@@ -45,7 +45,10 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
-          files: dist/Alyssa-Windows-x64.zip
+          files: |
+            dist/Alyssa-Windows-x64.zip
+            dist/checksums.txt
           generate_release_notes: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+

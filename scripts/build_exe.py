@@ -4,6 +4,7 @@ Usage:
     python scripts/build_exe.py
 """
 
+import hashlib
 import os
 import shutil
 import subprocess
@@ -69,6 +70,43 @@ def post_process_bundle():
     if not assets_target.is_dir():
         shutil.copytree(ROOT_DIR / "assets", assets_target)
 
+    # Copy core application files into the distribution bundle so that:
+    # 1. Existing older Alyssa installations (v1.5.0/v1.5.1/v1.5.2) can extract and
+    #    verify the release (their updater specifically checks for main.py & overlay)
+    # 2. Source-based environments can also update from this same release package
+    source_files = [
+        "main.py",
+        "updater.py",
+        "memory.py",
+        "nameutil.py",
+        "credential_store.py",
+        "plugin_loader.py",
+        "recorder.py",
+        "transcribe.py",
+        "voice.py",
+        "voice_dsp.py",
+        "voice_playback.py",
+        "voice_synthesis.py",
+        "wake_word.py",
+        "call_ears.py",
+        "hotkeys.py",
+        "startup_logging.py",
+        "telemetry.py",
+        "color_themes.json",
+        "requirements.txt",
+    ]
+    for filename in source_files:
+        src = ROOT_DIR / filename
+        dst = OUTPUT_FOLDER / filename
+        if src.is_file() and not dst.is_file():
+            shutil.copy2(src, dst)
+
+    for dirname in ("overlay", "brain", "actions", "scripts"):
+        src = ROOT_DIR / dirname
+        dst = OUTPUT_FOLDER / dirname
+        if src.is_dir() and not dst.is_dir():
+            shutil.copytree(src, dst)
+
     # Create a quick-start README for end-users
     readme_path = OUTPUT_FOLDER / "HOW_TO_RUN.txt"
     readme_path.write_text(
@@ -87,6 +125,12 @@ def post_process_bundle():
         for file in OUTPUT_FOLDER.rglob("*"):
             if file.is_file():
                 zf.write(file, arcname=file.relative_to(DIST_DIR))
+
+    # Generate published SHA-256 checksums file
+    sha256_hash = hashlib.sha256(zip_path.read_bytes()).hexdigest()
+    checksum_path = DIST_DIR / "checksums.txt"
+    checksum_path.write_text(f"{sha256_hash} *{zip_path.name}\n", encoding="utf-8")
+    print(f"[build] Generated checksum: {checksum_path.name} ({sha256_hash})")
 
     target_exe = exe_path if exe_path.is_file() else elf_path
     print(f"\n[build] SUCCESS! Executable built at: {target_exe}")
