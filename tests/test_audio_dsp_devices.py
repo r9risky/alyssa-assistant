@@ -106,6 +106,40 @@ class TestVoiceDSPProcessing:
             out_path = voice_dsp.process_audio_file("/nonexistent/audio/file.wav")
             assert out_path is None
 
+    def test_pitch_shift_1_semitone_accuracy(self):
+        sr = 24000
+        t = np.linspace(0, 1.0, sr, endpoint=False, dtype=np.float32)
+        base_f = 220.0
+        tone = 0.5 * np.sin(2.0 * np.pi * base_f * t)
+        shifted = voice_dsp.apply_pitch_shift(tone, 1.0, sample_rate=sr)
+        assert shifted.size == tone.size
+        assert not np.isnan(shifted).any()
+        fft = np.abs(np.fft.rfft(shifted[sr // 4 : -sr // 4]))
+        freqs = np.fft.rfftfreq(len(shifted[sr // 4 : -sr // 4]), 1.0 / sr)
+        peak_f = freqs[np.argmax(fft)]
+        expected_f = base_f * (2.0 ** (1.0 / 12.0))  # ~233.08 Hz
+        assert abs(peak_f - expected_f) < 4.0
+
+    def test_speed_factor_duration_and_pitch(self):
+        sr = 24000
+        t = np.linspace(0, 1.0, sr, endpoint=False, dtype=np.float32)
+        base_f = 220.0
+        tone = 0.5 * np.sin(2.0 * np.pi * base_f * t)
+        faster = voice_dsp.apply_speed_factor(tone, 1.25, sample_rate=sr)
+        expected_len = int(round(sr / 1.25))  # ~19200
+        assert abs(faster.size - expected_len) <= 2
+        fft = np.abs(np.fft.rfft(faster))
+        freqs = np.fft.rfftfreq(len(faster), 1.0 / sr)
+        peak_f = freqs[np.argmax(fft)]
+        assert abs(peak_f - base_f) < 4.0
+
+    def test_wsola_edge_cases(self):
+        sr = 24000
+        for size in [0, 16, 64, 128]:
+            arr = np.zeros(size, dtype=np.float32)
+            res = voice_dsp.wsola_time_stretch(arr, 1.1, sample_rate=sr)
+            assert not np.isnan(res).any()
+
 
 class TestTypingSoundBlip:
     def test_play_typing_blip_disabled(self):

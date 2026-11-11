@@ -11,52 +11,103 @@ import numpy as np
 from config import AUDIO_SETTINGS as config
 
 
-def apply_speed_factor(samples: np.ndarray, speed: float) -> np.ndarray:
-    """Resample 1D float32 audio array by `speed` factor (0.5x to 2.0x)."""
+def wsola_time_stretch(x: np.ndarray, stretch: float, sample_rate: int = 24000) -> np.ndarray:
+    """Time-stretch 1D float32 audio by factor `stretch` using WSOLA (Waveform Similarity Overlap-Add).
+
+    Preserves natural pitch, harmonics, and phase continuity without robotic comb-filtering artifacts.
+    """
+    stretch = max(0.4, min(2.5, float(stretch)))
+    if abs(stretch - 1.0) < 1e-3 or x.size < 64:
+        return x
+
+    win_size = int(round(sample_rate * 0.025))  # ~25ms analysis window (600 samples @ 24kHz)
+    win_size = max(64, min(win_size - (win_size % 4), max(64, x.size // 2)))
+    hop_out = max(16, win_size // 4)  # 75% overlap for ripple-free synthesis
+    overlap_len = win_size - hop_out
+    tolerance = hop_out
+
+    n_in = x.size
+    n_out = int(round(n_in * stretch))
+    if n_out < win_size or n_in < win_size + tolerance:
+        idx = np.linspace(0, n_in - 1, n_out, dtype=np.float32)
+        return np.interp(idx, np.arange(n_in, dtype=np.float32), x).astype(np.float32)
+
+    hann = np.hanning(win_size).astype(np.float32)
+    hann_overlap = hann[:overlap_len]
+    hop_in = hop_out / stretch
+
+    out = np.zeros(n_out + win_size + hop_out, dtype=np.float32)
+    weight = np.zeros(n_out + win_size + hop_out, dtype=np.float32)
+
+    out[:win_size] = x[:win_size] * hann
+    weight[:win_size] = hann
+
+    curr_out = hop_out
+    last_in = 0
+
+    while curr_out < n_out:
+        target_in = int(round(last_in + hop_in))
+        search_start = max(0, target_in - tolerance)
+        search_end = min(n_in - win_size, target_in + tolerance)
+
+        if search_start >= search_end:
+            best_in = max(0, min(n_in - win_size, target_in))
+        else:
+            ref_overlap = out[curr_out : curr_out + overlap_len]
+            ref_seg = ref_overlap * hann_overlap
+            ref_norm = float(np.linalg.norm(ref_seg))
+            if ref_norm > 1e-4:
+                cand_len = (search_end - search_start) + overlap_len
+                candidates = x[search_start : search_start + cand_len]
+                corr = np.correlate(candidates, ref_seg, mode="valid")
+                best_in = search_start + int(np.argmax(corr))
+            else:
+                best_in = max(0, min(n_in - win_size, target_in))
+
+        chunk = x[best_in : best_in + win_size] * hann
+        out[curr_out : curr_out + win_size] += chunk
+        weight[curr_out : curr_out + win_size] += hann
+        last_in = best_in
+        curr_out += hop_out
+
+    mask = weight[:n_out] > 1e-4
+    result = out[:n_out].copy()
+    result[mask] /= weight[:n_out][mask]
+    if not np.all(mask):
+        idx = np.linspace(0, n_in - 1, n_out, dtype=np.float32)
+        fallback = np.interp(idx, np.arange(n_in, dtype=np.float32), x).astype(np.float32)
+        result[~mask] = fallback[~mask]
+    return result
+
+
+def apply_speed_factor(samples: np.ndarray, speed: float, sample_rate: int = 24000) -> np.ndarray:
+    """Scale voice tempo by `speed` factor (0.5x to 2.0x) while preserving natural pitch."""
     speed = max(0.5, min(2.0, float(speed)))
-    if abs(speed - 1.0) < 1e-3 or samples.size < 4:
+    if abs(speed - 1.0) < 1e-3 or samples.size < 64:
         return samples
-    new_len = max(1, int(round(samples.size / speed)))
-    idx = np.linspace(0, samples.size - 1, new_len, dtype=np.float32)
-    return np.interp(idx, np.arange(samples.size, dtype=np.float32), samples).astype(np.float32)
+    return wsola_time_stretch(samples, 1.0 / speed, sample_rate=sample_rate)
 
 
-def apply_pitch_shift(samples: np.ndarray, semitones: float, window_size: int = 1024) -> np.ndarray:
-    """Shift pitch by `semitones` (-12 to +12) while keeping original duration via windowed overlap-add."""
+def apply_pitch_shift(
+    samples: np.ndarray,
+    semitones: float,
+    window_size: int = 512,
+    sample_rate: int = 24000,
+) -> np.ndarray:
+    """Shift pitch by `semitones` (-12 to +12) while keeping original duration via phase-aligned WSOLA.
+
+    Unlike naive overlap-add, phase-aligned WSOLA matches waveform cycles before crossfading,
+    eliminating metallic comb filtering, flanging, and robotic timbre when only pitch shift is desired.
+    """
     semitones = max(-12.0, min(12.0, float(semitones)))
     if abs(semitones) < 1e-2 or samples.size < 64:
         return samples
     factor = float(2.0 ** (semitones / 12.0))
-    n = samples.size
-    resampled = apply_speed_factor(samples, factor)
-    if resampled.size == n:
-        return resampled
-    # Stretch/compress back to original length n using overlap-add chunks
-    win = max(64, min(window_size, n // 2))
-    hop_out = max(16, win // 2)
-    out = np.zeros(n, dtype=np.float32)
-    weight = np.zeros(n, dtype=np.float32)
-    hann = np.hanning(win).astype(np.float32)
-
-    out_pos = 0
-    while out_pos + win <= n:
-        in_pos = int(round((out_pos / max(1, n - win)) * max(0, resampled.size - win)))
-        chunk = resampled[in_pos : in_pos + win]
-        if chunk.size < win:
-            padded = np.zeros(win, dtype=np.float32)
-            padded[: chunk.size] = chunk
-            chunk = padded
-        out[out_pos : out_pos + win] += chunk * hann
-        weight[out_pos : out_pos + win] += hann
-        out_pos += hop_out
-
-    mask = weight > 1e-4
-    out[mask] /= weight[mask]
-    if not np.all(mask):
-        idx = np.linspace(0, resampled.size - 1, n, dtype=np.float32)
-        fallback = np.interp(idx, np.arange(resampled.size, dtype=np.float32), resampled).astype(np.float32)
-        out[~mask] = fallback[~mask]
-    return out
+    stretched = wsola_time_stretch(samples, factor, sample_rate=sample_rate)
+    if stretched.size == samples.size:
+        return stretched
+    idx = np.linspace(0, stretched.size - 1, samples.size, dtype=np.float32)
+    return np.interp(idx, np.arange(stretched.size, dtype=np.float32), stretched).astype(np.float32)
 
 
 def apply_robot_effect(samples: np.ndarray, sample_rate: int = 24000, amount: int = 0) -> np.ndarray:
@@ -103,12 +154,13 @@ def apply_voice_layers(
     samples: np.ndarray,
     layer1_semitones: float = -3.0,
     layer2_semitones: float = 4.0,
+    sample_rate: int = 24000,
 ) -> np.ndarray:
     """Mix two pitch-shifted chorus/harmony layers underneath the main voice."""
     if samples.size < 64:
         return samples
-    l1 = apply_pitch_shift(samples, layer1_semitones)
-    l2 = apply_pitch_shift(samples, layer2_semitones)
+    l1 = apply_pitch_shift(samples, layer1_semitones, sample_rate=sample_rate)
+    l2 = apply_pitch_shift(samples, layer2_semitones, sample_rate=sample_rate)
     mixed = 0.72 * samples + 0.20 * l1 + 0.18 * l2
     return np.clip(mixed, -1.0, 1.0).astype(np.float32)
 
@@ -120,14 +172,14 @@ def process_samples(samples: np.ndarray, sample_rate: int = 24000) -> np.ndarray
     out = samples.astype(np.float32)
     pitch = float(getattr(config, "VOICE_PITCH_SEMITONES", 0.0) or 0.0)
     if abs(pitch) >= 0.05:
-        out = apply_pitch_shift(out, pitch)
+        out = apply_pitch_shift(out, pitch, sample_rate=sample_rate)
     speed = float(getattr(config, "VOICE_SPEED_FACTOR", 1.0) or 1.0)
     if abs(speed - 1.0) >= 0.02:
-        out = apply_speed_factor(out, speed)
+        out = apply_speed_factor(out, speed, sample_rate=sample_rate)
     if getattr(config, "VOICE_LAYERS_ENABLED", False):
         l1 = float(getattr(config, "VOICE_LAYER_1_PITCH", -3.0))
         l2 = float(getattr(config, "VOICE_LAYER_2_PITCH", 4.0))
-        out = apply_voice_layers(out, l1, l2)
+        out = apply_voice_layers(out, l1, l2, sample_rate=sample_rate)
     robot = int(getattr(config, "VOICE_ROBOT_AMOUNT", 0) or 0)
     if robot > 0:
         out = apply_robot_effect(out, sample_rate=sample_rate, amount=robot)
