@@ -2,7 +2,8 @@ import threading
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QMessageBox,
+    QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QMessageBox, QLabel,
+    QSizePolicy,
 )
 
 import actions
@@ -17,22 +18,39 @@ class UpdatesTabMixin:
         w = QWidget()
         w.setObjectName("tabPage")
         outer = QVBoxLayout(w)
-        outer.setContentsMargins(16, 16, 16, 16)
-        outer.setSpacing(12)
+        outer.setContentsMargins(18, 16, 18, 18)
+        outer.setSpacing(14)
 
-        outer.addWidget(self._section_header("Application Updates", "↻", first=True))
-        intro = self._help_label(
-            "Install the latest Alyssa release. Your settings and personal data stay "
-            "unchanged while application files are replaced with the latest versions."
+        cur_ver = updater.current_version(_BASE_DIR)
+        outer.addWidget(
+            self._page_header(
+                "Software Updates & Lifecycle",
+                "Keep Alyssa up to date from GitHub releases while preserving all your personal settings and memories.",
+                cur_ver,
+            )
         )
-        intro.setVisible(True)
-        outer.addWidget(intro)
 
-        self.current_version_label = self._help_label(
-            f"Current Version: {updater.current_version(_BASE_DIR)}"
+        card, form = self._create_card(
+            "Release Channel & Version Control",
+            "Check for new releases or restart Alyssa cleanly after installing plugins or system changes.",
+            "↻",
         )
-        self.current_version_label.setVisible(True)
-        outer.addWidget(self.current_version_label)
+
+        self.current_version_label = QLabel(f"{cur_ver}  ·  latest release")
+        self.current_version_label.setWordWrap(False)
+        self.current_version_label.setStyleSheet(
+            f"font-size: 13px; font-weight: 700; color: {self._t()['accent']};"
+        )
+        self._add_row(form, "Installed build:", self.current_version_label)
+
+        intro = QLabel(
+            "Updating replaces core application files with the latest release while keeping "
+            "your API keys, memory.json, personality notes, and overlay preferences intact."
+        )
+        intro.setWordWrap(True)
+        intro.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+        intro.setStyleSheet(f"color: {self._t()['subtext']}; font-size: 11.5px;")
+        self._add_row(form, "What's preserved:", intro)
 
         self.check_update_btn = QPushButton("Check Update")
         self.check_update_btn.setObjectName("primaryButton")
@@ -40,17 +58,23 @@ class UpdatesTabMixin:
         self.check_update_btn.clicked.connect(self._on_check_update)
 
         self.restart_alyssa_btn = QPushButton("Restart Alyssa")
+        self.restart_alyssa_btn.setObjectName("secondaryButton")
         self.restart_alyssa_btn.setToolTip("Close and reopen Alyssa.")
         self.restart_alyssa_btn.clicked.connect(self._on_restart_alyssa)
 
         button_row = QHBoxLayout()
+        button_row.setSpacing(10)
         button_row.addWidget(self.check_update_btn)
         button_row.addWidget(self.restart_alyssa_btn)
         button_row.addStretch(1)
-        outer.addLayout(button_row)
 
         self.update_status_label = self._help_label("")
-        outer.addWidget(self.update_status_label)
+        self._add_row(
+            form,
+            "Actions:",
+            self._stack_under(button_row, self.update_status_label),
+        )
+        outer.addWidget(card)
         outer.addStretch(1)
         return w
 
@@ -68,7 +92,7 @@ class UpdatesTabMixin:
         self._flush_pending_applies()
         self.check_update_btn.setEnabled(False)
         self.update_status_label.setStyleSheet(
-            f"color: {self._t()['subtext']}; font-size: 11px;"
+            f"color: {self._t()['subtext']}; font-size: 11.5px;"
         )
         self.update_status_label.setText("Checking GitHub for the latest release…")
 
@@ -98,36 +122,39 @@ class UpdatesTabMixin:
         self.check_update_btn.setEnabled(True)
         if not ok:
             self.update_status_label.setStyleSheet(
-                f"color: {self._t()['danger']}; font-size: 11px;"
+                f"color: {self._t()['danger']}; font-size: 11.5px;"
             )
-            self.update_status_label.setText(f"Update failed: {detail}")
-            QMessageBox.warning(self, "Update Failed", detail)
+            self.update_status_label.setText(f"Update check failed: {detail}")
             return
 
-        current = detail["current_version"]
-        latest = detail["latest_version"]
-        self.current_version_label.setText(f"Current Version: {current} | Latest Version: {latest}")
-        self.update_status_label.setStyleSheet(
-            f"color: {self._t()['success']}; font-size: 11px;"
-        )
-        if not detail["update_available"]:
+        release = detail or {}
+        latest = str(release.get("latest_version") or "").strip() or "unknown"
+        current = str(release.get("current_version") or updater.CURRENT_VERSION).strip()
+        if not release.get("update_available"):
+            self.update_status_label.setStyleSheet(
+                f"color: {self._t()['success']}; font-size: 11.5px;"
+            )
             self.update_status_label.setText(
                 f"You are on the latest version ({current}). No update needed."
             )
             return
 
-        self.update_status_label.setText(
-            f"Update available: {current} → {latest}. Review the changes to continue."
+        self.update_status_label.setStyleSheet(
+            f"color: {self._t()['warning']}; font-size: 11.5px;"
         )
+        self.update_status_label.setText(
+            f"Update available: {latest} (current: {current})."
+        )
+
         prompt = QMessageBox(self)
         prompt.setIcon(QMessageBox.Information)
         prompt.setWindowTitle(f"Alyssa {latest} Update")
         prompt.setText(f"Current Version: {current} | Latest Version: {latest}")
         try:
-            rendered_notes = updater.render_release_notes_html(detail["notes"])
+            rendered_notes = updater.render_release_notes_html(detail.get("notes", ""))
         except Exception:
             prompt.setTextFormat(Qt.PlainText)
-            informative_text = "Changes in this release:\n\n" + str(detail["notes"])
+            informative_text = "Changes in this release:\n\n" + str(detail.get("notes", ""))
         else:
             prompt.setTextFormat(Qt.RichText)
             informative_text = (
@@ -136,40 +163,51 @@ class UpdatesTabMixin:
         prompt.setInformativeText(informative_text)
         prompt.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
         prompt.setDefaultButton(QMessageBox.No)
-        prompt.button(QMessageBox.Yes).setText("Download and Install")
+        if prompt.button(QMessageBox.Yes) is not None:
+            prompt.button(QMessageBox.Yes).setText("Download and Install")
         if prompt.exec() != QMessageBox.Yes:
+            self.update_status_label.setStyleSheet(
+                f"color: {self._t()['subtext']}; font-size: 11.5px;"
+            )
             self.update_status_label.setText("Update cancelled. No files were changed.")
             return
 
+        self._start_update_install(release)
+
+    def _start_update_install(self, release: dict):
         self._set_update_installing(True)
+        self.update_status_label.setStyleSheet(
+            f"color: {self._t()['subtext']}; font-size: 11.5px;"
+        )
         self.update_status_label.setText(
-            f"Downloading and installing {latest}… Do not close or restart Alyssa."
+            "Installing update… Please wait and do not close Alyssa."
         )
 
         def _worker():
             try:
-                self._update_installed_signal.emit(True, updater.install_release(_BASE_DIR, detail))
+                version = updater.install_release(_BASE_DIR, release)
+                self._update_installed_signal.emit(True, version)
             except Exception as error:
                 self._update_installed_signal.emit(False, str(error))
 
-        threading.Thread(target=_worker, daemon=False).start()
+        threading.Thread(target=_worker, daemon=True).start()
 
     def _on_update_installed(self, ok: bool, detail: str):
         self._set_update_installing(False)
         if not ok:
             self.update_status_label.setStyleSheet(
-                f"color: {self._t()['danger']}; font-size: 11px;"
+                f"color: {self._t()['danger']}; font-size: 11.5px;"
             )
             self.update_status_label.setText(f"Update failed: {detail}")
-            QMessageBox.warning(self, "Update Failed", detail)
+            QMessageBox.warning(self, "Update Failed", f"Couldn't install the update:\n{detail}")
             return
 
-        self.current_version_label.setText(f"Current Version: {detail} | Latest Version: {detail}")
-        self.update_status_label.setStyleSheet(
-            f"color: {self._t()['success']}; font-size: 11px;"
+        self.current_version_label.setText(
+            f"Current Version: {updater.current_version(_BASE_DIR)}"
         )
-        message = f"Alyssa {detail} was installed. Restart Alyssa to use the update."
-        self.update_status_label.setText(message)
-        QMessageBox.information(self, "Update Installed", message)
-
-
+        self.update_status_label.setStyleSheet(
+            f"color: {self._t()['success']}; font-size: 11.5px;"
+        )
+        self.update_status_label.setText(
+            f"Updated to {detail}. Click Restart Alyssa to run the new version."
+        )

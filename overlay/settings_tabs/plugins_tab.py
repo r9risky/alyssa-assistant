@@ -21,16 +21,23 @@ class PluginsTabMixin:
         w = QWidget()
         w.setObjectName("tabPage")
         outer = QVBoxLayout(w)
-        outer.setContentsMargins(16, 16, 16, 16)
-        outer.setSpacing(10)
+        outer.setContentsMargins(18, 16, 18, 18)
+        outer.setSpacing(14)
+
+        outer.addWidget(
+            self._page_header(
+                "Extensions & Plugin Studio",
+                "Extend Alyssa with custom Python tools, automated background watchers, and custom UI panels.",
+                "EXTENSIONS",
+            )
+        )
 
         intro = self._help_label(
-            "Edit plugins or create one from the template. A plugin can also "
-            "add its own Settings tab (GUI_PANEL_TITLE + build_gui_panel) - "
-            "see the template for an example."
+            "Plugins in plugins/*.py load dynamically at startup. Prefix with an underscore (_) to disable. "
+            "A plugin can also export GUI_PANEL_TITLE + build_gui_panel to add its own Settings tab."
         )
         intro.setWordWrap(True)
-        intro.setStyleSheet(f"color: {self._t()['subtext']}; font-size: 11px;")
+        intro.setStyleSheet(f"color: {self._t()['subtext']}; font-size: 11.5px;")
         outer.addWidget(intro)
 
         splitter = QSplitter(Qt.Horizontal)
@@ -50,6 +57,7 @@ class PluginsTabMixin:
         left_layout.addWidget(self.plugin_list, 1)
 
         new_plugin_btn = QPushButton("+ New Plugin")
+        new_plugin_btn.setObjectName("secondaryButton")
         new_plugin_btn.clicked.connect(self._on_new_plugin)
         left_layout.addWidget(new_plugin_btn)
 

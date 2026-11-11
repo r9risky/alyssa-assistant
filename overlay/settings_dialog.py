@@ -14,7 +14,7 @@ from PySide6.QtWidgets import (
     QCheckBox, QSlider, QSpinBox, QPushButton, QLabel, QFileDialog,
     QMessageBox, QInputDialog, QStackedWidget,
     QScrollArea, QFrame, QSplitter, QListWidget, QListWidgetItem,
-    QPlainTextEdit,
+    QPlainTextEdit, QLayout,
 )
 
 import actions
@@ -39,7 +39,7 @@ from .credential_checks import (
 )
 from .rendering import _BASE_DIR, render_character
 from .theming import (
-    _HoverPress, _theme, build_voice_browser_style,
+    _HoverPress, _theme, build_nav_icon, build_voice_browser_style,
 )
 from .widgets import CompanionWindow
 from .settings_tabs.assistant_tab import AssistantTabMixin
@@ -48,6 +48,20 @@ from .settings_tabs.audio_tab import AudioTabMixin
 from .settings_tabs.companion_tab import CompanionTabMixin
 from .settings_tabs.updates_tab import UpdatesTabMixin
 from .settings_tabs.plugins_tab import PluginsTabMixin
+
+
+_TAB_ICON_MAP = {
+    "assistant": "assistant",
+    "audio": "audio",
+    "voice & audio": "audio",
+    "engine": "engine",
+    "speech engine": "engine",
+    "companion": "companion",
+    "memory & apps": "memory",
+    "plugins": "plugins",
+    "updates": "updates",
+}
+
 
 class _StatusLabel(QLabel):
     """QLabel that hides when its text is empty (no blank layout gap)."""
@@ -58,42 +72,95 @@ class _StatusLabel(QLabel):
 
 
 class _SidebarTabs(QWidget):
-    """Horizontal tab text in a compact vertical navigation rail."""
+    """Modern vertical navigation rail with brand header, quick search, and icon pills."""
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setObjectName("sidebarTabs")
+        self._tab_icon_kinds: list[str] = []
+
+        self.sidebar_frame = QFrame()
+        self.sidebar_frame.setObjectName("sidebarContainer")
+        sidebar_col = QVBoxLayout(self.sidebar_frame)
+        sidebar_col.setContentsMargins(0, 12, 0, 8)
+        sidebar_col.setSpacing(6)
+
+        brand_box = QWidget()
+        brand_layout = QHBoxLayout(brand_box)
+        brand_layout.setContentsMargins(12, 2, 12, 4)
+        brand_layout.setSpacing(9)
+
+        badge = QLabel("✦")
+        badge.setObjectName("cardIconBadge")
+        badge.setFixedSize(28, 28)
+        badge.setAlignment(Qt.AlignCenter)
+        brand_layout.addWidget(badge)
+
+        title_col = QVBoxLayout()
+        title_col.setContentsMargins(0, 0, 0, 0)
+        title_col.setSpacing(1)
+        self.brand_title = QLabel(getattr(config, "ASSISTANT_NAME", "Alyssa"))
+        self.brand_title.setObjectName("sidebarBrandTitle")
+        self.brand_subtitle = QLabel(f"{updater.CURRENT_VERSION} · Settings")
+        self.brand_subtitle.setObjectName("sidebarBrandSubtitle")
+        title_col.addWidget(self.brand_title)
+        title_col.addWidget(self.brand_subtitle)
+        brand_layout.addLayout(title_col, 1)
+        sidebar_col.addWidget(brand_box)
+
+        search_wrap = QWidget()
+        search_layout = QHBoxLayout(search_wrap)
+        search_layout.setContentsMargins(10, 0, 10, 2)
+        self.search_edit = QLineEdit()
+        self.search_edit.setObjectName("sidebarSearch")
+        self.search_edit.setPlaceholderText("Jump to setting…")
+        self.search_edit.setClearButtonEnabled(True)
+        self.search_edit.textChanged.connect(self._on_search_changed)
+        search_layout.addWidget(self.search_edit)
+        sidebar_col.addWidget(search_wrap)
 
         self.navigation = QListWidget()
         self.navigation.setObjectName("settingsNavigation")
+        self.navigation.setIconSize(QSize(17, 17))
         self.navigation.setMinimumWidth(120)
         self.navigation.setMaximumWidth(190)
         self.navigation.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Expanding)
         self.navigation.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.navigation.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        sidebar_col.addWidget(self.navigation, 1)
 
         self.pages = QStackedWidget()
         self.pages.setObjectName("settingsPages")
         self.pages.setMinimumWidth(0)
         self.pages.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Expanding)
-        self.navigation.currentRowChanged.connect(self.pages.setCurrentIndex)
+        self.navigation.currentRowChanged.connect(self._on_row_changed)
 
         layout = QHBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
-        layout.addWidget(self.navigation)
+        layout.addWidget(self.sidebar_frame)
         layout.addWidget(self.pages, 1)
 
-    def addTab(self, page: QWidget, label: str):
+    def _icon_kind_for(self, label: str, explicit: str = "") -> str:
+        if explicit:
+            return explicit
+        return _TAB_ICON_MAP.get(label.strip().lower(), "custom")
+
+    def addTab(self, page: QWidget, label: str, icon_kind: str = ""):
+        kind = self._icon_kind_for(label, icon_kind)
+        self._tab_icon_kinds.append(kind)
         item = QListWidgetItem(label)
-        item.setSizeHint(QSize(0, 50))
+        item.setSizeHint(QSize(0, 42))
         self.navigation.addItem(item)
         self.pages.addWidget(page)
         if self.navigation.currentRow() < 0:
             self.navigation.setCurrentRow(0)
+        self.refresh_icons()
 
     def removeTab(self, index: int):
         """Drop one addTab(); used by ConfigDialog._rebuild_plugin_gui_tabs."""
+        if 0 <= index < len(self._tab_icon_kinds):
+            self._tab_icon_kinds.pop(index)
         item = self.navigation.takeItem(index)
         if item is not None:
             del item
@@ -108,9 +175,45 @@ class _SidebarTabs(QWidget):
     def setCurrentIndex(self, index: int):
         self.navigation.setCurrentRow(index)
 
+    def _on_row_changed(self, index: int):
+        if index >= 0:
+            self.pages.setCurrentIndex(index)
+        self.refresh_icons()
+
+    def refresh_icons(self):
+        parent_dlg = self.parent()
+        t = parent_dlg._t() if hasattr(parent_dlg, "_t") else _theme(True)
+        current = self.navigation.currentRow()
+        for idx in range(self.navigation.count()):
+            item = self.navigation.item(idx)
+            kind = self._tab_icon_kinds[idx] if idx < len(self._tab_icon_kinds) else "custom"
+            color = t["accent_hover"] if idx == current else t["subtext"]
+            item.setIcon(build_nav_icon(kind, color, 17))
+
+    def _on_search_changed(self, text: str):
+        query = (text or "").strip().lower()
+        if not query:
+            return
+        # Jump to the first tab whose title or inner labels match the query.
+        for idx in range(self.navigation.count()):
+            item = self.navigation.item(idx)
+            if query in item.text().lower():
+                self.navigation.setCurrentRow(idx)
+                return
+        for idx in range(self.pages.count()):
+            page = self.pages.widget(idx)
+            if page is None:
+                continue
+            for lbl in page.findChildren(QLabel):
+                if query in (lbl.text() or "").lower():
+                    self.navigation.setCurrentRow(idx)
+                    return
+
     def fit_navigation(self, available_width: int):
         """Keep the rail proportional without crowding the form."""
-        self.navigation.setFixedWidth(max(120, min(190, round(available_width * 0.22))))
+        w = max(120, min(190, round(available_width * 0.22)))
+        self.navigation.setFixedWidth(w)
+        self.sidebar_frame.setFixedWidth(w)
 
 
 class VoiceBrowserDialog(QDialog):
@@ -126,40 +229,58 @@ class VoiceBrowserDialog(QDialog):
     def __init__(self, parent, dark: bool = False):
         super().__init__(parent)
         self.setWindowTitle("Browse Edge TTS voices")
-        self.resize(560, 520)
+        self.resize(600, 540)
         self._all_voices = []
         self._dark = dark
         self.setStyleSheet(build_voice_browser_style(dark))
 
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(16, 16, 16, 16)
-        layout.setSpacing(10)
+        layout.setContentsMargins(18, 18, 18, 18)
+        layout.setSpacing(12)
+
+        header = QFrame()
+        header.setObjectName("pageHeader")
+        h_layout = QVBoxLayout(header)
+        h_layout.setContentsMargins(16, 12, 16, 12)
+        h_layout.setSpacing(2)
+        title = QLabel("Microsoft Edge Neural Voices")
+        title.setObjectName("pageTitle")
+        subtitle = QLabel("Filter by voice name, locale (e.g. en-GB, ja-JP), or gender, then double-click to select.")
+        subtitle.setObjectName("pageSubtitle")
+        subtitle.setWordWrap(True)
+        h_layout.addWidget(title)
+        h_layout.addWidget(subtitle)
+        layout.addWidget(header)
 
         self.search_edit = QLineEdit()
         self.search_edit.setPlaceholderText("Search by name, locale, or gender… e.g. \"en-GB\", \"female\", \"Aria\"")
+        self.search_edit.setClearButtonEnabled(True)
         self.search_edit.textChanged.connect(self._apply_filter)
         layout.addWidget(self.search_edit)
 
         self.status_label = QLabel("Loading voice catalog from Microsoft…")
-        self.status_label.setStyleSheet(f"color: {self._t()['subtext']}; font-size: 11px;")
+        self.status_label.setStyleSheet(f"color: {self._t()['subtext']}; font-size: 11.5px;")
         layout.addWidget(self.status_label)
 
         self.list_widget = QListWidget()
+        self.list_widget.setObjectName("pluginList")
         self.list_widget.itemDoubleClicked.connect(self._on_double_click)
         layout.addWidget(self.list_widget, 1)
 
         btn_row = QHBoxLayout()
-        self.refresh_btn = QPushButton("Refresh")
+        self.refresh_btn = QPushButton("⟳ Refresh")
         self.refresh_btn.setObjectName("compactButton")
         self.refresh_btn.clicked.connect(self._start_fetch_refresh)
-        select_btn = QPushButton("Select")
+        select_btn = QPushButton("Select Voice")
+        select_btn.setObjectName("primaryButton")
         select_btn.clicked.connect(self._on_select_clicked)
         cancel_btn = QPushButton("Cancel")
+        cancel_btn.setObjectName("secondaryButton")
         cancel_btn.clicked.connect(self.reject)
         btn_row.addWidget(self.refresh_btn)
         btn_row.addStretch(1)
-        btn_row.addWidget(select_btn)
         btn_row.addWidget(cancel_btn)
+        btn_row.addWidget(select_btn)
         layout.addLayout(btn_row)
 
         self._voices_loaded_signal.connect(self._on_voices_loaded)
@@ -185,11 +306,11 @@ class VoiceBrowserDialog(QDialog):
 
     def _on_voices_loaded(self, ok: bool, message: str, voices: list):
         if not ok:
-            self.status_label.setStyleSheet(f"font-size: 11px; color: {self._t()['danger']};")
+            self.status_label.setStyleSheet(f"font-size: 11.5px; color: {self._t()['danger']};")
             self.status_label.setText(f"✗ Couldn't load the voice catalog - {message}")
             return
         self._all_voices = voices
-        self.status_label.setStyleSheet(f"color: {self._t()['subtext']}; font-size: 11px;")
+        self.status_label.setStyleSheet(f"color: {self._t()['subtext']}; font-size: 11.5px;")
         self._apply_filter()
 
     def _apply_filter(self, *args):
@@ -224,7 +345,7 @@ class VoiceBrowserDialog(QDialog):
     def _on_select_clicked(self):
         short_name = self._current_short_name()
         if not short_name:
-            self.status_label.setStyleSheet(f"font-size: 11px; color: {self._t()['danger']};")
+            self.status_label.setStyleSheet(f"font-size: 11.5px; color: {self._t()['danger']};")
             self.status_label.setText("Pick a voice from the list first (or search until only one is left).")
             return
         self.voice_picked.emit(short_name)
@@ -276,8 +397,8 @@ class ConfigDialog(QDialog, AssistantTabMixin, EngineTabMixin, AudioTabMixin,
         screen = self.screen() or QGuiApplication.primaryScreen()
         available = screen.availableGeometry().size()
         self.resize(
-            min(max(640, round(available.width() * 0.72)), available.width() - 32),
-            min(max(520, round(available.height() * 0.82)), available.height() - 32),
+            min(max(720, round(available.width() * 0.74)), available.width() - 32),
+            min(max(560, round(available.height() * 0.84)), available.height() - 32),
         )
         self.setMinimumSize(
             min(560, max(420, available.width() - 32)),
@@ -306,47 +427,54 @@ class ConfigDialog(QDialog, AssistantTabMixin, EngineTabMixin, AudioTabMixin,
         self._update_installed_signal.connect(self._on_update_installed)
 
         self.tabs = _SidebarTabs(self)
-        self.tabs.addTab(self._wrap_in_scroll_area(self._build_assistant_tab()), "Assistant")
-        self.tabs.addTab(self._wrap_in_scroll_area(self._build_engine_tab()), "Engine")
-        self.tabs.addTab(self._wrap_in_scroll_area(self._build_audio_tab()), "Audio")
-        self.tabs.addTab(self._wrap_in_scroll_area(self._build_companion_tab()), "Companion")
+        self.tabs.addTab(self._wrap_in_scroll_area(self._build_assistant_tab()), "Assistant", "assistant")
+        self.tabs.addTab(self._wrap_in_scroll_area(self._build_audio_tab()), "Audio", "audio")
+        self.tabs.addTab(self._wrap_in_scroll_area(self._build_engine_tab()), "Engine", "engine")
+        self.tabs.addTab(self._wrap_in_scroll_area(self._build_companion_tab()), "Companion", "companion")
+        self.tabs.addTab(self._wrap_in_scroll_area(self._build_integrations_tab()), "Memory & Apps", "memory")
         # Plugins tab owns its splitter height; do not wrap in a QScrollArea.
-        self.tabs.addTab(self._build_plugins_tab(), "Plugins")
-        self.tabs.addTab(self._wrap_in_scroll_area(self._build_updates_tab()), "Updates")
+        self.tabs.addTab(self._build_plugins_tab(), "Plugins", "plugins")
+        self.tabs.addTab(self._wrap_in_scroll_area(self._build_updates_tab()), "Updates", "updates")
         # Plugin GUI tabs last (GUI_PANEL_TITLE + build_gui_panel) so built-ins stay first.
         self._plugin_gui_tab_count = 0
         self._add_plugin_gui_tabs()
         self._configure_credential_commit_behavior()
 
-
         # QFormLayout won't grow QComboBox; force Expanding so dropdowns match QLineEdit width.
         for combo in self.findChildren(QComboBox):
             combo.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+
+        self.footer_status_label = QLabel(
+            "✦ Settings auto-apply live  ·  API keys commit on Apply, Verify, or leaving the field"
+        )
+        self.footer_status_label.setObjectName("footerStatus")
 
         close_btn = QPushButton("Close")
         self.apply_btn = QPushButton("Apply")
         self.apply_btn.setObjectName("primaryButton")
         self.apply_btn.clicked.connect(self._apply_all_pending)
 
-        close_btn.setObjectName("primaryButton")
+        close_btn.setObjectName("secondaryButton")
         close_btn.clicked.connect(self._on_close)
         close_btn._press_fx = _HoverPress(close_btn)
         # Flush pending applies on Close / window X / Esc.
         self.finished.connect(self._flush_pending_applies)
 
         btn_row = QHBoxLayout()
+        btn_row.addWidget(self.footer_status_label)
         btn_row.addStretch(1)
         btn_row.addWidget(self.apply_btn)
         btn_row.addWidget(close_btn)
-        btn_row.setContentsMargins(0, 6, 0, 0)
+        btn_row.setContentsMargins(4, 4, 4, 0)
+        btn_row.setSpacing(10)
 
         content = QWidget()
         content.setObjectName("dialogContent")
         content.setAttribute(Qt.WA_StyledBackground, True)
         content_layout = QVBoxLayout(content)
-        content_layout.setContentsMargins(12, 12, 12, 12)
+        content_layout.setContentsMargins(14, 14, 14, 12)
         content_layout.setSpacing(10)
-        content_layout.addWidget(self.tabs)
+        content_layout.addWidget(self.tabs, 1)
         content_layout.addLayout(btn_row)
 
         outer = QVBoxLayout(self)
@@ -387,6 +515,9 @@ class ConfigDialog(QDialog, AssistantTabMixin, EngineTabMixin, AudioTabMixin,
                 if compact else Qt.AlignRight | Qt.AlignVCenter
             )
 
+        if hasattr(self, "footer_status_label"):
+            self.footer_status_label.setVisible(not compact)
+
         if compact != self._compact_layout:
             if hasattr(self, "_companion_grid"):
                 if compact:
@@ -405,7 +536,7 @@ class ConfigDialog(QDialog, AssistantTabMixin, EngineTabMixin, AudioTabMixin,
                     Qt.Vertical if compact else Qt.Horizontal
                 )
                 self._plugin_splitter.setSizes(
-                    [190, 360] if compact else [190, 500]
+                    [190, 360] if compact else [210, 520]
                 )
 
             if hasattr(self, "_plugin_header_grid"):
@@ -432,6 +563,111 @@ class ConfigDialog(QDialog, AssistantTabMixin, EngineTabMixin, AudioTabMixin,
                 layout.activate()
             widget.updateGeometry()
         self.update()
+
+    # -- Modern Card & Header Builders --------------------------------------
+
+    def _page_header(self, title: str, subtitle: str, badge_text: str = "") -> QFrame:
+        """Hero banner at the top of a settings page."""
+        frame = QFrame()
+        frame.setObjectName("pageHeader")
+        row = QHBoxLayout(frame)
+        row.setContentsMargins(18, 14, 18, 14)
+        row.setSpacing(12)
+
+        text_col = QVBoxLayout()
+        text_col.setContentsMargins(0, 0, 0, 0)
+        text_col.setSpacing(3)
+        t_lbl = QLabel(title)
+        t_lbl.setObjectName("pageTitle")
+        s_lbl = QLabel(subtitle)
+        s_lbl.setObjectName("pageSubtitle")
+        s_lbl.setWordWrap(True)
+        text_col.addWidget(t_lbl)
+        text_col.addWidget(s_lbl)
+        row.addLayout(text_col, 1)
+
+        if badge_text:
+            badge = QLabel(badge_text)
+            badge.setObjectName("pageBadge")
+            badge.setAlignment(Qt.AlignCenter)
+            row.addWidget(badge, 0, Qt.AlignTop)
+        return frame
+
+    def _create_card(
+        self, title: str, subtitle: str = "", icon: str = "✦"
+    ) -> "tuple[QFrame, QFormLayout]":
+        """Create a rounded settings card with a header bar and a responsive QFormLayout."""
+        card = QFrame()
+        card.setObjectName("settingsCard")
+        card_col = QVBoxLayout(card)
+        card_col.setContentsMargins(18, 16, 18, 18)
+        card_col.setSpacing(12)
+        card_col.setSizeConstraint(QLayout.SetMinimumSize)
+
+        header_row = QHBoxLayout()
+        header_row.setContentsMargins(0, 0, 0, 0)
+        header_row.setSpacing(10)
+
+        icon_badge = QLabel(icon)
+        icon_badge.setObjectName("cardIconBadge")
+        icon_badge.setFixedSize(28, 28)
+        icon_badge.setAlignment(Qt.AlignCenter)
+        header_row.addWidget(icon_badge, 0, Qt.AlignTop)
+
+        title_col = QVBoxLayout()
+        title_col.setContentsMargins(0, 0, 0, 0)
+        title_col.setSpacing(2)
+        title_lbl = QLabel(title)
+        title_lbl.setObjectName("cardTitle")
+        title_col.addWidget(title_lbl)
+        if subtitle:
+            sub_lbl = QLabel(subtitle)
+            sub_lbl.setObjectName("cardSubtitle")
+            sub_lbl.setWordWrap(True)
+            title_col.addWidget(sub_lbl)
+        header_row.addLayout(title_col, 1)
+        card_col.addLayout(header_row)
+
+        divider = QFrame()
+        divider.setObjectName("cardDivider")
+        divider.setFrameShape(QFrame.HLine)
+        card_col.addWidget(divider)
+
+        form = QFormLayout()
+        form.setContentsMargins(0, 2, 0, 0)
+        form.setHorizontalSpacing(16)
+        form.setVerticalSpacing(11)
+        form.setLabelAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        form.setFieldGrowthPolicy(QFormLayout.ExpandingFieldsGrow)
+        form.setRowWrapPolicy(QFormLayout.WrapLongRows)
+        self._responsive_forms.append(form)
+        card_col.addLayout(form)
+        return card, form
+
+    def _slider_with_badge(
+        self, slider: QSlider, suffix: str = "%", formatter=None
+    ) -> QWidget:
+        """Pair a QSlider with a live numeric pill badge on the right."""
+        wrap = QWidget()
+        row = QHBoxLayout(wrap)
+        row.setContentsMargins(0, 0, 0, 0)
+        row.setSpacing(10)
+        row.addWidget(slider, 1)
+
+        badge = QLabel()
+        badge.setObjectName("sliderValueBadge")
+        badge.setMinimumWidth(48)
+        badge.setAlignment(Qt.AlignCenter)
+
+        def _fmt(v: int) -> str:
+            if formatter is not None:
+                return str(formatter(v))
+            return f"{v}{suffix}"
+
+        badge.setText(_fmt(slider.value()))
+        slider.valueChanged.connect(lambda v, b=badge: b.setText(_fmt(v)))
+        row.addWidget(badge)
+        return wrap
 
     def _section_header(self, text: str, icon: str = "", first: bool = False) -> QLabel:
         """Section label; Qt has no text-transform, so uppercase here."""
@@ -473,7 +709,7 @@ class ConfigDialog(QDialog, AssistantTabMixin, EngineTabMixin, AudioTabMixin,
             else:
                 if panel.get("scrollable", True):
                     widget = self._wrap_in_scroll_area(widget)
-            self.tabs.addTab(widget, panel["title"])
+            self.tabs.addTab(widget, panel["title"], "custom")
             added += 1
         self._plugin_gui_tab_count = added
 
@@ -482,15 +718,17 @@ class ConfigDialog(QDialog, AssistantTabMixin, EngineTabMixin, AudioTabMixin,
         w = QWidget()
         w.setObjectName("tabPage")
         layout = QVBoxLayout(w)
-        layout.setContentsMargins(16, 16, 16, 16)
-        layout.setSpacing(8)
+        layout.setContentsMargins(18, 18, 18, 18)
+        layout.setSpacing(10)
+        card, form = self._create_card("Plugin Tab Error", f"Failed to load {plugin_filename}", "⚠")
         label = self._help_label(
             f"⚠ '{plugin_filename}' couldn't build its Settings tab:\n{error}"
         )
         label.setVisible(True)
         label.setWordWrap(True)
-        label.setStyleSheet(f"color: {self._t()['warning']}; font-size: 11px;")
-        layout.addWidget(label)
+        label.setStyleSheet(f"color: {self._t()['warning']}; font-size: 11.5px;")
+        form.addRow("", label)
+        layout.addWidget(card)
         layout.addStretch(1)
         return w
 
@@ -506,8 +744,19 @@ class ConfigDialog(QDialog, AssistantTabMixin, EngineTabMixin, AudioTabMixin,
 
     def _add_row(self, form, label, field):
         """addRow and return (label, field) so the pair can be shown/hidden together."""
-        label_widget = QLabel(label) if isinstance(label, str) else label
+        if isinstance(label, str):
+            label_widget = QLabel(label)
+            if label:
+                label_widget.setObjectName("formFieldLabel")
+        else:
+            label_widget = label
+            if isinstance(label_widget, QLabel) and label_widget.text():
+                label_widget.setObjectName("formFieldLabel")
         form.addRow(label_widget, field)
+        if isinstance(field, QWidget):
+            field._owner_form = form
+        elif hasattr(field, "parentWidget"):
+            field._owner_form = form
         return (label_widget, field)
 
     def _stack_under(self, primary, *extras) -> QWidget:
@@ -515,19 +764,22 @@ class ConfigDialog(QDialog, AssistantTabMixin, EngineTabMixin, AudioTabMixin,
         wrapper = QWidget()
         col = QVBoxLayout(wrapper)
         col.setContentsMargins(0, 0, 0, 0)
-        col.setSpacing(4)
+        col.setSpacing(5)
         if isinstance(primary, QHBoxLayout):
             col.addLayout(primary)
         else:
             col.addWidget(primary)
         for extra in extras:
-            col.addWidget(extra)
+            if isinstance(extra, (QHBoxLayout, QVBoxLayout)):
+                col.addLayout(extra)
+            else:
+                col.addWidget(extra)
         return wrapper
 
     def _help_label(self, text: str) -> QLabel:
         """Hidden until it has text (empty status must not leave a blank line)."""
         label = _StatusLabel(text)
-        label.setStyleSheet("font-size: 11px;")
+        label.setStyleSheet("font-size: 11.5px;")
         label.setWordWrap(True)
         label.setVisible(bool(text))
         return label
@@ -538,13 +790,20 @@ class ConfigDialog(QDialog, AssistantTabMixin, EngineTabMixin, AudioTabMixin,
             f'{prefix} <a href="{url}" style="color:{accent};">{link_text}</a>'
         )
         label.setOpenExternalLinks(True)
-        label.setStyleSheet("font-size: 11px;")
+        label.setStyleSheet("font-size: 11.5px;")
         return label
 
     def _set_rows_visible(self, form, rows, visible):
-        """Show/hide (label, field) via QFormLayout.setRowVisible so hidden rows collapse spacing."""
-        for label_widget, field_widget in rows:
-            form.setRowVisible(field_widget, visible)
+        """Show/hide (label, field) via QFormLayout.setRowVisible across cards."""
+        for _label_widget, field_widget in rows:
+            target_form = getattr(field_widget, "_owner_form", None) or form
+            try:
+                target_form.setRowVisible(field_widget, visible)
+            except Exception:
+                for candidate in self._responsive_forms:
+                    if candidate.indexOf(field_widget) >= 0:
+                        candidate.setRowVisible(field_widget, visible)
+                        break
 
     def _build_api_key_row(
         self, form, label_text, initial_value, status, placeholder,
@@ -560,7 +819,7 @@ class ConfigDialog(QDialog, AssistantTabMixin, EngineTabMixin, AudioTabMixin,
 
         toggle_btn = QPushButton("Show")
         toggle_btn.setObjectName("compactButton")
-        toggle_btn.setFixedWidth(58)
+        toggle_btn.setFixedWidth(60)
         toggle_btn.setCheckable(True)
         toggle_btn.toggled.connect(
             lambda show: self._toggle_key_visibility(key_edit, show)
@@ -568,7 +827,7 @@ class ConfigDialog(QDialog, AssistantTabMixin, EngineTabMixin, AudioTabMixin,
 
         verify_btn = QPushButton("Verify")
         verify_btn.setObjectName("compactButton")
-        verify_btn.setFixedWidth(58)
+        verify_btn.setFixedWidth(64)
         if verify_slot is None:
             verify_slot = lambda: self._start_key_verification(
                 provider, key_edit, status, verify, checking
@@ -579,7 +838,8 @@ class ConfigDialog(QDialog, AssistantTabMixin, EngineTabMixin, AudioTabMixin,
         key_edit._verify_btn = verify_btn
 
         row_layout = QHBoxLayout()
-        row_layout.addWidget(key_edit)
+        row_layout.setSpacing(6)
+        row_layout.addWidget(key_edit, 1)
         row_layout.addWidget(toggle_btn)
         row_layout.addWidget(verify_btn)
 
@@ -618,7 +878,8 @@ class ConfigDialog(QDialog, AssistantTabMixin, EngineTabMixin, AudioTabMixin,
     def _apply_theme_stylesheet(self):
         self.setStyleSheet("")
         self.setStyleSheet(build_voice_browser_style(self.companion.settings))
-
+        if hasattr(self, "tabs"):
+            self.tabs.refresh_icons()
 
     def _configure_credential_commit_behavior(self):
         self._credential_bindings = {}
@@ -652,7 +913,7 @@ class ConfigDialog(QDialog, AssistantTabMixin, EngineTabMixin, AudioTabMixin,
 
     def _mark_credential_pending(self, status):
         status.setStyleSheet(
-            f"font-size: 11px; color: {self._t()['warning']};"
+            f"font-size: 11.5px; color: {self._t()['warning']};"
         )
         status.setText("Unsaved credential change.")
 
@@ -690,7 +951,7 @@ class ConfigDialog(QDialog, AssistantTabMixin, EngineTabMixin, AudioTabMixin,
             name, _original_attr, status = self._credential_bindings[edit]
             if name in saved:
                 status.setStyleSheet(
-                    f"font-size: 11px; color: {self._t()['success']};"
+                    f"font-size: 11.5px; color: {self._t()['success']};"
                 )
                 status.setText("Saved.")
             else:
@@ -709,7 +970,7 @@ class ConfigDialog(QDialog, AssistantTabMixin, EngineTabMixin, AudioTabMixin,
             if name in pending:
                 if name in saved:
                     status.setStyleSheet(
-                        f"font-size: 11px; color: {self._t()['success']};"
+                        f"font-size: 11.5px; color: {self._t()['success']};"
                     )
                     status.setText("Saved.")
                 else:
@@ -719,13 +980,17 @@ class ConfigDialog(QDialog, AssistantTabMixin, EngineTabMixin, AudioTabMixin,
         AssistantTabMixin._on_key_verification_result(
             self, provider, valid, message, items
         )
-        edit, status = {
+        provider_map = {
             "gemini": (self.gemini_key_edit, self.gemini_key_status_label),
             "openai": (self.openai_key_edit, self.openai_key_status_label),
             "anthropic": (self.anthropic_key_edit, self.anthropic_key_status_label),
             "elevenlabs": (self.elevenlabs_key_edit, self.elevenlabs_key_status_label),
             "youtube": (self.youtube_key_edit, self.youtube_status_label),
-        }[provider]
+            "groq": (self.groq_key_edit, self.groq_key_status_label),
+        }
+        if provider not in provider_map:
+            return
+        edit, status = provider_map[provider]
         if valid and edit.text().strip() == getattr(edit, "_verified_value", None):
             verified_text = status.text()
             saved = self._commit_credential_names(

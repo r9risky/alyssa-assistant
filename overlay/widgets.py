@@ -60,7 +60,7 @@ class _TopmostWindowMixin:
 _BUBBLE_TAIL_H = 12  # px, height of the little triangle pointing at her
 
 
-_BUBBLE_RADIUS = 6
+_BUBBLE_RADIUS = 12
 
 
 _BUBBLE_PAD_X = 16
@@ -89,8 +89,9 @@ class SpeechBubble(_TopmostWindowMixin, QWidget):
 
         self.label = QLabel("", self)
         self.label.setWordWrap(True)
-        self.label.setMaximumWidth(250)
-        font = QFont("Segoe UI", 10)
+        self.label.setMaximumWidth(260)
+        font = QFont("Segoe UI Variable Text", 10)
+        font.setStyleHint(QFont.SansSerif)
         font.setWeight(QFont.Medium)
         self.label.setFont(font)
         _t0 = _theme(settings)
@@ -508,11 +509,12 @@ class ChatInputBar(_TopmostWindowMixin, QWidget):
         t = _theme(self.settings)
         self.edit.setStyleSheet(f"""
             QLineEdit {{
-                background: {_rgba(t['card'], 0.95)};
-                border: 1px solid {_rgba(t['border'], 0.8)};
-                border-radius: 4px;
-                padding: 8px 14px;
+                background: {_rgba(t['card'], 0.96)};
+                border: 1.5px solid {_rgba(t['border'], 0.9)};
+                border-radius: 16px;
+                padding: 6px 14px;
                 color: {t['text']};
+                font-family: -apple-system, BlinkMacSystemFont, "Segoe UI Variable Display", "Segoe UI", "Inter", Roboto, sans-serif;
                 font-size: 12px;
                 font-weight: 500;
                 selection-background-color: {t['accent']};
@@ -600,7 +602,7 @@ class HoverPill(_TopmostWindowMixin, QWidget):
         self.quiet_btn.clicked.connect(self._on_quiet_clicked)
         self.ride_btn.clicked.connect(self._on_ride_clicked)
 
-        self.resize(154, 28)
+        self.resize(172, 30)
         self.apply_theme()
         self.hide()
 
@@ -632,21 +634,42 @@ class HoverPill(_TopmostWindowMixin, QWidget):
         accent = t["accent"]
         self.setStyleSheet(f"""
             QPushButton {{
-                background: {_rgba(t['card'], 0.92)};
+                background: {_rgba(t['card'], 0.94)};
                 border: 1px solid {_rgba(t['border'], 0.85)};
-                border-radius: 4px;
+                border-radius: 9px;
                 color: {t['text']};
+                font-family: -apple-system, BlinkMacSystemFont, "Segoe UI Variable Text", "Segoe UI", "Inter", sans-serif;
                 font-size: 9px;
                 font-weight: 700;
-                padding: 2px 6px;
+                letter-spacing: 0.4px;
+                padding: 2px 7px;
             }}
             QPushButton:hover {{
-                border: 1px solid {accent};
+                border: 1.5px solid {accent};
+                background: {_rgba(accent, 0.12)};
+            }}
+            QPushButton:pressed {{
+                background: {_rgba(accent, 0.22)};
             }}
         """)
         if quiet:
             self.quiet_btn.setStyleSheet(
-                f"background: {accent}; color: #ffffff; border-radius: 4px; font-size: 9px; font-weight: 700; padding: 2px 6px;"
+                f"""
+                QPushButton {{
+                    background: {accent};
+                    border: 1px solid {accent};
+                    color: #ffffff;
+                    border-radius: 9px;
+                    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI Variable Text", "Segoe UI", "Inter", sans-serif;
+                    font-size: 9px;
+                    font-weight: 700;
+                    letter-spacing: 0.4px;
+                    padding: 2px 7px;
+                }}
+                QPushButton:hover {{
+                    background: {_rgba(accent, 0.9)};
+                }}
+                """
             )
 
     def reposition(self):
@@ -692,7 +715,7 @@ class MiniPlayerWidget(_TopmostWindowMixin, QWidget):
         self.play_btn.clicked.connect(self._on_play_pause)
         self.next_btn.clicked.connect(self._on_next)
 
-        self.resize(210, 34)
+        self.resize(220, 36)
         self.apply_theme()
         self.hide()
 
@@ -722,25 +745,33 @@ class MiniPlayerWidget(_TopmostWindowMixin, QWidget):
 
     def apply_theme(self):
         t = _theme(self.settings)
+        accent = t["accent"]
         self.setStyleSheet(f"""
             QLabel {{
                 background: {_rgba(t['card'], 0.94)};
                 border: 1px solid {_rgba(t['border'], 0.85)};
-                border-radius: 4px;
+                border-radius: 12px;
                 color: {t['text']};
+                font-family: -apple-system, BlinkMacSystemFont, "Segoe UI Variable Text", "Segoe UI", "Inter", sans-serif;
                 font-size: 10px;
-                font-weight: 600;
-                padding: 2px 6px;
+                font-weight: 700;
+                letter-spacing: 0.5px;
+                padding: 3px 8px;
             }}
             QPushButton {{
                 background: {_rgba(t['card'], 0.94)};
                 border: 1px solid {_rgba(t['border'], 0.85)};
-                border-radius: 4px;
+                border-radius: 12px;
                 color: {t['text']};
                 font-size: 11px;
+                font-weight: 600;
             }}
             QPushButton:hover {{
-                border: 1px solid {t['accent']};
+                border: 1.5px solid {accent};
+                background: {_rgba(accent, 0.12)};
+            }}
+            QPushButton:pressed {{
+                background: {_rgba(accent, 0.22)};
             }}
         """)
 

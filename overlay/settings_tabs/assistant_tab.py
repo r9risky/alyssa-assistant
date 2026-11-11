@@ -3,22 +3,39 @@ import threading
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
-    QWidget, QFormLayout, QHBoxLayout, QLineEdit, QComboBox,
-    QCheckBox, QSlider, QSpinBox, QPushButton, QLabel, QMessageBox,
+    QCheckBox,
+    QComboBox,
+    QHBoxLayout,
+    QLabel,
+    QLineEdit,
+    QMessageBox,
     QPlainTextEdit,
+    QPushButton,
+    QSlider,
+    QSpinBox,
+    QVBoxLayout,
+    QWidget,
+    QSizePolicy,
 )
 
+from brain.common import api_origin
 import config
 import credential_store
 import memory
-from brain.common import api_origin
-
 from ..credential_checks import (
-    _extract_elevenlabs_voice_id, _fetch_custom_openai_models,
-    _is_http_url, _patch_config_line, _percent_to_volume_str,
-    _verify_anthropic_key, _verify_elevenlabs_key, _verify_gemini_key,
-    _verify_groq_key, _verify_openai_key, _verify_spotify_credentials,
-    _verify_youtube_key, _volume_str_to_percent,
+    _extract_elevenlabs_voice_id,
+    _fetch_custom_openai_models,
+    _is_http_url,
+    _patch_config_line,
+    _percent_to_volume_str,
+    _verify_anthropic_key,
+    _verify_elevenlabs_key,
+    _verify_gemini_key,
+    _verify_groq_key,
+    _verify_openai_key,
+    _verify_spotify_credentials,
+    _verify_youtube_key,
+    _volume_str_to_percent,
 )
 from ..rendering import _BASE_DIR
 
@@ -35,7 +52,7 @@ class AssistantTabMixin:
 
     def _update_tts_provider_rows_visibility(self, *args):
         provider = self.tts_provider_combo.currentText()
-        form = self._assistant_form
+        form = getattr(self, "_tts_form", self._assistant_form)
         self._set_rows_visible(form, self._edge_voice_rows, provider == "edge")
         self._set_rows_visible(form, self._elevenlabs_rows, provider == "elevenlabs")
 
@@ -44,42 +61,51 @@ class AssistantTabMixin:
     def _build_assistant_tab(self) -> QWidget:
         w = QWidget()
         w.setObjectName("tabPage")
-        form = QFormLayout(w)
-        form.setContentsMargins(16, 16, 16, 16)
-        form.setSpacing(10)
-        form.setLabelAlignment(Qt.AlignRight | Qt.AlignVCenter)
-        form.setFieldGrowthPolicy(QFormLayout.ExpandingFieldsGrow)
-        form.setRowWrapPolicy(QFormLayout.WrapLongRows)
-        self._responsive_forms.append(form)
-        self._assistant_form = form  # so _update_provider_rows_visibility can setRowVisible()
+        outer = QVBoxLayout(w)
+        outer.setContentsMargins(18, 16, 18, 18)
+        outer.setSpacing(14)
 
-        form.addRow("", self._section_header("Identity & Brain", "🧠", first=True))
+        outer.addWidget(
+            self._page_header(
+                "Assistant & AI Brain",
+                "Configure Alyssa's identity, language model provider, voice synthesis, and autonomy presets.",
+                "AI CORE",
+            )
+        )
+
+        # -- Card 1: Identity & Brain --
+        brain_card, form = self._create_card(
+            "Identity & Language Model",
+            "Choose who Alyssa is and which local or cloud LLM powers her reasoning.",
+            "🧠",
+        )
+        self._assistant_form = form  # kept for _update_provider_rows_visibility and responsive tests
+
         self.name_edit = QLineEdit(config.ASSISTANT_NAME)
         self.name_edit.textChanged.connect(self._queue_assistant_apply)
-        form.addRow("Name:", self.name_edit)
+        self._add_row(form, "Assistant name:", self.name_edit)
 
         self.provider_combo = QComboBox()
         self.provider_combo.addItems(["ollama", "gemini", "openai", "anthropic", "custom_openai"])
         self.provider_combo.setCurrentText(config.LLM_PROVIDER)
         self.provider_combo.currentTextChanged.connect(self._queue_assistant_apply)
         self.provider_combo.currentTextChanged.connect(self._update_provider_rows_visibility)
-        form.addRow("LLM provider:", self.provider_combo)
+        self._add_row(form, "LLM provider:", self.provider_combo)
 
         # -- Ollama (local) --
         self.ollama_model_edit = QLineEdit(config.OLLAMA_MODEL)
         self.ollama_model_edit.textChanged.connect(self._queue_assistant_apply)
         self._ollama_model_label = QLabel("Ollama model:")
-        form.addRow(self._ollama_model_label, self.ollama_model_edit)
+        self._add_row(form, self._ollama_model_label, self.ollama_model_edit)
 
         # -- Gemini --
-        # Keep originals so *_API_KEY lines are rewritten only when they actually change.
         self._original_gemini_key = config.GEMINI_API_KEY
         self.gemini_key_status_label = self._help_label("")
         get_key_link = self._link_label(
             "https://aistudio.google.com/apikey", "Don't have one?", "Get a free Gemini API key"
         )
         self.gemini_setup_hint = QLabel("⬆ Paste your key above; it applies immediately.")
-        self.gemini_setup_hint.setStyleSheet(f"color: {self._t()['warning']}; font-weight: 600; font-size: 11px;")
+        self.gemini_setup_hint.setStyleSheet(f"color: {self._t()['warning']}; font-weight: 600; font-size: 11.5px;")
         self.gemini_setup_hint.setVisible(False)
         self.gemini_key_edit, self.gemini_key_row_label, self._gemini_key_rows = self._build_api_key_row(
             form, "Gemini API key:", config.GEMINI_API_KEY,
@@ -123,7 +149,7 @@ class AssistantTabMixin:
         self.anthropic_model_edit = self._build_model_combo(getattr(config, "ANTHROPIC_MODEL", "claude-sonnet-5"))
         self._anthropic_key_rows.append(self._add_row(form, "Claude model:", self.anthropic_model_edit))
 
-        # -- Custom OpenAI-compatible provider (Groq, OpenRouter, etc.) --
+        # -- Custom OpenAI-compatible provider --
         self._custom_rows = []
         self.custom_base_url_edit = QLineEdit(getattr(config, "CUSTOM_BASE_URL", ""))
         self.custom_base_url_edit.textChanged.connect(self._queue_assistant_apply)
@@ -135,15 +161,17 @@ class AssistantTabMixin:
         self.custom_key_edit.textChanged.connect(self._queue_assistant_apply)
         self._custom_key_toggle = QPushButton("Show")
         self._custom_key_toggle.setObjectName("compactButton")
-        self._custom_key_toggle.setFixedWidth(58)
+        self._custom_key_toggle.setFixedWidth(60)
         self._custom_key_toggle.setCheckable(True)
         self._custom_key_toggle.toggled.connect(
             lambda show: self.custom_key_edit.setEchoMode(QLineEdit.Normal if show else QLineEdit.Password)
         )
         custom_key_row = QHBoxLayout()
-        custom_key_row.addWidget(self.custom_key_edit)
+        custom_key_row.setSpacing(6)
+        custom_key_row.addWidget(self.custom_key_edit, 1)
         custom_key_row.addWidget(self._custom_key_toggle)
-        self._custom_rows.append(self._add_row(form, "Custom API key:", custom_key_row))
+        custom_key_wrap = self._stack_under(custom_key_row)
+        self._custom_rows.append(self._add_row(form, "Custom API key:", custom_key_wrap))
 
         self.custom_model_edit = self._build_model_combo(getattr(config, "CUSTOM_MODEL", ""))
         self.custom_models_status_label = self._help_label("")
@@ -151,119 +179,42 @@ class AssistantTabMixin:
         self._custom_fetch_models_btn.setObjectName("compactButton")
         self._custom_fetch_models_btn.clicked.connect(self._start_custom_models_fetch)
         custom_model_row = QHBoxLayout()
-        custom_model_row.addWidget(self.custom_model_edit)
+        custom_model_row.setSpacing(6)
+        custom_model_row.addWidget(self.custom_model_edit, 1)
         custom_model_row.addWidget(self._custom_fetch_models_btn)
         custom_model_field = self._stack_under(custom_model_row, self.custom_models_status_label)
         self._custom_rows.append(self._add_row(form, "Custom model:", custom_model_field))
 
         custom_note = self._help_label(
-            "Works with OpenAI-compatible providers. Fetch or enter a model name."
+            "Works with OpenAI-compatible providers (Groq, OpenRouter, Together, LM Studio, vLLM)."
         )
-        custom_note.setStyleSheet(f"color: {self._t()['subtext']}; font-size: 11px;")
+        custom_note.setStyleSheet(f"color: {self._t()['subtext']}; font-size: 11.5px;")
         self._custom_rows.append(self._add_row(form, "", custom_note))
 
         note = self._help_label(
             "Keys apply immediately and are stored as plain text in config.py."
         )
-        note.setStyleSheet(f"color: {self._t()['subtext']}; font-size: 11px;")
-        form.addRow("", note)
+        note.setWordWrap(True)
+        note.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+        note.setStyleSheet(f"color: {self._t()['subtext']}; font-size: 11.5px; padding-top: 4px; padding-bottom: 4px;")
+        self._add_row(form, "", note)
+        outer.addWidget(brain_card)
 
-        # -- Music: without these, play_music can only open a search page.
-        form.addRow("", self._section_header("Music (Spotify / YouTube Music)", "🎵"))
-        music_intro = self._help_label(
-            "Optional: plays results directly instead of opening search."
+        # -- Card 2: Voice Synthesis (TTS) --
+        tts_card, tts_form = self._create_card(
+            "Voice Synthesis (TTS)",
+            "Select Alyssa's spoken voice engine — free Microsoft Edge Neural TTS or ElevenLabs cloned voices.",
+            "🔊",
         )
-        music_intro.setStyleSheet(f"color: {self._t()['subtext']}; font-size: 11px;")
-        form.addRow("", music_intro)
-
-        self._original_spotify_client_id = getattr(config, "SPOTIFY_CLIENT_ID", "")
-        self._original_spotify_client_secret = getattr(config, "SPOTIFY_CLIENT_SECRET", "")
-
-        self.spotify_client_id_edit = QLineEdit(self._original_spotify_client_id)
-        self.spotify_client_id_edit.setPlaceholderText("Paste your Spotify Client ID here")
-        self.spotify_client_id_edit.textChanged.connect(self._queue_assistant_apply)
-        self.spotify_client_id_edit.textChanged.connect(
-            lambda *args: self._reset_key_status(
-                self.spotify_client_secret_edit, self.spotify_status_label
-            )
-        )
-        # Pad to match Secret/YouTube rows that include Show/Verify buttons.
-        id_row = QHBoxLayout()
-        id_row.addWidget(self.spotify_client_id_edit)
-        id_spacer = QLabel("")
-        id_spacer.setFixedWidth(58 * 2 + 6)
-        id_row.addWidget(id_spacer)
-        form.addRow("Spotify Client ID:", id_row)
-
-        self.spotify_status_label = self._help_label("")
-        spotify_link = self._link_label(
-            "https://developer.spotify.com/dashboard",
-            "Don't have these?", "Create a free Spotify app",
-        )
-        self.spotify_client_secret_edit, _spotify_secret_label, _spotify_secret_rows = self._build_api_key_row(
-            form, "Spotify Client Secret:", self._original_spotify_client_secret,
-            self.spotify_status_label,
-            "Paste your Spotify Client Secret here",
-            verify_slot=self._start_spotify_verify,
-            extras=(self.spotify_status_label, spotify_link),
-        )
-
-        self._original_youtube_key = getattr(config, "YOUTUBE_API_KEY", "")
-        self.youtube_status_label = self._help_label("")
-        youtube_link = self._link_label(
-            "https://console.cloud.google.com/apis/library/youtube.googleapis.com",
-            "Don't have one?", "Enable the YouTube Data API v3",
-        )
-        self.youtube_key_edit, _youtube_key_label, _youtube_key_rows = self._build_api_key_row(
-            form, "YouTube API key:", self._original_youtube_key,
-            self.youtube_status_label,
-            "Paste your YouTube Data API key here",
-            provider="youtube", verify=_verify_youtube_key, checking="Checking with YouTube…",
-            extras=(self.youtube_status_label, youtube_link),
-        )
-        form.addRow("", self._section_header("Cloud Speech Recognition (Groq Whisper)", "⚡"))
-        groq_intro = self._help_label(
-            "Ultra-fast speech-to-text (~90ms) on Groq LPUs. Falls back to local Whisper automatically if offline."
-        )
-        groq_intro.setStyleSheet(f"color: {self._t()['subtext']}; font-size: 11px;")
-        form.addRow("", groq_intro)
-
-        self._original_groq_key = getattr(config, "GROQ_API_KEY", "")
-        self.groq_key_status_label = self._help_label("")
-        groq_link = self._link_label(
-            "https://console.groq.com/keys", "Don't have one?", "Get a free Groq API key"
-        )
-        self.groq_key_edit, self.groq_key_row_label, self._groq_key_rows = self._build_api_key_row(
-            form, "Groq API key:", self._original_groq_key,
-            self.groq_key_status_label,
-            "Paste your Groq API key here (gsk_...)",
-            provider="groq", verify=_verify_groq_key, checking="Checking with Groq…",
-            extras=(self.groq_key_status_label, groq_link),
-        )
-
-        self.groq_model_edit = self._build_model_combo(getattr(config, "STT_GROQ_MODEL", "whisper-large-v3-turbo"))
-        form.addRow("Groq model:", self.groq_model_edit)
-
-        self.stt_provider_combo = QComboBox()
-        self.stt_provider_combo.addItem("Auto (Groq when key set, else Local)", "auto")
-        self.stt_provider_combo.addItem("Groq Cloud (Fast LPU, fallback Local)", "groq")
-        self.stt_provider_combo.addItem("Local Whisper only (Offline-first)", "local")
-        curr_stt = str(getattr(config, "STT_PROVIDER", "auto") or "auto").lower()
-        stt_idx = self.stt_provider_combo.findData(curr_stt)
-        self.stt_provider_combo.setCurrentIndex(stt_idx if stt_idx >= 0 else 0)
-        self.stt_provider_combo.currentIndexChanged.connect(self._queue_assistant_apply)
-        form.addRow("STT provider:", self.stt_provider_combo)
-
-        form.addRow("", self._section_header("Voice & Behavior", "🔊"))
+        self._tts_form = tts_form
 
         self.tts_provider_combo = QComboBox()
         self.tts_provider_combo.addItems(["edge", "elevenlabs"])
         self.tts_provider_combo.setCurrentText(getattr(config, "TTS_PROVIDER", "edge"))
         self.tts_provider_combo.currentTextChanged.connect(self._queue_assistant_apply)
         self.tts_provider_combo.currentTextChanged.connect(self._update_tts_provider_rows_visibility)
-        form.addRow("TTS provider:", self.tts_provider_combo)
+        self._add_row(tts_form, "TTS provider:", self.tts_provider_combo)
 
-        # -- Edge TTS (free, default) --
         self._edge_voice_rows = []
         self.voice_combo = QComboBox()
         self.voice_combo.setEditable(True)
@@ -274,17 +225,14 @@ class AssistantTabMixin:
         self.browse_edge_voices_btn.setObjectName("compactButton")
         self.browse_edge_voices_btn.clicked.connect(self._open_edge_voice_browser)
         edge_voice_row = QHBoxLayout()
-        edge_voice_row.addWidget(self.voice_combo)
+        edge_voice_row.setSpacing(6)
+        edge_voice_row.addWidget(self.voice_combo, 1)
         edge_voice_row.addWidget(self.browse_edge_voices_btn)
-        self._edge_voice_rows.append(self._add_row(form, "Voice:", edge_voice_row))
+        edge_note = self._help_label("Search Microsoft's neural voice catalog by language, accent, or gender.")
+        edge_note.setStyleSheet(f"color: {self._t()['subtext']}; font-size: 11.5px;")
+        edge_voice_field = self._stack_under(edge_voice_row, edge_note)
+        self._edge_voice_rows.append(self._add_row(tts_form, "Edge voice:", edge_voice_field))
 
-        edge_note = self._help_label(
-            "Browse Microsoft's full voice catalog."
-        )
-        edge_note.setStyleSheet(f"color: {self._t()['subtext']}; font-size: 11px;")
-        self._edge_voice_rows.append(self._add_row(form, "", edge_note))
-
-        # -- ElevenLabs (premium/cloned voices) --
         self._elevenlabs_rows = []
         self._original_elevenlabs_key = getattr(config, "ELEVENLABS_API_KEY", "")
         self.elevenlabs_key_status_label = self._help_label("")
@@ -292,7 +240,7 @@ class AssistantTabMixin:
             "https://elevenlabs.io/app/settings/api-keys", "Don't have one?", "Get an ElevenLabs API key"
         )
         self.elevenlabs_key_edit, self.elevenlabs_key_row_label, self._elevenlabs_key_rows = self._build_api_key_row(
-            form, "ElevenLabs API key:", self._original_elevenlabs_key,
+            tts_form, "ElevenLabs API key:", self._original_elevenlabs_key,
             self.elevenlabs_key_status_label,
             "Paste your ElevenLabs API key here",
             provider="elevenlabs", verify=_verify_elevenlabs_key,
@@ -308,13 +256,10 @@ class AssistantTabMixin:
             self.elevenlabs_voice_combo.addItem(current_voice_id)
         self.elevenlabs_voice_combo.setCurrentText(current_voice_id)
         self.elevenlabs_voice_combo.currentTextChanged.connect(self._queue_assistant_apply)
-        self._elevenlabs_rows.append(self._add_row(form, "ElevenLabs voice:", self.elevenlabs_voice_combo))
-
-        elevenlabs_note = self._help_label(
-            "Verify the key to load voices, or enter a voice ID."
-        )
-        elevenlabs_note.setStyleSheet(f"color: {self._t()['subtext']}; font-size: 11px;")
-        self._elevenlabs_rows.append(self._add_row(form, "", elevenlabs_note))
+        elevenlabs_note = self._help_label("Verify your API key to load your voices, or paste a voice ID.")
+        elevenlabs_note.setStyleSheet(f"color: {self._t()['subtext']}; font-size: 11.5px;")
+        el_voice_field = self._stack_under(self.elevenlabs_voice_combo, elevenlabs_note)
+        self._elevenlabs_rows.append(self._add_row(tts_form, "ElevenLabs voice:", el_voice_field))
 
         self.elevenlabs_model_combo = QComboBox()
         self.elevenlabs_model_combo.setEditable(True)
@@ -326,7 +271,7 @@ class AssistantTabMixin:
         self.elevenlabs_model_combo.addItems(_elevenlabs_models)
         self.elevenlabs_model_combo.setCurrentText(current_model)
         self.elevenlabs_model_combo.currentTextChanged.connect(self._queue_assistant_apply)
-        self._elevenlabs_rows.append(self._add_row(form, "ElevenLabs model:", self.elevenlabs_model_combo))
+        self._elevenlabs_rows.append(self._add_row(tts_form, "ElevenLabs model:", self.elevenlabs_model_combo))
 
         self.volume_slider = QSlider(Qt.Horizontal)
         self.volume_slider.setRange(-50, 50)
@@ -334,42 +279,34 @@ class AssistantTabMixin:
             _volume_str_to_percent(getattr(config, "EDGE_TTS_VOLUME", "+0%"))
         )
         self.volume_value_label = QLabel()
-        self.volume_value_label.setFixedWidth(40)
+        self.volume_value_label.setObjectName("sliderValueBadge")
+        self.volume_value_label.setMinimumWidth(48)
+        self.volume_value_label.setAlignment(Qt.AlignCenter)
         self.volume_slider.valueChanged.connect(
             lambda v: self.volume_value_label.setText(_percent_to_volume_str(v))
         )
         self.volume_value_label.setText(_percent_to_volume_str(self.volume_slider.value()))
         self.volume_slider.valueChanged.connect(self._apply_edge_volume_live)
-        volume_row = QHBoxLayout()
-        volume_row.addWidget(self.volume_slider)
+        volume_wrap = QWidget()
+        volume_row = QHBoxLayout(volume_wrap)
+        volume_row.setContentsMargins(0, 0, 0, 0)
+        volume_row.setSpacing(10)
+        volume_row.addWidget(self.volume_slider, 1)
         volume_row.addWidget(self.volume_value_label)
-        # Edge TTS only; hidden for ElevenLabs (no %-volume API).
-        self._edge_voice_rows.append(self._add_row(form, "Volume:", volume_row))
-
-        self._update_tts_provider_rows_visibility()
+        self._edge_voice_rows.append(self._add_row(tts_form, "Speech volume:", volume_wrap))
 
         self.speak_check = QCheckBox("Speak replies out loud")
         self.speak_check.setChecked(bool(config.SPEAK_RESPONSES))
         self.speak_check.toggled.connect(self._queue_assistant_apply)
-        form.addRow("", self.speak_check)
+        self._add_row(tts_form, "Voice output:", self.speak_check)
+        outer.addWidget(tts_card)
 
-        # Same config.CAVEMAN_MODE as the voice tool; last writer wins.
-        self.caveman_combo = QComboBox()
-        self.caveman_combo.addItem("Off", None)
-        self.caveman_combo.addItem("Lite", "lite")
-        self.caveman_combo.addItem("Full", "full")
-        self.caveman_combo.addItem("Ultra", "ultra")
-        current_caveman = getattr(config, "CAVEMAN_MODE", None)
-        idx = self.caveman_combo.findData(current_caveman)
-        self.caveman_combo.setCurrentIndex(idx if idx >= 0 else 0)
-        self.caveman_combo.currentIndexChanged.connect(self._queue_assistant_apply)
-        form.addRow("Caveman mode:", self.caveman_combo)
-
-        self.confirm_check = QCheckBox("Ask for confirmation before every action")
-        self.confirm_check.setChecked(bool(config.CONFIRM_BEFORE_ACTIONS))
-        self.confirm_check.toggled.connect(self._queue_assistant_apply)
-        form.addRow("", self.confirm_check)
-
+        # -- Card 3: Behavior, Autonomy & Safety --
+        behavior_card, behavior_form = self._create_card(
+            "Behavior, Autonomy & Safety",
+            "Control tool confirmation prompts, response brevity, quiet mode, and console visibility.",
+            "🛡️",
+        )
         self.security_preset_combo = QComboBox()
         self.security_preset_combo.addItem("Lockdown (Ask for every tool)", "lockdown")
         self.security_preset_combo.addItem("Guarded (Allow read-only, ask for changes)", "guarded")
@@ -379,19 +316,41 @@ class AssistantTabMixin:
         preset_idx = self.security_preset_combo.findData(current_preset)
         self.security_preset_combo.setCurrentIndex(preset_idx if preset_idx >= 0 else 2)
         self.security_preset_combo.currentIndexChanged.connect(self._queue_assistant_apply)
-        form.addRow("Security preset:", self.security_preset_combo)
+        self._add_row(behavior_form, "Security preset:", self.security_preset_combo)
+
+        self.confirm_check = QCheckBox("Ask for confirmation before every action")
+        self.confirm_check.setChecked(bool(config.CONFIRM_BEFORE_ACTIONS))
+        self.confirm_check.toggled.connect(self._queue_assistant_apply)
+        self._add_row(behavior_form, "Action prompts:", self.confirm_check)
+
+        self.caveman_combo = QComboBox()
+        self.caveman_combo.addItem("Off (Full natural personality)", None)
+        self.caveman_combo.addItem("Lite (Concise replies)", "lite")
+        self.caveman_combo.addItem("Full (Terse caveman style)", "full")
+        self.caveman_combo.addItem("Ultra (Minimal words)", "ultra")
+        current_caveman = getattr(config, "CAVEMAN_MODE", None)
+        idx = self.caveman_combo.findData(current_caveman)
+        self.caveman_combo.setCurrentIndex(idx if idx >= 0 else 0)
+        self.caveman_combo.currentIndexChanged.connect(self._queue_assistant_apply)
+        self._add_row(behavior_form, "Caveman brevity:", self.caveman_combo)
 
         self.quiet_mode_check = QCheckBox("Quiet mode (pause proactive screen lookout & check-ins)")
         self.quiet_mode_check.setChecked(bool(getattr(config, "QUIET_MODE", False)))
         self.quiet_mode_check.toggled.connect(self._queue_assistant_apply)
-        form.addRow("", self.quiet_mode_check)
+        self._add_row(behavior_form, "Quiet mode:", self.quiet_mode_check)
 
-        self.show_console_check = QCheckBox("Show command prompt")
+        self.show_console_check = QCheckBox("Show command prompt window")
         self.show_console_check.setChecked(not bool(getattr(config, "HIDE_CONSOLE_WINDOW", False)))
         self.show_console_check.toggled.connect(self._on_show_console_toggled)
-        form.addRow("", self.show_console_check)
+        self._add_row(behavior_form, "Developer console:", self.show_console_check)
+        outer.addWidget(behavior_card)
 
-        form.addRow("", self._section_header("Proactive Monitoring", "🔔"))
+        # -- Card 4: Proactive Monitoring --
+        watch_card, watch_form = self._create_card(
+            "Proactive System Monitoring",
+            "Background health checks that alert you before disk space runs low.",
+            "🔔",
+        )
         self.system_watch_enabled_check = QCheckBox(
             "Warn me when the system drive is almost full"
         )
@@ -399,7 +358,7 @@ class AssistantTabMixin:
             bool(getattr(config, "SYSTEM_WATCH_ENABLED", False))
         )
         self.system_watch_enabled_check.toggled.connect(self._queue_assistant_apply)
-        form.addRow("", self.system_watch_enabled_check)
+        self._add_row(watch_form, "Disk space alert:", self.system_watch_enabled_check)
 
         self.system_watch_interval_spin = QSpinBox()
         self.system_watch_interval_spin.setRange(10, 86400)
@@ -408,54 +367,68 @@ class AssistantTabMixin:
             int(getattr(config, "SYSTEM_WATCH_INTERVAL_SECONDS", 300))
         )
         self.system_watch_interval_spin.valueChanged.connect(self._queue_assistant_apply)
-        form.addRow("Check every:", self.system_watch_interval_spin)
+        self._add_row(watch_form, "Check every:", self.system_watch_interval_spin)
+        outer.addWidget(watch_card)
+        outer.addStretch(1)
 
-        # -- Memory & Location --
-        form.addRow("", self._section_header("Memory & Location", "🧾"))
+        self._update_provider_rows_visibility()
+        self._update_tts_provider_rows_visibility()
+        return w
 
-        memory_intro = self._help_label(
-            "Short-term memory expires; saved facts persist in memory.json & markdown notes."
+    # -- Memory, Apps & Shortcuts Tab --------------------------------------
+
+    def _build_integrations_tab(self) -> QWidget:
+        w = QWidget()
+        w.setObjectName("tabPage")
+        outer = QVBoxLayout(w)
+        outer.setContentsMargins(18, 16, 18, 18)
+        outer.setSpacing(14)
+
+        outer.addWidget(
+            self._page_header(
+                "Memory, Apps & Shortcuts",
+                "Manage long-term memory, persona notes, weather location, Spotify/YouTube, Call Mode, and hotkeys.",
+                "APPS & MEMORY",
+            )
         )
-        memory_intro.setStyleSheet(f"color: {self._t()['subtext']}; font-size: 11px;")
-        form.addRow("", memory_intro)
 
+        # -- Card 1: Memory & Persona --
+        mem_card, mem_form = self._create_card(
+            "Memory & Persona Notes",
+            "Short-term conversation turns expire after idle; saved facts persist in memory.json & markdown notes.",
+            "🧾",
+        )
         self.user_nickname_edit = QLineEdit(str(getattr(config, "USER_NICKNAME", "") or ""))
         self.user_nickname_edit.setPlaceholderText("Optional nickname Alyssa calls you")
         self.user_nickname_edit.textChanged.connect(self._queue_assistant_apply)
-        form.addRow("Your nickname:", self.user_nickname_edit)
+        self._add_row(mem_form, "Your nickname:", self.user_nickname_edit)
 
         self.remember_chats_check = QCheckBox("Save daily chat transcripts (recall past chats)")
         self.remember_chats_check.setChecked(bool(getattr(config, "REMEMBER_CHATS_ENABLED", True)))
         self.remember_chats_check.toggled.connect(self._queue_assistant_apply)
-        form.addRow("", self.remember_chats_check)
+        self._add_row(mem_form, "Chat history:", self.remember_chats_check)
 
         self.conversation_turns_spin = QSpinBox()
         self.conversation_turns_spin.setRange(1, 50)
         self.conversation_turns_spin.setValue(int(getattr(config, "CONVERSATION_MEMORY_TURNS", 10)))
-        self.conversation_turns_spin.setToolTip(
-            "Conversation turns kept in short-term memory."
-        )
+        self.conversation_turns_spin.setToolTip("Conversation turns kept in short-term memory.")
         self.conversation_turns_spin.valueChanged.connect(self._queue_assistant_apply)
-        form.addRow("Short-term memory (turns):", self.conversation_turns_spin)
+        self._add_row(mem_form, "Short-term turns:", self.conversation_turns_spin)
 
         self.conversation_timeout_spin = QSpinBox()
         self.conversation_timeout_spin.setRange(0, 3600)
         self.conversation_timeout_spin.setSuffix(" sec")
         self.conversation_timeout_spin.setValue(int(getattr(config, "CONVERSATION_TIMEOUT_SECONDS", 300)))
-        self.conversation_timeout_spin.setToolTip(
-            "Idle seconds before memory clears. 0 disables auto-clear."
-        )
+        self.conversation_timeout_spin.setToolTip("Idle seconds before memory clears. 0 disables auto-clear.")
         self.conversation_timeout_spin.valueChanged.connect(self._queue_assistant_apply)
-        form.addRow("Auto-clear after idle:", self.conversation_timeout_spin)
+        self._add_row(mem_form, "Auto-clear after idle:", self.conversation_timeout_spin)
 
         self.max_saved_memories_spin = QSpinBox()
         self.max_saved_memories_spin.setRange(1, 1000)
         self.max_saved_memories_spin.setValue(int(getattr(config, "MAX_SAVED_MEMORIES", 75)))
-        self.max_saved_memories_spin.setToolTip(
-            "Maximum saved facts; oldest are removed first."
-        )
+        self.max_saved_memories_spin.setToolTip("Maximum saved facts; oldest are removed first.")
         self.max_saved_memories_spin.valueChanged.connect(self._queue_assistant_apply)
-        form.addRow("Saved memories (max facts):", self.max_saved_memories_spin)
+        self._add_row(mem_form, "Saved memories (max):", self.max_saved_memories_spin)
 
         self.max_memory_chars_spin = QSpinBox()
         self.max_memory_chars_spin.setRange(20, 2000)
@@ -463,57 +436,60 @@ class AssistantTabMixin:
         self.max_memory_chars_spin.setValue(int(getattr(config, "MAX_MEMORY_FACT_CHARACTERS", 400)))
         self.max_memory_chars_spin.setToolTip("Maximum characters per saved fact.")
         self.max_memory_chars_spin.valueChanged.connect(self._queue_assistant_apply)
-        form.addRow("Max length per fact:", self.max_memory_chars_spin)
+        self._add_row(mem_form, "Max length per fact:", self.max_memory_chars_spin)
 
         self.max_memories_in_prompt_spin = QSpinBox()
         self.max_memories_in_prompt_spin.setRange(0, 200)
         self.max_memories_in_prompt_spin.setValue(int(getattr(config, "MAX_MEMORIES_IN_PROMPT", 20)))
-        self.max_memories_in_prompt_spin.setToolTip(
-            "Relevant saved facts included per request."
-        )
+        self.max_memories_in_prompt_spin.setToolTip("Relevant saved facts included per request.")
         self.max_memories_in_prompt_spin.valueChanged.connect(self._queue_assistant_apply)
-        form.addRow("Facts recalled per request:", self.max_memories_in_prompt_spin)
+        self._add_row(mem_form, "Facts recalled / turn:", self.max_memories_in_prompt_spin)
 
         self.personality_edit = QPlainTextEdit()
         self.personality_edit.setPlainText(memory.load_personality_notes())
-        self.personality_edit.setMaximumHeight(90)
-        form.addRow("Personality (personality.md):", self.personality_edit)
-
+        self.personality_edit.setMaximumHeight(92)
         self.save_personality_btn = QPushButton("Save Personality Notes")
+        self.save_personality_btn.setObjectName("compactButton")
         self.save_personality_btn.clicked.connect(
             lambda: memory.save_personality_notes(self.personality_edit.toPlainText())
         )
-        form.addRow("", self.save_personality_btn)
+        self._add_row(
+            mem_form,
+            "Personality (personality.md):",
+            self._stack_under(self.personality_edit, self.save_personality_btn),
+        )
 
         self.me_notes_edit = QPlainTextEdit()
         self.me_notes_edit.setPlainText(memory.load_me_notes())
-        self.me_notes_edit.setMaximumHeight(90)
-        form.addRow("About You (me.md):", self.me_notes_edit)
-
+        self.me_notes_edit.setMaximumHeight(92)
         self.save_me_notes_btn = QPushButton("Save About You Notes")
+        self.save_me_notes_btn.setObjectName("compactButton")
         self.save_me_notes_btn.clicked.connect(
             lambda: memory.save_me_notes(self.me_notes_edit.toPlainText())
         )
-        form.addRow("", self.save_me_notes_btn)
-
-        location_note = self._help_label(
-            "Used for weather and location requests; no key needed."
+        self._add_row(
+            mem_form,
+            "About You (me.md):",
+            self._stack_under(self.me_notes_edit, self.save_me_notes_btn),
         )
-        location_note.setStyleSheet(f"color: {self._t()['subtext']}; font-size: 11px;")
-        form.addRow("", location_note)
+        outer.addWidget(mem_card)
 
+        # -- Card 2: Location & Weather --
+        loc_card, loc_form = self._create_card(
+            "Location & Weather",
+            "Used for local weather forecasts and regional queries — no API key required.",
+            "🌤️",
+        )
         self.auto_detect_location_check = QCheckBox("Auto-detect my location from my IP address")
         self.auto_detect_location_check.setChecked(bool(getattr(config, "AUTO_DETECT_LOCATION", True)))
-        self.auto_detect_location_check.setToolTip(
-            "Approximate city detection; VPNs may affect accuracy."
-        )
+        self.auto_detect_location_check.setToolTip("Approximate city detection; VPNs may affect accuracy.")
         self.auto_detect_location_check.toggled.connect(self._queue_assistant_apply)
-        form.addRow("", self.auto_detect_location_check)
+        self._add_row(loc_form, "IP auto-detection:", self.auto_detect_location_check)
 
         self.weather_default_location_edit = QLineEdit(getattr(config, "WEATHER_DEFAULT_LOCATION", ""))
         self.weather_default_location_edit.setPlaceholderText("e.g. Chicago, IL - leave blank to auto-detect")
         self.weather_default_location_edit.textChanged.connect(self._queue_assistant_apply)
-        form.addRow("Default location:", self.weather_default_location_edit)
+        self._add_row(loc_form, "Default location:", self.weather_default_location_edit)
 
         self.weather_units_combo = QComboBox()
         self.weather_units_combo.addItem("Imperial (°F, mph)", "imperial")
@@ -522,12 +498,68 @@ class AssistantTabMixin:
         idx = self.weather_units_combo.findData(current_units)
         self.weather_units_combo.setCurrentIndex(idx if idx >= 0 else 0)
         self.weather_units_combo.currentIndexChanged.connect(self._queue_assistant_apply)
-        form.addRow("Weather units:", self.weather_units_combo)
+        self._add_row(loc_form, "Weather units:", self.weather_units_combo)
+        outer.addWidget(loc_card)
 
-        self._update_provider_rows_visibility()
+        # -- Card 3: Music (Spotify / YouTube Music) --
+        music_card, music_form = self._create_card(
+            "Music Services (Spotify & YouTube)",
+            "Optional credentials so 'play [song]' launches the exact track instead of a search page.",
+            "🎵",
+        )
+        self._original_spotify_client_id = getattr(config, "SPOTIFY_CLIENT_ID", "")
+        self._original_spotify_client_secret = getattr(config, "SPOTIFY_CLIENT_SECRET", "")
+
+        self.spotify_client_id_edit = QLineEdit(self._original_spotify_client_id)
+        self.spotify_client_id_edit.setPlaceholderText("Paste your Spotify Client ID here")
+        self.spotify_client_id_edit.textChanged.connect(self._queue_assistant_apply)
+        self.spotify_client_id_edit.textChanged.connect(
+            lambda *args: self._reset_key_status(
+                self.spotify_client_secret_edit, self.spotify_status_label
+            )
+        )
+        id_row = QHBoxLayout()
+        id_row.setSpacing(6)
+        id_row.addWidget(self.spotify_client_id_edit, 1)
+        id_spacer = QLabel("")
+        id_spacer.setFixedWidth(60 + 64 + 6)
+        id_row.addWidget(id_spacer)
+        self._add_row(music_form, "Spotify Client ID:", id_row)
+
+        self.spotify_status_label = self._help_label("")
+        spotify_link = self._link_label(
+            "https://developer.spotify.com/dashboard",
+            "Don't have these?", "Create a free Spotify app",
+        )
+        self.spotify_client_secret_edit, _spotify_secret_label, _spotify_secret_rows = self._build_api_key_row(
+            music_form, "Spotify Client Secret:", self._original_spotify_client_secret,
+            self.spotify_status_label,
+            "Paste your Spotify Client Secret here",
+            verify_slot=self._start_spotify_verify,
+            extras=(self.spotify_status_label, spotify_link),
+        )
+
+        self._original_youtube_key = getattr(config, "YOUTUBE_API_KEY", "")
+        self.youtube_status_label = self._help_label("")
+        youtube_link = self._link_label(
+            "https://console.cloud.google.com/apis/library/youtube.googleapis.com",
+            "Don't have one?", "Enable the YouTube Data API v3",
+        )
+        self.youtube_key_edit, _youtube_key_label, _youtube_key_rows = self._build_api_key_row(
+            music_form, "YouTube API key:", self._original_youtube_key,
+            self.youtube_status_label,
+            "Paste your YouTube Data API key here",
+            provider="youtube", verify=_verify_youtube_key, checking="Checking with YouTube…",
+            extras=(self.youtube_status_label, youtube_link),
+        )
+        outer.addWidget(music_card)
+
+        # -- Card 4: Call & Meeting Mode + Card 5: Global Hotkeys (built via AudioTabMixin helpers) --
+        self._build_call_and_hotkey_cards(outer)
+        outer.addStretch(1)
         return w
 
-    # -- Engine tab (Whisper speech-to-text device/model) ------------------
+    # -- Credential & Verification Helpers ---------------------------------
 
     def _toggle_key_visibility(self, edit, show: bool):
         edit.setEchoMode(QLineEdit.Normal if show else QLineEdit.Password)
@@ -541,13 +573,13 @@ class AssistantTabMixin:
         key = edit.text().strip()
         if not key:
             edit.setStyleSheet(f"border: 2px solid {self._t()['danger']};")
-            status.setStyleSheet(f"font-size: 11px; color: {self._t()['danger']};")
+            status.setStyleSheet(f"font-size: 11.5px; color: {self._t()['danger']};")
             status.setText("Paste a key first.")
             return
         edit._verify_btn.setEnabled(False)
         edit._verify_btn.setText("…")
         edit.setStyleSheet("")
-        status.setStyleSheet(f"font-size: 11px; color: {self._t()['subtext']};")
+        status.setStyleSheet(f"font-size: 11.5px; color: {self._t()['subtext']};")
         status.setText(checking)
         edit._verified_value = key
         threading.Thread(
@@ -576,7 +608,7 @@ class AssistantTabMixin:
             return
         color = self._t()["success" if valid else "danger"]
         edit.setStyleSheet(f"border: 2px solid {color};")
-        status.setStyleSheet(f"font-size: 11px; color: {color};")
+        status.setStyleSheet(f"font-size: 11.5px; color: {color};")
         if not valid:
             status.setText(f"✗ {message}")
         elif items:
@@ -584,8 +616,6 @@ class AssistantTabMixin:
             status.setText(f"✓ Valid key - {len(items)} {item_name} loaded.")
         else:
             status.setText("✓ Valid key.")
-
-    # Fetch models doubles as verify (no cheaper auth probe).
 
     def _confirm_custom_key_origin(self, base_url: str, key: str) -> bool:
         if not key:
@@ -611,12 +641,12 @@ class AssistantTabMixin:
         base_url = self.custom_base_url_edit.text().strip()
         key = self.custom_key_edit.text().strip()
         if not base_url:
-            self.custom_models_status_label.setStyleSheet(f"font-size: 11px; color: {self._t()['danger']};")
+            self.custom_models_status_label.setStyleSheet(f"font-size: 11.5px; color: {self._t()['danger']};")
             self.custom_models_status_label.setText("Enter a base URL first.")
             return
         if not _is_http_url(base_url, key):
             self.custom_base_url_edit.setStyleSheet(f"border: 2px solid {self._t()['danger']};")
-            self.custom_models_status_label.setStyleSheet(f"font-size: 11px; color: {self._t()['danger']};")
+            self.custom_models_status_label.setStyleSheet(f"font-size: 11.5px; color: {self._t()['danger']};")
             self.custom_models_status_label.setText(
                 "Use HTTPS with an API key; HTTP is allowed only for loopback."
             )
@@ -626,7 +656,7 @@ class AssistantTabMixin:
 
         self._custom_fetch_models_btn.setEnabled(False)
         self._custom_fetch_models_btn.setText("…")
-        self.custom_models_status_label.setStyleSheet(f"font-size: 11px; color: {self._t()['subtext']};")
+        self.custom_models_status_label.setStyleSheet(f"font-size: 11.5px; color: {self._t()['subtext']};")
         self.custom_models_status_label.setText("Fetching model list…")
         self._last_custom_fetch_checked = (base_url, key)
         threading.Thread(
@@ -642,14 +672,14 @@ class AssistantTabMixin:
         self._custom_fetch_models_btn.setText("Fetch models")
         current = (self.custom_base_url_edit.text().strip(), self.custom_key_edit.text().strip())
         if current != self._last_custom_fetch_checked:
-            return  # URL/key changed while this fetch was in flight
+            return
 
         if ok and models:
             self._populate_model_combo(self.custom_model_edit, models)
-            self.custom_models_status_label.setStyleSheet(f"font-size: 11px; color: {self._t()['success']};")
+            self.custom_models_status_label.setStyleSheet(f"font-size: 11.5px; color: {self._t()['success']};")
             self.custom_models_status_label.setText(f"✓ {len(models)} models loaded.")
         else:
-            self.custom_models_status_label.setStyleSheet(f"font-size: 11px; color: {self._t()['danger']};")
+            self.custom_models_status_label.setStyleSheet(f"font-size: 11.5px; color: {self._t()['danger']};")
             self.custom_models_status_label.setText(f"✗ {message}")
 
     def _open_edge_voice_browser(self):
@@ -669,14 +699,14 @@ class AssistantTabMixin:
         client_secret = self.spotify_client_secret_edit.text().strip()
         if not client_id or not client_secret:
             self.spotify_client_secret_edit.setStyleSheet(f"border: 2px solid {self._t()['danger']};")
-            self.spotify_status_label.setStyleSheet(f"font-size: 11px; color: {self._t()['danger']};")
+            self.spotify_status_label.setStyleSheet(f"font-size: 11.5px; color: {self._t()['danger']};")
             self.spotify_status_label.setText("Fill in both the Client ID and Client Secret first.")
             return
 
         self.spotify_client_secret_edit._verify_btn.setEnabled(False)
         self.spotify_client_secret_edit._verify_btn.setText("…")
         self.spotify_client_secret_edit.setStyleSheet("")
-        self.spotify_status_label.setStyleSheet(f"font-size: 11px; color: {self._t()['subtext']};")
+        self.spotify_status_label.setStyleSheet(f"font-size: 11.5px; color: {self._t()['subtext']};")
         self.spotify_status_label.setText("Checking with Spotify…")
         self._last_verified_spotify_checked = (client_id, client_secret)
         threading.Thread(
@@ -695,11 +725,11 @@ class AssistantTabMixin:
             return
         if valid:
             self.spotify_client_secret_edit.setStyleSheet(f"border: 2px solid {self._t()['success']};")
-            self.spotify_status_label.setStyleSheet(f"font-size: 11px; color: {self._t()['success']};")
+            self.spotify_status_label.setStyleSheet(f"font-size: 11.5px; color: {self._t()['success']};")
             self.spotify_status_label.setText("✓ Valid credentials.")
         else:
             self.spotify_client_secret_edit.setStyleSheet(f"border: 2px solid {self._t()['danger']};")
-            self.spotify_status_label.setStyleSheet(f"font-size: 11px; color: {self._t()['danger']};")
+            self.spotify_status_label.setStyleSheet(f"font-size: 11.5px; color: {self._t()['danger']};")
             self.spotify_status_label.setText(f"✗ {message}")
 
     def _on_show_console_toggled(self, show: bool):
@@ -723,13 +753,11 @@ class AssistantTabMixin:
         config.HIDE_CONSOLE_WINDOW = hide
         _set_console_visible(show)
 
-    # -- Startup (Task Scheduler, Windows only) ------------------------------
-
     def _gather_assistant_values(self) -> dict:
         custom_base_url = self.custom_base_url_edit.text().strip()
         if not _is_http_url(custom_base_url, self.custom_key_edit.text().strip()):
             self.custom_base_url_edit.setStyleSheet(f"border: 2px solid {self._t()['danger']};")
-            self.custom_models_status_label.setStyleSheet(f"font-size: 11px; color: {self._t()['danger']};")
+            self.custom_models_status_label.setStyleSheet(f"font-size: 11.5px; color: {self._t()['danger']};")
             self.custom_models_status_label.setText("Enter a valid http:// or https:// base URL.")
             custom_base_url = config.CUSTOM_BASE_URL
         else:
@@ -851,7 +879,6 @@ class AssistantTabMixin:
 
         _atomic_write_text = _settings_dialog._atomic_write_text
         _set_console_visible = _settings_dialog._set_console_visible
-        # Patch config.py (non-secrets) + live `config` module. Secrets go to the OS keyring, never config.py.
         values = self._gather_assistant_values()
         updates = self._gather_assistant_updates(values)
         try:
@@ -868,7 +895,6 @@ class AssistantTabMixin:
         secret_updates = self._gather_secret_updates(values)
         if secret_updates:
             failed = [key for key, value in secret_updates.items() if not credential_store.set_secret(key, value)]
-            # Resync originals from attempted writes; failed set_secret leaves tracker at the old value.
             self._original_gemini_key = self.gemini_key_edit.text().strip() if "GEMINI_API_KEY" not in failed else self._original_gemini_key
             self._original_openai_key = self.openai_key_edit.text().strip() if "OPENAI_API_KEY" not in failed else self._original_openai_key
             self._original_anthropic_key = self.anthropic_key_edit.text().strip() if "ANTHROPIC_API_KEY" not in failed else self._original_anthropic_key
@@ -917,7 +943,6 @@ class AssistantTabMixin:
             config.WHISPER_MODEL_SIZE, config.WHISPER_DEVICE, config.WHISPER_COMPUTE_TYPE
         )
         if whisper_settings_changed:
-            # Drop the process-lifetime Whisper cache so model/device/compute take effect now.
             try:
                 import transcribe
                 transcribe.reload_model_async()
@@ -926,14 +951,12 @@ class AssistantTabMixin:
             except ImportError:
                 pass
         if old_audio_output != getattr(config, "AUDIO_OUTPUT_DEVICE", "default"):
-            # pygame mixer opens its device once; reinit so a new speaker takes effect.
             try:
                 import voice
                 voice.reinit_mixer()
             except ImportError:
                 pass
         if old_spotify != (config.SPOTIFY_CLIENT_ID, config.SPOTIFY_CLIENT_SECRET):
-            # Drop the in-process Spotify token (~1hr) so new Client ID/Secret apply now.
             try:
                 import actions
                 actions._spotify_token_cache["access_token"] = None
@@ -941,10 +964,8 @@ class AssistantTabMixin:
             except ImportError:
                 pass
 
-        # Start the listener if it wasn't already (e.g. a newly supplied Gemini key). Idempotent.
         starter = getattr(self.companion, "start_assistant_worker", None)
         if starter is not None:
             starter()
 
         self.setWindowTitle(f"{config.ASSISTANT_NAME} - Settings")
-
