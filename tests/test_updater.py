@@ -11,10 +11,10 @@ import zipfile
 import updater
 
 
-ARCHIVE_NAME = "alyssa-assistant-v1.6.0.zip"
+ARCHIVE_NAME = "alyssa-assistant-v9.9.0.zip"
 DOWNLOAD_URL = (
     "https://github.com/r9risky/alyssa-assistant/releases/download/"
-    f"v1.6.0/{ARCHIVE_NAME}"
+    f"v9.9.0/{ARCHIVE_NAME}"
 )
 FINAL_DOWNLOAD_URL = (
     "https://release-assets.githubusercontent.com/github-production-release-asset/"
@@ -242,7 +242,7 @@ class UpdaterTests(unittest.TestCase):
     def test_check_latest_compares_versions_and_returns_release_notes(self):
         response = Mock()
         response.json.return_value = {
-            "tag_name": "v1.6.0",
+            "tag_name": "v9.9.0",
             "body": "New update flow",
             "assets": [
                 {
@@ -257,7 +257,7 @@ class UpdaterTests(unittest.TestCase):
                 release = updater.check_latest(temporary)
 
         self.assertEqual(release["current_version"], updater.CURRENT_VERSION)
-        self.assertEqual(release["latest_version"], "v1.6.0")
+        self.assertEqual(release["latest_version"], "v9.9.0")
         self.assertTrue(release["update_available"])
         self.assertEqual(release["notes"], "New update flow")
         self.assertEqual(release["download_url"], DOWNLOAD_URL)
@@ -290,7 +290,7 @@ class UpdaterTests(unittest.TestCase):
         response.headers = {}
         response.url = FINAL_DOWNLOAD_URL
         release = {
-            "latest_version": "v1.6.0",
+            "latest_version": "v9.9.0",
             "archive_name": ARCHIVE_NAME,
             "download_url": DOWNLOAD_URL,
             "sha256": hashlib.sha256(archive_data).hexdigest(),
@@ -300,7 +300,7 @@ class UpdaterTests(unittest.TestCase):
             (install / "main.py").write_text("old main\n", encoding="utf-8")
             (install / "config.py").write_text("SETTING = 'mine'\n", encoding="utf-8")
             with patch.object(updater.requests, "get", return_value=response):
-                self.assertEqual(updater.install_release(install, release), "v1.6.0")
+                self.assertEqual(updater.install_release(install, release), "v9.9.0")
 
             self.assertEqual((install / "main.py").read_text(encoding="utf-8"), "new main\n")
             self.assertEqual(
@@ -308,7 +308,7 @@ class UpdaterTests(unittest.TestCase):
                 "new overlay\n",
             )
             self.assertIn("SETTING = 'mine'", (install / "config.py").read_text(encoding="utf-8"))
-            self.assertEqual((install / ".alyssa-version").read_text(encoding="utf-8"), "v1.6.0\n")
+            self.assertEqual((install / ".alyssa-version").read_text(encoding="utf-8"), "v9.9.0\n")
 
     def test_apply_release_replaces_edited_application_file(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -459,11 +459,11 @@ class UpdaterTests(unittest.TestCase):
     def test_check_latest_rejects_non_https_download_url(self):
         response = Mock()
         response.json.return_value = {
-            "tag_name": "v1.6.0",
+            "tag_name": "v9.9.0",
             "assets": [
                 {
                     "name": ARCHIVE_NAME,
-                    "browser_download_url": "http://github.com/r9risky/alyssa-assistant/releases/download/v1.6.0/"
+                    "browser_download_url": "http://github.com/r9risky/alyssa-assistant/releases/download/v9.9.0/"
                     + ARCHIVE_NAME,
                     "digest": "sha256:" + "a" * 64,
                 }
@@ -496,7 +496,7 @@ class UpdaterTests(unittest.TestCase):
         response.headers = {}
         response.url = FINAL_DOWNLOAD_URL
         release = {
-            "latest_version": "v1.6.0",
+            "latest_version": "v9.9.0",
             "archive_name": ARCHIVE_NAME,
             "download_url": DOWNLOAD_URL,
             "sha256": hashlib.sha256(archive_data).hexdigest(),
@@ -521,7 +521,7 @@ class UpdaterTests(unittest.TestCase):
     def test_check_latest_fails_closed_without_a_published_checksum(self):
         response = Mock()
         response.json.return_value = {
-            "tag_name": "v1.6.0",
+            "tag_name": "v9.9.0",
             "assets": [
                 {
                     "name": ARCHIVE_NAME,
@@ -539,11 +539,11 @@ class UpdaterTests(unittest.TestCase):
         checksum_name = "SHA256SUMS"
         checksum_url = (
             "https://github.com/r9risky/alyssa-assistant/releases/download/"
-            f"v1.6.0/{checksum_name}"
+            f"v9.9.0/{checksum_name}"
         )
         response = Mock()
         response.json.return_value = {
-            "tag_name": "v1.6.0",
+            "tag_name": "v9.9.0",
             "assets": [
                 {
                     "name": ARCHIVE_NAME,
@@ -576,7 +576,7 @@ class UpdaterTests(unittest.TestCase):
         response.headers = {}
         response.url = FINAL_DOWNLOAD_URL
         release = {
-            "latest_version": "v1.6.0",
+            "latest_version": "v9.9.0",
             "archive_name": ARCHIVE_NAME,
             "download_url": DOWNLOAD_URL,
             "sha256": "0" * 64,
@@ -606,7 +606,7 @@ class UpdaterTests(unittest.TestCase):
         response.headers = {}
         response.url = "https://example.invalid/redirected.zip"
         release = {
-            "latest_version": "v1.6.0",
+            "latest_version": "v9.9.0",
             "archive_name": ARCHIVE_NAME,
             "download_url": DOWNLOAD_URL,
             "sha256": hashlib.sha256(archive_data).hexdigest(),
@@ -647,7 +647,7 @@ class UpdaterTests(unittest.TestCase):
             with patch.object(updater, "_atomic_copy", side_effect=interrupted_copy):
                 with self.assertRaisesRegex(KeyboardInterrupt, "simulated"):
                     updater._apply_release(
-                        new_release, install, {"main.py"}, version="v1.6.0"
+                        new_release, install, {"main.py"}, version="v9.9.0"
                     )
 
             self.assertEqual(
@@ -714,17 +714,17 @@ class UpdaterTests(unittest.TestCase):
             "assets": [
                 {
                     "name": "source-bundle.zip",
-                    "browser_download_url": "https://github.com/r9risky/alyssa-assistant/releases/download/v1.6.0/source-bundle.zip",
+                    "browser_download_url": "https://github.com/r9risky/alyssa-assistant/releases/download/v9.9.0/source-bundle.zip",
                     "digest": "sha256:" + "a" * 64,
                 },
                 {
                     "name": "Alyssa-Windows-x64.zip",
-                    "browser_download_url": "https://github.com/r9risky/alyssa-assistant/releases/download/v1.6.0/Alyssa-Windows-x64.zip",
+                    "browser_download_url": "https://github.com/r9risky/alyssa-assistant/releases/download/v9.9.0/Alyssa-Windows-x64.zip",
                     "digest": "sha256:" + "b" * 64,
                 },
             ]
         }
-        metadata = updater._release_asset_metadata(release, "v1.6.0")
+        metadata = updater._release_asset_metadata(release, "v9.9.0")
         self.assertEqual(metadata["archive_name"], "Alyssa-Windows-x64.zip")
         self.assertEqual(metadata["sha256"], "b" * 64)
 
