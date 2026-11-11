@@ -114,7 +114,7 @@ class AssistantTabMixin:
             provider="gemini", verify=_verify_gemini_key, checking="Checking with Gemini…",
             extras=(self.gemini_key_status_label, get_key_link, self.gemini_setup_hint),
         )
-        self.gemini_model_edit = self._build_model_combo(config.GEMINI_MODEL)
+        self.gemini_model_edit = self._build_model_combo(config.GEMINI_MODEL, provider="gemini")
         self._gemini_key_rows.append(self._add_row(form, "Gemini model:", self.gemini_model_edit))
 
         # -- OpenAI --
@@ -130,7 +130,7 @@ class AssistantTabMixin:
             provider="openai", verify=_verify_openai_key, checking="Checking with OpenAI…",
             extras=(self.openai_key_status_label, openai_key_link),
         )
-        self.openai_model_edit = self._build_model_combo(getattr(config, "OPENAI_MODEL", "gpt-5-mini"))
+        self.openai_model_edit = self._build_model_combo(getattr(config, "OPENAI_MODEL", "gpt-5-mini"), provider="openai")
         self._openai_key_rows.append(self._add_row(form, "OpenAI model:", self.openai_model_edit))
 
         # -- Anthropic (Claude) --
@@ -146,7 +146,7 @@ class AssistantTabMixin:
             provider="anthropic", verify=_verify_anthropic_key, checking="Checking with Anthropic…",
             extras=(self.anthropic_key_status_label, anthropic_key_link),
         )
-        self.anthropic_model_edit = self._build_model_combo(getattr(config, "ANTHROPIC_MODEL", "claude-sonnet-5"))
+        self.anthropic_model_edit = self._build_model_combo(getattr(config, "ANTHROPIC_MODEL", "claude-sonnet-5"), provider="anthropic")
         self._anthropic_key_rows.append(self._add_row(form, "Claude model:", self.anthropic_model_edit))
 
         # -- Custom OpenAI-compatible provider --
@@ -173,7 +173,7 @@ class AssistantTabMixin:
         custom_key_wrap = self._stack_under(custom_key_row)
         self._custom_rows.append(self._add_row(form, "Custom API key:", custom_key_wrap))
 
-        self.custom_model_edit = self._build_model_combo(getattr(config, "CUSTOM_MODEL", ""))
+        self.custom_model_edit = self._build_model_combo(getattr(config, "CUSTOM_MODEL", ""), provider="custom")
         self.custom_models_status_label = self._help_label("")
         self._custom_fetch_models_btn = QPushButton("Fetch models")
         self._custom_fetch_models_btn.setObjectName("compactButton")

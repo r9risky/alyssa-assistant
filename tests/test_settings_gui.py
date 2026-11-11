@@ -393,5 +393,52 @@ class SettingsGuiTests(unittest.TestCase):
                     self.dialog._rebuild_plugin_gui_tabs()
 
 
+    def test_model_combos_populated_with_defaults(self):
+        gemini_combo = self.dialog.gemini_model_edit
+        openai_combo = self.dialog.openai_model_edit
+        anthropic_combo = self.dialog.anthropic_model_edit
+        groq_combo = self.dialog.groq_model_edit
+        custom_combo = self.dialog.custom_model_edit
+
+        # All dropdowns must be editable so users can type custom model names
+        self.assertTrue(gemini_combo.isEditable())
+        self.assertTrue(openai_combo.isEditable())
+        self.assertTrue(anthropic_combo.isEditable())
+        self.assertTrue(groq_combo.isEditable())
+        self.assertTrue(custom_combo.isEditable())
+
+        # Curated default models must be populated out of the box
+        self.assertGreater(gemini_combo.count(), 1)
+        self.assertGreater(openai_combo.count(), 1)
+        self.assertGreater(anthropic_combo.count(), 1)
+        self.assertGreater(groq_combo.count(), 1)
+        self.assertGreater(custom_combo.count(), 1)
+
+        # Current selection must match config / initial values
+        self.assertEqual(gemini_combo.currentText(), config.GEMINI_MODEL)
+        self.assertEqual(groq_combo.currentText(), getattr(config, "STT_GROQ_MODEL", "whisper-large-v3-turbo"))
+
+        # Check that standard models exist in the dropdowns
+        gemini_items = [gemini_combo.itemText(i) for i in range(gemini_combo.count())]
+        self.assertIn("gemini-2.5-flash", gemini_items)
+        self.assertIn("gemini-1.5-flash", gemini_items)
+
+        openai_items = [openai_combo.itemText(i) for i in range(openai_combo.count())]
+        self.assertIn("gpt-4o", openai_items)
+        self.assertIn("gpt-4o-mini", openai_items)
+
+        anthropic_items = [anthropic_combo.itemText(i) for i in range(anthropic_combo.count())]
+        self.assertIn("claude-3-5-sonnet-latest", anthropic_items)
+
+        groq_items = [groq_combo.itemText(i) for i in range(groq_combo.count())]
+        self.assertIn("whisper-large-v3-turbo", groq_items)
+
+        # Test quiet dynamic model enrichment preserves selection and does not disrupt status
+        self.dialog._on_quiet_models_loaded("gemini", ["gemini-live-1", "gemini-live-2"])
+        new_gemini_items = [gemini_combo.itemText(i) for i in range(gemini_combo.count())]
+        self.assertIn("gemini-live-1", new_gemini_items)
+        self.assertEqual(gemini_combo.currentText(), config.GEMINI_MODEL)
+
+
 if __name__ == "__main__":
     unittest.main()

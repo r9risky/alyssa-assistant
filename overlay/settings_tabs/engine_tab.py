@@ -57,7 +57,9 @@ class EngineTabMixin:
             extras=(self.groq_key_status_label, groq_link),
         )
 
-        self.groq_model_edit = self._build_model_combo(getattr(config, "STT_GROQ_MODEL", "whisper-large-v3-turbo"))
+        self.groq_model_edit = self._build_model_combo(
+            getattr(config, "STT_GROQ_MODEL", "whisper-large-v3-turbo"), provider="groq"
+        )
         self._add_row(groq_form, "Groq Whisper model:", self.groq_model_edit)
         outer.addWidget(groq_card)
 

@@ -34,6 +34,7 @@ from .credential_checks import (
     _atomic_write_text, _extract_elevenlabs_voice_id, _fetch_custom_openai_models,
     _is_http_url, _patch_config_line, _percent_to_volume_str,
     _verify_anthropic_key, _verify_elevenlabs_key, _verify_gemini_key,
+    _verify_groq_key,
     _verify_openai_key, _verify_spotify_credentials, _verify_youtube_key,
     _volume_str_to_percent,
 )
@@ -362,6 +363,7 @@ class ConfigDialog(QDialog, AssistantTabMixin, EngineTabMixin, AudioTabMixin,
                    CompanionTabMixin, UpdatesTabMixin, PluginsTabMixin):
     # Background checks emit here so Qt queues the result onto the GUI thread.
     _key_verified_signal = Signal(str, bool, str, list)
+    _quiet_models_loaded_signal = Signal(str, list)
     # Custom OpenAI-compatible: fetching models is the verify step (no cheaper auth probe).
     _custom_models_fetched_signal = Signal(bool, str, list)
     # Spotify Client ID + Secret verified together (token request needs both).
@@ -421,6 +423,7 @@ class ConfigDialog(QDialog, AssistantTabMixin, EngineTabMixin, AudioTabMixin,
         self._assistant_apply_timer.timeout.connect(self._apply_assistant_live)
 
         self._key_verified_signal.connect(self._on_key_verification_result)
+        self._quiet_models_loaded_signal.connect(self._on_quiet_models_loaded)
         self._custom_models_fetched_signal.connect(self._on_custom_models_fetch_result)
         self._spotify_verified_signal.connect(self._on_spotify_verify_result)
         self._update_checked_signal.connect(self._on_update_checked)
@@ -439,6 +442,7 @@ class ConfigDialog(QDialog, AssistantTabMixin, EngineTabMixin, AudioTabMixin,
         self._plugin_gui_tab_count = 0
         self._add_plugin_gui_tabs()
         self._configure_credential_commit_behavior()
+        self._trigger_quiet_model_fetches()
 
         # QFormLayout won't grow QComboBox; force Expanding so dropdowns match QLineEdit width.
         for combo in self.findChildren(QComboBox):
@@ -848,14 +852,84 @@ class ConfigDialog(QDialog, AssistantTabMixin, EngineTabMixin, AudioTabMixin,
         row = self._add_row(form, row_label, field)
         return key_edit, row_label, [row]
 
-    def _build_model_combo(self, current_value: str) -> QComboBox:
-        """Editable model dropdown; starts with current value; user can type a name not in the fetched list."""
+    DEFAULT_PROVIDER_MODELS = {
+        "gemini": [
+            "gemini-2.5-flash",
+            "gemini-2.5-pro",
+            "gemini-2.5-flash-lite",
+            "gemini-2.0-flash",
+            "gemini-2.0-flash-lite",
+            "gemini-1.5-flash",
+            "gemini-1.5-pro",
+            "gemini-1.5-flash-8b",
+        ],
+        "openai": [
+            "gpt-4o",
+            "gpt-4o-mini",
+            "o3-mini",
+            "o1",
+            "o1-mini",
+            "gpt-4-turbo",
+            "gpt-3.5-turbo",
+        ],
+        "anthropic": [
+            "claude-3-7-sonnet-latest",
+            "claude-3-5-sonnet-latest",
+            "claude-3-5-haiku-latest",
+            "claude-3-opus-latest",
+        ],
+        "groq": [
+            "whisper-large-v3-turbo",
+            "whisper-large-v3",
+            "distil-whisper-large-v3-en",
+        ],
+        "custom": [
+            "meta-llama/llama-3.3-70b-instruct",
+            "deepseek/deepseek-chat",
+            "deepseek/deepseek-r1",
+            "mistralai/mistral-large-latest",
+            "qwen/qwen-2.5-72b-instruct",
+        ],
+    }
+
+    def _build_model_combo(
+        self, current_value: str, provider: str = None, defaults: list = None
+    ) -> QComboBox:
+        """Editable model dropdown; starts with current value and default model choices;
+        user can type any custom model name not in the list."""
         combo = QComboBox()
         combo.setEditable(True)
         combo.setInsertPolicy(QComboBox.NoInsert)
+        combo.setMaxVisibleItems(15)
+
+        if not provider and current_value:
+            low = current_value.lower()
+            if "gemini" in low:
+                provider = "gemini"
+            elif "gpt" in low or "o1" in low or "o3" in low:
+                provider = "openai"
+            elif "claude" in low:
+                provider = "anthropic"
+            elif "whisper" in low:
+                provider = "groq"
+            elif "/" in low:
+                provider = "custom"
+
+        fallback_defaults = []
+        if defaults:
+            fallback_defaults = list(defaults)
+        elif provider and provider in self.DEFAULT_PROVIDER_MODELS:
+            fallback_defaults = list(self.DEFAULT_PROVIDER_MODELS[provider])
+
+        items = []
         if current_value:
-            combo.addItem(current_value)
-        combo.setCurrentText(current_value)
+            items.append(current_value)
+        for m in fallback_defaults:
+            if m not in items:
+                items.append(m)
+        combo.addItems(items)
+        if current_value:
+            combo.setCurrentText(current_value)
         combo.currentTextChanged.connect(self._queue_assistant_apply)
         return combo
 
@@ -864,11 +938,50 @@ class ConfigDialog(QDialog, AssistantTabMixin, EngineTabMixin, AudioTabMixin,
         current = combo.currentText().strip()
         combo.blockSignals(True)
         combo.clear()
-        combo.addItems(models)
-        if current and combo.findText(current) < 0:
-            combo.insertItem(0, current)
-        combo.setCurrentText(current or (models[0] if models else ""))
+        items = []
+        if current:
+            items.append(current)
+        for m in models:
+            if m not in items:
+                items.append(m)
+        combo.addItems(items)
+        combo.setCurrentText(current or (items[0] if items else ""))
         combo.blockSignals(False)
+
+    def _on_quiet_models_loaded(self, provider: str, models: list):
+        """Silently enrich provider model comboboxes if a valid key dynamically loads models."""
+        target_map = {
+            "gemini": getattr(self, "gemini_model_edit", None),
+            "openai": getattr(self, "openai_model_edit", None),
+            "anthropic": getattr(self, "anthropic_model_edit", None),
+            "groq": getattr(self, "groq_model_edit", None),
+        }
+        target = target_map.get(provider)
+        if target is not None and models:
+            self._populate_model_combo(target, models)
+
+    def _trigger_quiet_model_fetches(self):
+        """If API keys are configured, quietly fetch fresh model lists in the background."""
+        providers_to_check = [
+            ("gemini", getattr(config, "GEMINI_API_KEY", ""), _verify_gemini_key),
+            ("openai", getattr(config, "OPENAI_API_KEY", ""), _verify_openai_key),
+            ("anthropic", getattr(config, "ANTHROPIC_API_KEY", ""), _verify_anthropic_key),
+            ("groq", getattr(config, "GROQ_API_KEY", ""), _verify_groq_key),
+        ]
+        for provider, key, verifier in providers_to_check:
+            clean_key = str(key or "").strip()
+            if not clean_key:
+                continue
+            def _fetch(p=provider, k=clean_key, v=verifier):
+                try:
+                    result = v(k)
+                    ok = result[0]
+                    models = result[2] if len(result) > 2 else []
+                    if ok and models:
+                        self._quiet_models_loaded_signal.emit(p, models)
+                except Exception:
+                    pass
+            threading.Thread(target=_fetch, daemon=True).start()
 
     def _poll_engine_status_after_change(self):
         # After a Whisper reload, poll the status label for a few seconds.
