@@ -150,3 +150,17 @@ def test_if_discord_wont_play_her_voice_goes_to_the_speakers():
             assert not voice_playback._discord_bot_connected()  # speech now plays locally
         finally:
             discord_bot._cant_speak = ""
+
+
+def test_queue_source_counts_voice_frames():
+    if discord_bot.discord is None:
+        return
+    import numpy as np
+    discord_bot.stop_audio()
+    source = discord_bot._QueueSource()
+    discord_bot._audio.extend(np.full(2000, 1234, np.int16).tobytes())  # under two frames
+    frames = [source.read(), source.read()]
+    assert all(len(f) == discord_bot.FRAME_BYTES for f in frames)
+    assert source.frames == 2 and source.peak == 1234
+    source.read()  # silence while waiting for more speech isn't counted
+    assert source.frames == 2
