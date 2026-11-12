@@ -116,8 +116,10 @@ def _join_listener(listener_thread, stop_event):
 
 
 def _clean_reply_for_speech(text: str) -> str:
-    """Removes punctuation a model occasionally leaves before a sentence."""
-    return re.sub(r"^[\s,;:—–-]+", "", (text or "")).strip()
+    """Removes stray leading punctuation, markdown, emoji and assistant-speak (brain.persona)."""
+    from brain.persona import tidy_reply
+
+    return tidy_reply(re.sub(r"^[\s,;:—–-]+", "", (text or ""))).strip()
 
 
 def speak(text: str, bridge=None):
@@ -211,6 +213,7 @@ def _stream_command_reply(command: str, bridge=None, text_queue=None):
             on_playback_start=on_playback_start,
             on_playback_end=(bridge.talk_end_signal.emit if bridge else None),
             stop_event=stop_event,
+            clean=_clean_reply_for_speech,
         )
         listener_thread = threading.Thread(target=listen, daemon=True)
         listener_thread.start()

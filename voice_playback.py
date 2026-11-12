@@ -258,13 +258,17 @@ class StreamingSpeaker:
 
     _BOUNDARY_RE = re.compile(r"(?<=[.!?])\s+|(?<=[,;:])\s+")
     _SENTENCE_RE = re.compile(r"(?<=[.!?])\s+")
+    clean = staticmethod(lambda text: text)
 
     def __init__(
         self,
         on_playback_start=None,
         on_playback_end=None,
         stop_event=None,
+        clean=None,
     ):
+        if clean is not None:
+            self.clean = clean  # e.g. main._clean_reply_for_speech, run per spoken chunk
         self.on_playback_start = on_playback_start
         self.on_playback_end = on_playback_end
         self.stop_event = stop_event or threading.Event()
@@ -320,13 +324,13 @@ class StreamingSpeaker:
             if end is None:
                 break
             chunk, self._pending = self._pending[:end], self._pending[end:]
-            chunk = _smooth_speech_text(chunk)
+            chunk = _smooth_speech_text(self.clean(chunk))
             if chunk:
                 self._chunks_emitted += 1
                 self._chunks.put(chunk)
 
     def finish(self):
-        tail = _smooth_speech_text(self._pending)
+        tail = _smooth_speech_text(self.clean(self._pending))
         self._pending = ""
         if tail:
             self._chunks.put(tail)
