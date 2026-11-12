@@ -83,10 +83,17 @@ Nanami voice. 🌸
 
 ### The easy way 🍰
 
-Grab `Alyssa-Windows-x64.zip` from the
-[latest release](https://github.com/r9risky/alyssa-assistant/releases/latest),
-unzip it, and run `Alyssa.exe`. She keeps herself updated from the Updates
-tab in Settings.
+Grab **`Alyssa-Setup.exe`** from the
+[latest release](https://github.com/r9risky/alyssa-assistant/releases/latest)
+and run it. No admin rights needed; she installs just for you, adds a Start
+menu entry, and walks you through picking her brain, mic and voice the first
+time she starts. She keeps herself updated from the Updates tab in Settings.
+
+> Windows SmartScreen may say it "protected your PC" because the installer
+> isn't code-signed yet. Click **More info → Run anyway**.
+
+Prefer no installer? `Alyssa-Windows-x64.zip` from the same release works
+too: unzip it and run `Alyssa.exe`.
 
 ### From source 🛠️
 

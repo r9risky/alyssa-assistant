@@ -40,11 +40,24 @@ jobs:
         run: |
           python scripts/build_exe.py
 
+      - name: Build installer
+        shell: pwsh
+        run: |
+          $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $iscc)) { choco install innosetup -y --no-progress }
+          $version = (Select-String -Path updater.py -Pattern 'CURRENT_VERSION = "v?([^"]+)"').Matches[0].Groups[1].Value
+          & $iscc "/DAppVersion=$version" installer\alyssa.iss
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $hash = (Get-FileHash dist\Alyssa-Setup.exe -Algorithm SHA256).Hash.ToLower()
+          Add-Content dist\checksums.txt "$hash *Alyssa-Setup.exe"
+
       - name: Upload build artifact
         uses: actions/upload-artifact@v4
         with:
           name: Alyssa-Windows-x64
-          path: dist/Alyssa-Windows-x64.zip
+          path: |
+            dist/Alyssa-Windows-x64.zip
+            dist/Alyssa-Setup.exe
           retention-days: 14
 
       - name: Create Release
@@ -52,6 +65,7 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: |
+            dist/Alyssa-Setup.exe
             dist/Alyssa-Windows-x64.zip
             dist/checksums.txt
           generate_release_notes: true
