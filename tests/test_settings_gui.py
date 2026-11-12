@@ -442,3 +442,11 @@ class SettingsGuiTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def test_apply_assistant_live_uses_module_credential_store():
+    # A local `import credential_store` made the name unbound in the earlier secrets comprehension.
+    from overlay.settings_tabs.assistant_tab import AssistantTabMixin
+
+    code = AssistantTabMixin._apply_assistant_live.__code__
+    assert "credential_store" not in code.co_varnames + code.co_cellvars

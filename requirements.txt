@@ -26,6 +26,9 @@ send2trash
 segno
 # Her Discord bot (discord_bot.py): voice with Discord's encryption via davey
 discord.py[voice]>=2.7.1
+# davey 0.2 needs prepare/execute_transition calls discord.py 2.7.1 doesn't make: the session
+# never gets ready, her audio goes out unencrypted, and nobody in the call hears it.
+davey>=0.1,<0.2
 # Backup listening for the bot: records what the PC plays (WASAPI loopback)
 soundcard
 PySide6
