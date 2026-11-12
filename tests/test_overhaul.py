@@ -98,7 +98,7 @@ def test_preflight_checks_notify_throttling():
 def test_nameutil_detects_expanded_whisper_aliases():
     """Verify Whisper mishearings like 'eliza' and 'elyssa' are recognized as Alyssa."""
     import nameutil
-    for variant in ["eliza", "elyssa", "elysia", "allissa", "alisha", "lisa"]:
+    for variant in ["eliza", "elyssa", "elysia", "allissa", "alisha"]:
         text = f"hey {variant} what time is it"
         assert nameutil.contains_name(text), f"Failed to match alias '{variant}' in '{text}'"
         span = nameutil.find_name_span(text)

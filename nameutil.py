@@ -6,10 +6,22 @@ import re
 import config
 
 
+# Other people's names that older configs listed as aliases. Saying "Lisa" or
+# "Melissa" in normal conversation made her answer, so they never count as her
+# name. Removed in code because the updater keeps a user's old alias list.
+_NOT_HER_NAME = {"lisa", "melissa", "larissa"}
+
+# Words that can come before her name when you address her ("hey Alyssa").
+_MAX_WORDS_BEFORE_NAME = 2
+
+
 def name_variants():
     """Returns deduplicated configured assistant name and aliases."""
-    names = [config.ASSISTANT_NAME] + list(getattr(config, "ASSISTANT_NAME_ALIASES", []))
-    return list(dict.fromkeys(names))
+    aliases = [
+        a for a in getattr(config, "ASSISTANT_NAME_ALIASES", [])
+        if str(a).strip().lower() not in _NOT_HER_NAME
+    ]
+    return list(dict.fromkeys([config.ASSISTANT_NAME] + aliases))
 
 
 @functools.lru_cache(maxsize=16)
@@ -32,6 +44,19 @@ def find_name_span(text: str):
     match = name_pattern().search(text)
     if match:
         return match.start(), match.end()
+    return None
+
+
+def find_address_span(text: str):
+    """Like find_name_span, but only when the name is used to address her: at the
+    start ("hey Alyssa, ...", at most two words before it) or as the last word
+    ("open Chrome, Alyssa"). "I told Alyssa about it" is talk about her, not to
+    her, so it returns None."""
+    for match in name_pattern().finditer(text or ""):
+        before = re.findall(r"[\w']+", text[: match.start()])
+        after = re.findall(r"[\w']+", text[match.end():])
+        if len(before) <= _MAX_WORDS_BEFORE_NAME or not after:
+            return match.start(), match.end()
     return None
 
 

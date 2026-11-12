@@ -543,6 +543,10 @@ def _record_command_blocking(
         total_speech_frames = 0
         streaming_stt = transcribe.start_streaming()
         stt_frames = []
+        # Start transcribing halfway through the end-of-speech pause, so the text
+        # is usually ready the moment recording stops instead of starting then.
+        early_at = max(1, silence_frames_needed // 2)
+        early_job = None
 
         with _open_stream(
             samplerate=config.SAMPLE_RATE,
@@ -613,9 +617,12 @@ def _record_command_blocking(
                         speech_run += 1
                         silent_run = 0
                         total_speech_frames += 1
+                        early_job = None  # you kept talking; that guess is stale
                     else:
                         silent_run += 1
                         speech_run = 0
+                        if silent_run == early_at and streaming_stt is None:
+                            early_job = _start_early_transcription(frames)
 
                     if silent_run >= silence_frames_needed:
                         break
@@ -641,10 +648,38 @@ def _record_command_blocking(
         with _rate_lock:
             _last_speech_frames = total_speech_frames
 
+        if early_job is not None:
+            transcribe.set_early_transcript(*early_job)
+
         audio = np.concatenate(frames).astype(np.float32) / 32768.0
         result_q.put((audio, None))
     except Exception as e:
         result_q.put((None, e))
+
+
+def _start_early_transcription(frames):
+    """Transcribe `frames` on a worker. Returns (thread, result list) where the
+    list gets the text once done; an empty list means it failed or timed out."""
+    audio = np.concatenate(frames).astype(np.float32) / 32768.0
+    result = []
+
+    def run():
+        try:
+            text = transcribe._transcribe_impl(audio)
+            if text:
+                result.append(text)
+        except Exception as e:
+            print(f"(early transcription failed, transcribing normally: {e})")
+
+    thread = threading.Thread(target=run, daemon=True)
+    thread.start()
+    return thread, result
+
+
+def last_speech_seconds() -> float:
+    """How much speech (by VAD) the most recent recording held."""
+    with _rate_lock:
+        return _last_speech_frames * _FRAME_MS / 1000.0
 
 
 def listen_for_barge_in(

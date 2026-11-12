@@ -98,6 +98,8 @@ def test_wake_word_mode_without_model_still_records_speech(monkeypatch):
     monkeypatch.setattr(recorder, "VoiceActivityDetector", _LoudVad)
     monkeypatch.setattr(recorder, "_open_stream", _fake_open)
     monkeypatch.setattr(recorder.transcribe, "start_streaming", lambda: None)
+    # The recorder transcribes early during the end pause; keep that off real Whisper.
+    monkeypatch.setattr(recorder.transcribe, "_transcribe_impl", lambda audio: "hey Alyssa")
     recorder._talk_request.clear()
 
     detector = recorder.wake_word.get_wake_word_detector()
@@ -105,6 +107,7 @@ def test_wake_word_mode_without_model_still_records_speech(monkeypatch):
     audio = recorder.record_command()
     assert audio is not None and audio.size > 0
     assert not recorder.was_wake_word_triggered()  # so main.py checks for her name
+    assert recorder.transcribe.transcribe(audio) == "hey Alyssa"  # early result reused
 
 
 def test_mic_error_backs_off_instead_of_spinning(monkeypatch):

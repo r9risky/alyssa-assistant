@@ -7,9 +7,9 @@ ASSISTANT_NAME = 'Alyssa'
 CREATOR_NAME = "Riya"
 ASSISTANT_NAME_ALIASES = [
     "alyssa", "alissa", "alisa", "alysa", "aleesa", "aleessa",
-    "alicia", "elisa", "elissa", "melissa", "larissa",
+    "alicia", "elisa", "elissa",
     "eliza", "elysia", "elyssa", "allissa", "allisa", "alissia",
-    "alisha", "alysha", "ahlyssa", "uhlyssa", "lisa",
+    "alisha", "alysha", "ahlyssa", "uhlyssa",
 ]
 
 
