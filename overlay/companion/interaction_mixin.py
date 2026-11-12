@@ -51,6 +51,8 @@ class InteractionMixin:
             else:
                 self._dragging = True
                 self._drag_offset = event.globalPosition().toPoint() - self.pos()
+                if getattr(self, "hover_pill", None) is not None:
+                    self.hover_pill.hide()  # it'd trail behind her while she's carried
         elif event.button() == Qt.RightButton:
             self._show_context_menu(event.globalPosition().toPoint())
 

@@ -22,6 +22,7 @@ from PySide6.QtWidgets import (
 
 import config
 
+from . import motion
 from .rendering import BASE_W, BASE_H, MIN_W, save_overlay_settings
 from .theming import _rgba, _theme
 from .companion.rendering_mixin import RenderingMixin
@@ -423,11 +424,11 @@ class SpeechBubble(_TopmostWindowMixin, QWidget):
             self.setWindowOpacity(0.0)
             self.show()
         self.raise_()
-        self._opacity_anim.setDuration(220)
+        self._opacity_anim.setDuration(motion.NORMAL_MS)
         self._opacity_anim.setStartValue(start_opacity)
         self._opacity_anim.setEndValue(1.0)
         self._opacity_anim.setEasingCurve(QEasingCurve.OutCubic)
-        self._pos_anim.setDuration(220)
+        self._pos_anim.setDuration(motion.NORMAL_MS)
         self._pos_anim.setStartValue(self.pos())
         self._pos_anim.setEndValue(target_pos)
         self._pos_anim.setEasingCurve(QEasingCurve.OutCubic)
@@ -533,7 +534,7 @@ class SpeechBubble(_TopmostWindowMixin, QWidget):
         self._type_timer.stop()
         self._show_group.stop()
         self._opacity_anim.stop()
-        self._opacity_anim.setDuration(320)
+        self._opacity_anim.setDuration(motion.SLOW_MS)
         self._opacity_anim.setStartValue(self.windowOpacity())
         self._opacity_anim.setEndValue(0.0)
         self._opacity_anim.setEasingCurve(QEasingCurve.InCubic)
@@ -715,9 +716,9 @@ class ChatInputBar(_TopmostWindowMixin, QWidget):
         """Show/hide per settings['chatbox_enabled']."""
         if self.settings.get("chatbox_enabled", True):
             self.reposition()
-            self.show()
+            motion.fade_in(self)
         else:
-            self.hide()
+            motion.fade_out(self)
 
     def reposition(self):
         """Re-anchor to companion: chatbox_position is bottom/left/right. Clamp to screen; do not flip sides."""
@@ -869,10 +870,19 @@ class HoverPill(_TopmostWindowMixin, QWidget):
             )
 
     def reposition(self):
+        # Over her lower edge: the space above her belongs to the speech bubble.
         cw = self.companion
         x = cw.x() + cw.width() // 2 - self.width() // 2
-        y = cw.y() - self.height() - 4
+        y = cw.y() + cw.height() - self.height() - 10
         self.move(x, max(0, y))
+
+    def enterEvent(self, event):
+        super().enterEvent(event)
+        self.companion.keep_hover_pill()
+
+    def leaveEvent(self, event):
+        super().leaveEvent(event)
+        self.companion.release_hover_pill()
 
 
 class MiniPlayerWidget(_TopmostWindowMixin, QWidget):
@@ -974,9 +984,9 @@ class MiniPlayerWidget(_TopmostWindowMixin, QWidget):
     def apply_enabled(self):
         if self.settings.get("mini_player_enabled", False):
             self.reposition()
-            self.show()
+            motion.fade_in(self)
         else:
-            self.hide()
+            motion.fade_out(self)
 
     def reposition(self):
         cw = self.companion
@@ -1212,6 +1222,38 @@ class CompanionWindow(
             self.call_panel.reposition()
         if self.game_hud and self.game_hud.isVisible():
             self.game_hud.reposition()
+
+    # -- hover pill: quick actions + her fondness heart while the mouse is on her --
+    def enterEvent(self, event):
+        super().enterEvent(event)
+        self.keep_hover_pill()
+
+    def leaveEvent(self, event):
+        super().leaveEvent(event)
+        self.release_hover_pill()
+
+    def keep_hover_pill(self):
+        pill = self.hover_pill
+        if pill is None or not self.settings.get("hover_pill_enabled", True) or self._dragging:
+            return
+        timer = getattr(self, "_pill_hide_timer", None)
+        if timer is not None:
+            timer.stop()
+        if not pill.isVisible() or getattr(pill, "_motion_hides", False):
+            pill.refresh_state()
+            pill.reposition()
+        motion.fade_in(pill, motion.FAST_MS)
+
+    def release_hover_pill(self):
+        """Hide the pill shortly after the mouse leaves (long enough to reach the pill itself)."""
+        if self.hover_pill is None:
+            return
+        timer = getattr(self, "_pill_hide_timer", None)
+        if timer is None:
+            timer = self._pill_hide_timer = QTimer(self)
+            timer.setSingleShot(True)
+            timer.timeout.connect(lambda: motion.fade_out(self.hover_pill, motion.FAST_MS))
+        timer.start(600)
 
     def start_cursor_ride(self) -> str:
         """Attach the companion to ride alongside the mouse cursor."""
