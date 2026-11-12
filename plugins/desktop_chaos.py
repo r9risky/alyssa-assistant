@@ -13,19 +13,19 @@ from typing import Any, Dict, Optional
 from actions.desktop_chaos import dismiss_all_pranks, show_fake_crash, spawn_clone_swarm
 
 
-def trigger_fake_crash(args: Optional[Dict[str, Any]] = None) -> str:
+def trigger_fake_crash(args: Optional[Dict[str, Any]] = None, **kwargs) -> str:
     """Show the harmless 5-second CHOOM_OVERFLOW fake BSOD."""
     return show_fake_crash()
 
 
-def spawn_clones(args: Optional[Dict[str, Any]] = None) -> str:
+def spawn_clones(args: Optional[Dict[str, Any]] = None, **kwargs) -> str:
     """Spawn harmless wandering Alyssa clone notes across the screen."""
-    args = args or {}
+    args = {**(args or {}), **kwargs}  # the brain calls tools as func(**model_args)
     count = int(args.get("count", 4))
     return spawn_clone_swarm(count=count)
 
 
-def clear_chaos_pranks(args: Optional[Dict[str, Any]] = None) -> str:
+def clear_chaos_pranks(args: Optional[Dict[str, Any]] = None, **kwargs) -> str:
     """Dismiss any active chaos pranks or clones."""
     return dismiss_all_pranks()
 

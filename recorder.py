@@ -404,6 +404,7 @@ _last_wake_word_triggered = False
 # Push-to-talk: the talk hotkey sets this; record_command consumes it.
 _talk_request = threading.Event()
 _PUSH_TO_TALK_POLL_SECONDS = 0.25
+_MIC_ERROR_BACKOFF_SECONDS = 1.0
 
 
 def request_push_to_talk() -> None:
@@ -516,6 +517,11 @@ def _record_command_blocking(
             return
 
         ww_detector = wake_word.get_wake_word_detector() if use_wake_word else None
+        if ww_detector is not None and not ww_detector.has_model:
+            # The built-in acoustic heuristic fires on almost any /s/ sound and its
+            # trigger skips the name check, so random speech became commands. Without
+            # a trained ONNX model, record on VAD and let main.py require the name.
+            ww_detector = None
         if ww_detector is not None:
             ww_detector.reset()
 
@@ -572,7 +578,9 @@ def _record_command_blocking(
                                 except Exception as e:
                                     streaming_stt.disconnect()
                                     streaming_stt = None
-                    if not heard_speech and not use_wake_word:
+                    if not heard_speech:
+                        # VAD start in every mode; in wake-word mode main.py then only
+                        # acts if the transcript contains her name.
                         if is_speech:
                             speech_run += 1
                             if speech_run >= min_speech_frames:
@@ -850,5 +858,8 @@ def record_command(
     audio, error = result_q.get()
     if error is not None:
         print(f"(Microphone recording encountered error: {error}, retrying...)")
+        # Back off: an instant None spun the main loop at full speed (and flooded
+        # the log) whenever the mic failed to open.
+        time.sleep(_MIC_ERROR_BACKOFF_SECONDS)
         return None
     return audio

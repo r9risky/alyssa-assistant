@@ -2,6 +2,7 @@
 import importlib.util
 import os
 import sys
+import types
 
 from config import PLUGIN_SETTINGS as config
 
@@ -17,6 +18,20 @@ else:
 # Without this, spec_from_file_location isolation can't see neighbors.
 if os.path.isdir(PLUGINS_DIR) and PLUGINS_DIR not in sys.path:
     sys.path.insert(0, PLUGINS_DIR)
+
+
+def _expose_as_plugins_package(stem, module):
+    """Make `from plugins.<stem> import X` return the loaded instance. Core code
+    imports a few plugins directly; without this it got a second copy with its own
+    state (e.g. a watch-along started by voice that its tools couldn't see)."""
+    package = sys.modules.get("plugins")
+    if package is None:
+        package = types.ModuleType("plugins")
+        package.__path__ = [PLUGINS_DIR]
+        sys.modules["plugins"] = package
+    sys.modules[f"plugins.{stem}"] = module
+    setattr(package, stem, module)
+
 
 # From the most recent load_plugins(); actions.run_diagnostics() reports these.
 _load_errors = []
@@ -71,6 +86,7 @@ def load_plugins():
             spec = importlib.util.spec_from_file_location(module_name, path)
             module = importlib.util.module_from_spec(spec)
             spec.loader.exec_module(module)
+            _expose_as_plugins_package(filename[:-3], module)
         except Exception as e:
             print(f"[plugins] Skipping '{filename}' - failed to load: {e}")
             _load_errors.append(f"'{filename}' failed to load: {e}")

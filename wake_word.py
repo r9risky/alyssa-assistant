@@ -95,6 +95,11 @@ class WakeWordDetector:
                 except Exception:
                     self._session = None
 
+    @property
+    def has_model(self) -> bool:
+        """True when a trained ONNX wake-word model is loaded (not just the heuristic)."""
+        return self._session is not None
+
     def reset(self):
         """Reset internal rolling audio buffer and state."""
         self._buffer.fill(0)

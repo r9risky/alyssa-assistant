@@ -420,15 +420,14 @@ class SettingsGuiTests(unittest.TestCase):
 
         # Check that standard models exist in the dropdowns
         gemini_items = [gemini_combo.itemText(i) for i in range(gemini_combo.count())]
-        self.assertIn("gemini-2.5-flash", gemini_items)
-        self.assertIn("gemini-1.5-flash", gemini_items)
+        self.assertIn("gemini-3.5-flash-lite", gemini_items)
+        self.assertNotIn("gemini-1.5-flash", gemini_items)  # retired
 
         openai_items = [openai_combo.itemText(i) for i in range(openai_combo.count())]
-        self.assertIn("gpt-4o", openai_items)
-        self.assertIn("gpt-4o-mini", openai_items)
+        self.assertIn("gpt-5-mini", openai_items)
 
         anthropic_items = [anthropic_combo.itemText(i) for i in range(anthropic_combo.count())]
-        self.assertIn("claude-3-5-sonnet-latest", anthropic_items)
+        self.assertIn("claude-sonnet-5", anthropic_items)
 
         groq_items = [groq_combo.itemText(i) for i in range(groq_combo.count())]
         self.assertIn("whisper-large-v3-turbo", groq_items)

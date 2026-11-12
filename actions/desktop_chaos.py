@@ -189,9 +189,13 @@ def show_fake_crash() -> str:
     """Launch harmless 5-second CHOOM_OVERFLOW fake crash screen."""
     if QApplication.instance() is None:
         return "Triggered CHOOM_OVERFLOW fake crash (no GUI display)."
-    crash = FakeCrashWidget()
-    _ACTIVE_PRANKS.append(crash)
-    crash.show()
+    def _show():
+        crash = FakeCrashWidget()
+        _ACTIVE_PRANKS.append(crash)
+        crash.show()
+
+    from overlay.widgets import run_on_gui_thread
+    run_on_gui_thread(_show)
     return "Triggered CHOOM_OVERFLOW fake crash (dismissible via Esc or click)."
 
 
@@ -204,28 +208,36 @@ def spawn_clone_swarm(count: int = 5) -> str:
     if not screen:
         return "Screen not available for clone swarm."
 
-    geom = screen.geometry()
-    quotes = list(CLONE_QUOTES)
-    random.shuffle(quotes)
+    def _show():
+        geom = screen.geometry()
+        quotes = list(CLONE_QUOTES)
+        random.shuffle(quotes)
+        for i in range(min(count, len(quotes))):
+            rx = random.randint(geom.x() + 50, max(geom.x() + 100, geom.width() - 250))
+            ry = random.randint(geom.y() + 50, max(geom.y() + 100, geom.height() - 150))
+            clone = CloneCardWidget(quotes[i], QPoint(rx, ry))
+            _ACTIVE_PRANKS.append(clone)
+            clone.show()
 
-    for i in range(min(count, len(quotes))):
-        rx = random.randint(geom.x() + 50, max(geom.x() + 100, geom.width() - 250))
-        ry = random.randint(geom.y() + 50, max(geom.y() + 100, geom.height() - 150))
-        clone = CloneCardWidget(quotes[i], QPoint(rx, ry))
-        _ACTIVE_PRANKS.append(clone)
-        clone.show()
+    from overlay.widgets import run_on_gui_thread
+    run_on_gui_thread(_show)
 
     return f"Spawned {count} desktop clones! They will self-dismiss in 8s or on click."
 
 
 def dismiss_all_pranks() -> str:
     """Instantly clear any active chaos pranks."""
-    closed = 0
-    for w in list(_ACTIVE_PRANKS):
-        try:
-            w.close()
-            closed += 1
-        except Exception:
-            pass
+    widgets = list(_ACTIVE_PRANKS)
     _ACTIVE_PRANKS.clear()
+
+    def _close():
+        for w in widgets:
+            try:
+                w.close()
+            except Exception:
+                pass
+
+    from overlay.widgets import run_on_gui_thread
+    run_on_gui_thread(_close)
+    closed = len(widgets)
     return f"Dismissed {closed} desktop chaos widgets."

@@ -28,7 +28,7 @@ RELEASE_REPOSITORY = "alyssa-assistant"
 LATEST_RELEASE_URL = (
     f"https://api.github.com/repos/{RELEASE_OWNER}/{RELEASE_REPOSITORY}/releases/latest"
 )
-CURRENT_VERSION = "v1.6.1"
+CURRENT_VERSION = "v1.6.2"
 TRANSACTION_DIR = ".alyssa-update-transaction"
 COMMITTED_TRANSACTION_DIR = ".alyssa-update-committed"
 MAX_CHECKSUM_BYTES = 1024 * 1024
@@ -1001,12 +1001,13 @@ def _prepare_restart_updater(
         "set \"STAGED_ROOT=%~3\"\r\n"
         "set \"TARGET_EXE=%~4\"\r\n"
         "\r\n"
-        "if not \"%PID%\"==\"\" (\r\n"
+        # cmd can't goto a label inside a ( ) block, so the wait loop is flat.
+        "if \"%PID%\"==\"\" goto apply\r\n"
         ":wait_loop\r\n"
-        "    timeout /t 1 /nobreak >nul 2>&1\r\n"
-        "    tasklist /fi \"PID eq %PID%\" 2>nul | find \"%PID%\" >nul\r\n"
-        "    if not errorlevel 1 goto wait_loop\r\n"
-        ")\r\n"
+        "timeout /t 1 /nobreak >nul 2>&1\r\n"
+        "tasklist /fi \"PID eq %PID%\" 2>nul | find \"%PID%\" >nul\r\n"
+        "if not errorlevel 1 goto wait_loop\r\n"
+        ":apply\r\n"
         "\r\n"
         "timeout /t 1 /nobreak >nul 2>&1\r\n"
         "\r\n"
@@ -1083,9 +1084,10 @@ def _commit_update_transaction(install_root: Path, transaction_root: Path) -> No
         state["phase"] = "committed"
         _write_transaction_state(transaction_root, state)
     except Exception:
-        if not locked_changes:
-            _rollback_transaction(install_root, transaction_root)
-            raise
+        # Any real failure rolls back, even after some files were deferred as locked;
+        # swallowing it here used to finish a half-applied update with no journal left.
+        _rollback_transaction(install_root, transaction_root)
+        raise
     try:
         _finish_transaction(install_root, transaction_root)
     except OSError:

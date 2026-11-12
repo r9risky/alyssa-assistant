@@ -15,7 +15,7 @@ import logging
 import time
 from typing import Any, Deque, Dict, Optional
 
-from overlay.widgets import get_active_companion_window
+from overlay.widgets import get_active_companion_window, run_on_gui_thread
 
 logger = logging.getLogger("plugins.watch_along")
 
@@ -57,21 +57,21 @@ class WatchAlongState:
 WATCH_ALONG_SESSION = WatchAlongState()
 
 
-def start_watch_along(args: Optional[Dict[str, Any]] = None) -> str:
+def start_watch_along(args: Optional[Dict[str, Any]] = None, **kwargs) -> str:
     """Start watching a video, show, or stream together."""
-    args = args or {}
+    args = {**(args or {}), **kwargs}  # the brain calls tools as func(**model_args)
     title = args.get("title") or "the video"
 
     WATCH_ALONG_SESSION.start(title)
 
     win = get_active_companion_window()
     if win and hasattr(win, "bubble") and win.bubble:
-        win.bubble.show_message("Got my popcorn! Watching along with you. Let's see what happens.", mood="happy")
+        run_on_gui_thread(lambda: win.bubble.show_message("Got my popcorn! Watching along with you. Let's see what happens."))
 
     return f"Watch-along mode started for '{title}'! Alyssa is watching and will share witty reactions sparingly."
 
 
-def stop_watch_along(args: Optional[Dict[str, Any]] = None) -> str:
+def stop_watch_along(args: Optional[Dict[str, Any]] = None, **kwargs) -> str:
     """Stop watch-along mode."""
     if not WATCH_ALONG_SESSION.active:
         return "Watch-along mode is not currently active."
@@ -84,14 +84,14 @@ def stop_watch_along(args: Optional[Dict[str, Any]] = None) -> str:
 
     win = get_active_companion_window()
     if win and hasattr(win, "bubble") and win.bubble:
-        win.bubble.show_message("Fun watch! Thanks for sharing that with me.", mood="happy")
+        run_on_gui_thread(lambda: win.bubble.show_message("Fun watch! Thanks for sharing that with me."))
 
     return f"Watch-along ended. Watched for {dur_str} with {comments} comments."
 
 
-def watch_along_react(args: Optional[Dict[str, Any]] = None) -> str:
+def watch_along_react(args: Optional[Dict[str, Any]] = None, **kwargs) -> str:
     """Generate or log an in-character witty reaction to what just occurred."""
-    args = args or {}
+    args = {**(args or {}), **kwargs}  # the brain calls tools as func(**model_args)
     comment = args.get("comment", "").strip()
 
     if not WATCH_ALONG_SESSION.active:
@@ -104,12 +104,12 @@ def watch_along_react(args: Optional[Dict[str, Any]] = None) -> str:
 
     win = get_active_companion_window()
     if win and hasattr(win, "bubble") and win.bubble:
-        win.bubble.show_message(reaction, mood="focus")
+        run_on_gui_thread(lambda: win.bubble.show_message(reaction))
 
     return f"Reacted: {reaction}"
 
 
-def watch_along_status(args: Optional[Dict[str, Any]] = None) -> str:
+def watch_along_status(args: Optional[Dict[str, Any]] = None, **kwargs) -> str:
     """Check watch-along mode status."""
     if not WATCH_ALONG_SESSION.active:
         return "Watch-along is currently inactive. Say 'watch this video with me' to begin!"

@@ -853,30 +853,24 @@ class ConfigDialog(QDialog, AssistantTabMixin, EngineTabMixin, AudioTabMixin,
         return key_edit, row_label, [row]
 
     DEFAULT_PROVIDER_MODELS = {
+        # Offline fallbacks; with a key set, the provider's live model list is merged in.
+        # Retired models (Gemini 1.5/2.0, Claude 3.x) 404, so they are not offered.
         "gemini": [
+            "gemini-3.5-flash-lite",
+            "gemini-3.5-flash",
             "gemini-2.5-flash",
             "gemini-2.5-pro",
-            "gemini-2.5-flash-lite",
-            "gemini-2.0-flash",
-            "gemini-2.0-flash-lite",
-            "gemini-1.5-flash",
-            "gemini-1.5-pro",
-            "gemini-1.5-flash-8b",
         ],
         "openai": [
-            "gpt-4o",
-            "gpt-4o-mini",
-            "o3-mini",
-            "o1",
-            "o1-mini",
-            "gpt-4-turbo",
-            "gpt-3.5-turbo",
+            "gpt-5-mini",
+            "gpt-5",
+            "gpt-5-nano",
         ],
         "anthropic": [
-            "claude-3-7-sonnet-latest",
-            "claude-3-5-sonnet-latest",
-            "claude-3-5-haiku-latest",
-            "claude-3-opus-latest",
+            "claude-sonnet-5",
+            "claude-sonnet-5-5",
+            "claude-haiku-5-5",
+            "claude-opus-5-5",
         ],
         "groq": [
             "whisper-large-v3-turbo",

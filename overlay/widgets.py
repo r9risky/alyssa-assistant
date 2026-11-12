@@ -4,7 +4,7 @@ import random
 import sys
 
 from PySide6.QtCore import (
-    Qt, QTimer, QPoint, QSize, Signal, QObject, QRect,
+    Qt, QTimer, QPoint, QSize, Signal, QObject, QRect, QCoreApplication, QThread,
     QPropertyAnimation, QEasingCurve, QParallelAnimationGroup,
 )
 from PySide6.QtGui import (
@@ -815,6 +815,19 @@ def get_active_companion():
 
 
 get_active_companion_window = get_active_companion
+
+
+def run_on_gui_thread(fn) -> bool:
+    """Run fn on the Qt GUI thread. Tools run on the assistant worker thread, where
+    touching widgets crashes Qt and a context-less QTimer.singleShot never fires."""
+    app = QCoreApplication.instance()
+    if app is None:
+        return False
+    if QThread.currentThread() is app.thread():
+        fn()
+    else:
+        QTimer.singleShot(0, app, fn)
+    return True
 
 
 _WANDER_INTERVALS = {
