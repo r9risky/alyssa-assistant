@@ -44,3 +44,12 @@ class PromptTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def test_personality_preset_changes_only_the_vibe():
+    with patch.object(config, "PERSONALITY_PRESET", "sassy"):
+        sassy = persona.voice("Alyssa", "Roi")
+    assert "sassy" in sassy and "no markdown" in sassy and "Roi's desktop companion" in sassy
+    with patch.object(config, "PERSONALITY_PRESET", "nonsense"):
+        assert persona.current_preset() == "playful"
+    assert persona.voice("Alyssa", preset="focused") != persona.voice("Alyssa", preset="chill")

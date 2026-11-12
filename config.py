@@ -166,6 +166,8 @@ HIDE_CONSOLE_WINDOW = False  # True: hide the Windows console at startup
 
 # None = off. "lite" / "full" / "ultra" — terser LLM replies only; does not change what she knows or does.
 CAVEMAN_MODE = None
+# Her vibe: 'playful' (default), 'chill', 'sassy', 'sweet' or 'focused'. See brain/persona.PRESETS.
+PERSONALITY_PRESET = 'playful'
 
 LAUNCH_APPS_IN_BACKGROUND = True
 APP_LAUNCH_SETTLE_SECONDS = 1.5
@@ -425,6 +427,7 @@ class UISettings(_SettingsView):
     ENABLE_COMPANION_GUI: bool
     HIDE_CONSOLE_WINDOW: bool
     CAVEMAN_MODE: str | None
+    PERSONALITY_PRESET: str
     LAUNCH_APPS_IN_BACKGROUND: bool
     APP_LAUNCH_SETTLE_SECONDS: float
     CONFIRM_BEFORE_ACTIONS: bool
