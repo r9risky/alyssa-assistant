@@ -55,6 +55,16 @@ class ToolFilteringTests(unittest.TestCase):
         self.assertLess(len(calendar_names), len(catalog))
         self.assertLess(len(camera_names), len(catalog))
 
+    def test_small_talk_sends_only_core_tools(self):
+        for text in ("hi how are you", "thanks so much", "good morning alyssa", "tell me a joke", "what time is it"):
+            with self.subTest(text=text):
+                self.assertEqual(tool_registry._CORE_TOOL_NAMES, _names(tool_registry.select_tools(text)))
+
+    def test_who_questions_still_offer_web_search(self):
+        search = _schema("search_web", "Searches the web for who/what/when questions.")
+        with patch.object(tool_registry, "TOOLS", [*BASE_TOOLS, search]):
+            self.assertIn("search_web", _names(tool_registry.select_tools("who won the game yesterday")))
+
     def test_converted_schema_caches_are_keyed_by_subset(self):
         first_subset = [_schema("calendar_tool", "Calendar")]
         second_subset = [_schema("camera_tool", "Camera")]

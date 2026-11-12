@@ -17,6 +17,15 @@ _IGNORED_WORDS = {
     "give", "have", "how", "into", "look", "make", "next", "open", "please", "run", "search",
     "set", "show", "something", "start", "stop", "tell", "that", "the", "this", "turn",
     "use", "want", "what", "when", "where", "which", "with", "would", "your",
+    # Small talk and filler: these match many descriptions and pull in unrelated tools.
+    # "time" is safe because get_datetime is always sent.
+    "you", "yours", "me", "my", "mine", "our", "him", "her", "his", "them", "they", "their",
+    "its", "was", "were", "been", "being", "did", "does", "doing", "done", "will",
+    "just", "really", "very", "much", "too", "also", "like", "some", "any", "all", "one", "out",
+    "now", "then", "than", "there", "here", "not", "don", "yes", "yeah", "okay", "hey",
+    "hello", "thank", "thanks", "good", "morning", "afternoon", "evening", "night",
+    "why", "know", "think", "need", "let", "again", "user",
+    "alyssa", "time",
 }
 
 
