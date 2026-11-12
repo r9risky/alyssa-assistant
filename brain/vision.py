@@ -21,6 +21,29 @@ _SCREEN_VISION_BASE_PROMPT = (
 )
 
 
+def ask_vision(image_bytes: bytes, prompt: str) -> str:
+    """Send one JPEG + prompt to the configured provider's vision model; returns its text."""
+    provider = config.LLM_PROVIDER
+    if provider == "gemini":
+        return _describe_image_gemini(image_bytes, "image/jpeg", prompt)
+    if provider == "openai":
+        return _describe_image_openai_compatible(
+            image_bytes, "image/jpeg", prompt,
+            getattr(config, "OPENAI_BASE_URL", "https://api.openai.com/v1"),
+            config.OPENAI_API_KEY, config.OPENAI_MODEL, "OpenAI",
+        )
+    if provider == "anthropic":
+        return _describe_image_anthropic(image_bytes, "image/jpeg", prompt)
+    if provider == "custom_openai":
+        return _describe_image_openai_compatible(
+            image_bytes, "image/jpeg", prompt,
+            getattr(config, "CUSTOM_BASE_URL", ""),
+            getattr(config, "CUSTOM_API_KEY", ""),
+            getattr(config, "CUSTOM_MODEL", ""), "Your custom provider",
+        )
+    return _describe_image_ollama(image_bytes, prompt)
+
+
 def describe_screen_with_vision(question: str = "") -> str:
     """Screenshot in memory (never saved to disk); describe it or answer `question`.
 
@@ -49,25 +72,7 @@ def describe_screen_with_vision(question: str = "") -> str:
     if question:
         prompt += f' They asked: "{question}" - answer that directly.'
 
-    provider = config.LLM_PROVIDER
-    if provider == "gemini":
-        return _describe_image_gemini(image_bytes, "image/jpeg", prompt)
-    if provider == "openai":
-        return _describe_image_openai_compatible(
-            image_bytes, "image/jpeg", prompt,
-            getattr(config, "OPENAI_BASE_URL", "https://api.openai.com/v1"),
-            config.OPENAI_API_KEY, config.OPENAI_MODEL, "OpenAI",
-        )
-    if provider == "anthropic":
-        return _describe_image_anthropic(image_bytes, "image/jpeg", prompt)
-    if provider == "custom_openai":
-        return _describe_image_openai_compatible(
-            image_bytes, "image/jpeg", prompt,
-            getattr(config, "CUSTOM_BASE_URL", ""),
-            getattr(config, "CUSTOM_API_KEY", ""),
-            getattr(config, "CUSTOM_MODEL", ""), "Your custom provider",
-        )
-    return _describe_image_ollama(image_bytes, prompt)
+    return ask_vision(image_bytes, prompt)
 
 
 _LOCATE_ELEMENT_PROMPT_TEMPLATE = (
@@ -106,26 +111,7 @@ def locate_screen_element_with_vision(description: str) -> tuple[float, float] |
 
     prompt = _LOCATE_ELEMENT_PROMPT_TEMPLATE.format(description=description.strip())
 
-    provider = config.LLM_PROVIDER
-    if provider == "gemini":
-        raw = _describe_image_gemini(image_bytes, "image/jpeg", prompt)
-    elif provider == "openai":
-        raw = _describe_image_openai_compatible(
-            image_bytes, "image/jpeg", prompt,
-            getattr(config, "OPENAI_BASE_URL", "https://api.openai.com/v1"),
-            config.OPENAI_API_KEY, config.OPENAI_MODEL, "OpenAI",
-        )
-    elif provider == "anthropic":
-        raw = _describe_image_anthropic(image_bytes, "image/jpeg", prompt)
-    elif provider == "custom_openai":
-        raw = _describe_image_openai_compatible(
-            image_bytes, "image/jpeg", prompt,
-            getattr(config, "CUSTOM_BASE_URL", ""),
-            getattr(config, "CUSTOM_API_KEY", ""),
-            getattr(config, "CUSTOM_MODEL", ""), "Your custom provider",
-        )
-    else:
-        raw = _describe_image_ollama(image_bytes, prompt)
+    raw = ask_vision(image_bytes, prompt)
 
     match = re.search(r"(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)", raw or "")
     if not match:
