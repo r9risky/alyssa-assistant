@@ -11,6 +11,7 @@ except ImportError:
 
 from . import bridges, confirmation
 from .apps_and_files import _friendly_file_name
+import startup_logging
 from .confirmation import _confirm
 
 def read_clipboard() -> str:
@@ -62,8 +63,8 @@ def describe_screen(question: str = "") -> str:
         try:
             import memory
             memory.record_screen_observation(str(result))
-        except Exception:
-            pass
+        except Exception as e:
+            startup_logging.warn_once("screen memory", e)
     return result
 
 

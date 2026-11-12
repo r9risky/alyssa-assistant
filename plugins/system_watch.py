@@ -1,6 +1,7 @@
 """On-demand system diagnostics plus one optional low-disk-space alert."""
 import os
 import shutil
+import startup_logging
 import time
 
 import config
@@ -85,8 +86,8 @@ def _top_cpu_process():
                 best = (p.info.get("name", "?"), cpu)
         if best and best[1] > 1:
             return f"{best[0]} ({best[1]:.0f}%)"
-    except Exception:
-        pass
+    except Exception as e:
+        startup_logging.warn_once("top process", e)
     return None
 
 

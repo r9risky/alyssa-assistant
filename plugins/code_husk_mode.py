@@ -14,6 +14,7 @@ from __future__ import annotations
 import datetime
 from http.server import BaseHTTPRequestHandler, HTTPServer
 import json
+import startup_logging
 import threading
 
 import config
@@ -70,8 +71,8 @@ def record_husk_event(
             companion = get_active_companion()
             if companion is not None and companion.bubble is not None:
                 run_on_gui_thread(lambda text=caption: companion.bubble.show_message(text))
-        except Exception:
-            pass
+        except Exception as e:
+            startup_logging.warn_once("husk caption", e)
 
     return entry
 

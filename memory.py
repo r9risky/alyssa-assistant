@@ -59,6 +59,12 @@ def _read_file() -> list:
             data = json.load(f)
     except (json.JSONDecodeError, OSError) as e:
         print(f"(couldn't read memory.json, starting fresh: {e})")
+        if isinstance(e, json.JSONDecodeError):
+            try:  # keep the damaged file: the next save would overwrite it for good
+                os.replace(MEMORY_FILE, MEMORY_FILE + ".corrupt")
+                print(f"(saved the damaged copy as memory.json.corrupt)")
+            except OSError:
+                pass
         return []
     if isinstance(data, list):
         return [f for f in data if isinstance(f, str) and f.strip()]
@@ -110,6 +116,19 @@ def save_memories(memories: list):
         _MEMORIES_CACHE_MTIME = os.path.getmtime(MEMORY_FILE) if os.path.exists(MEMORY_FILE) else None
 
 
+_FACT_VECTORS = {}  # fact -> embedding; facts rarely change, so each is embedded once, not every turn
+
+
+def _fact_vectors(model, memories: list) -> list:
+    with _lock:
+        missing = [m for m in dict.fromkeys(memories) if m not in _FACT_VECTORS]
+        if missing:
+            _FACT_VECTORS.update(zip(missing, model.passage_embed(missing)))
+        for gone in set(_FACT_VECTORS) - set(memories):  # forgotten facts
+            del _FACT_VECTORS[gone]
+        return [_FACT_VECTORS[m] for m in memories]
+
+
 def relevant_memories(query: str, limit: int = 20) -> list:
     """Returns top memories by local embedding similarity."""
     if limit <= 0:
@@ -123,7 +142,7 @@ def relevant_memories(query: str, limit: int = 20) -> list:
     if query:
         model = _embedding_model()
         query_vector = next(model.query_embed(query))
-        scores = np.dot(list(model.passage_embed(memories)), query_vector)
+        scores = np.dot(_fact_vectors(model, memories), query_vector)
         ranked = sorted(
             enumerate(scores),
             key=lambda item: (item[1], item[0]),

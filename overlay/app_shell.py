@@ -2,6 +2,7 @@ import math
 import os
 import sys
 import threading
+import time
 
 from PySide6.QtCore import Qt, QPoint, QRect
 from PySide6.QtGui import (
@@ -201,6 +202,43 @@ def _close_parent_console():
         pass  # best-effort - never let this stop Alyssa from quitting
 
 
+def shut_down_services(timeout=4.0):
+    """On Quit: leave the Discord call and close the phone remote instead of vanishing
+    mid-call. Bounded, so a stuck service can't keep a quit app alive."""
+    def _stop_all():
+        for name in ("discord_bot", "phone_remote"):
+            module = sys.modules.get(name)  # only what this session actually started
+            if module is None:
+                continue
+            try:
+                module.stop()
+            except Exception as e:
+                print(f"[shutdown] {name} didn't stop cleanly: {e}")
+
+    worker = threading.Thread(target=_stop_all, daemon=True)
+    worker.start()
+    worker.join(timeout)
+    if worker.is_alive():
+        print("[shutdown] Gave up waiting for services to stop.")
+
+
+def run_with_restarts(fn, on_give_up, attempts=3, wait=time.sleep):
+    """Run fn; after a crash wait a moment and run it again. A loop that crashes
+    `attempts` times in a row calls on_give_up(error) instead of spinning forever."""
+    for attempt in range(1, attempts + 1):
+        try:
+            return fn()
+        except Exception as e:
+            import traceback
+
+            traceback.print_exc()
+            if attempt == attempts:
+                on_give_up(e)
+                return None
+            print(f"[worker] Listening loop crashed ({e}); restarting ({attempt}/{attempts - 1})...")
+            wait(2 * attempt)
+
+
 def run_with_assistant(assistant_loop_fn):
     """Qt GUI on the main thread; assistant_loop_fn(bridge) on a daemon worker.
 
@@ -293,17 +331,15 @@ def run_with_assistant(assistant_loop_fn):
     window._worker_thread = None
 
     def _run_worker_safely():
-        """Run assistant_loop_fn; on unhandled exception, emit via the GUI so a dead listener is visible (pythonw has no console)."""
-        try:
-            assistant_loop_fn(bridge)
-        except Exception as e:
-            import traceback
-            traceback.print_exc()
+        """Run assistant_loop_fn, restarting it after a crash; the GUI shows an error only if it keeps crashing (pythonw has no console)."""
+        def _give_up(e):
             bridge.error_signal.emit(
-                f"Alyssa's listening loop crashed and stopped:\n{e}\n\n"
+                f"Alyssa's listening loop kept crashing and stopped:\n{e}\n\n"
                 "Check the console (Settings -> Show command prompt) for "
                 "the full error, or restart Alyssa."
             )
+
+        run_with_restarts(lambda: assistant_loop_fn(bridge), _give_up)
 
     def _start_worker():
         """Start the listener thread if it isn't alive. Idempotent.
@@ -322,5 +358,6 @@ def run_with_assistant(assistant_loop_fn):
 
     # exec() returns only after Quit (last-window-close is off); close the parent console here.
     exit_code = app.exec()
+    shut_down_services()
     _close_parent_console()
     sys.exit(exit_code)

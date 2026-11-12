@@ -14,6 +14,7 @@ import random
 import re
 import threading
 import time
+import startup_logging
 from typing import Callable, Optional
 
 import numpy as np
@@ -131,8 +132,8 @@ class CallSession:
         for cb in self._on_caption_callbacks:
             try:
                 cb(speaker, text)
-            except Exception:
-                pass
+            except Exception as e:
+                startup_logging.warn_once("call caption listener", e)
 
     def update_levels(self, you: float, her: float, call: float):
         with self._lock:
@@ -142,8 +143,8 @@ class CallSession:
         for cb in self._on_levels_callbacks:
             try:
                 cb(self.level_you, self.level_her, self.level_call)
-            except Exception:
-                pass
+            except Exception as e:
+                startup_logging.warn_once("call levels listener", e)
 
     def add_state_listener(self, callback: Callable[[], None]):
         if callback not in self._on_state_change:
@@ -161,8 +162,8 @@ class CallSession:
         for cb in self._on_state_change:
             try:
                 cb()
-            except Exception:
-                pass
+            except Exception as e:
+                startup_logging.warn_once("call state listener", e)
 
     @property
     def is_active(self) -> bool:

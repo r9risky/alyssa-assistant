@@ -14,6 +14,7 @@ import webrtcvad
 from config import AUDIO_SETTINGS as config
 import nameutil
 import transcribe
+import startup_logging
 import wake_word
 
 if getattr(sys, "frozen", False):
@@ -117,8 +118,8 @@ class VoiceActivityDetector:
                     prob = max(prob, self._silero_prob(samples[start:start + window]))
                 thresh = float(getattr(config, "SILERO_VAD_THRESHOLD", self.threshold))
                 return prob >= thresh
-            except Exception:
-                pass
+            except Exception as e:
+                startup_logging.warn_once("silero VAD", e)
 
         # WebRTC VAD fallback (requires 10/20/30ms frames of int16 PCM)
         if isinstance(chunk_pcm, np.ndarray):

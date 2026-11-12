@@ -15,6 +15,7 @@ except ImportError:
     np = None
 
 from config import AUDIO_SETTINGS as config
+import startup_logging
 import telemetry
 
 from voice_synthesis import (
@@ -469,8 +470,8 @@ class StreamingSpeaker:
                 try:
                     import voice_dsp
                     chunk = voice_dsp.process_pcm16_mono(chunk, sample_rate=24000)
-                except Exception:
-                    pass
+                except Exception as e:
+                    startup_logging.warn_once("voice DSP", e)
             self._audio.put(chunk)
 
     def _next_audio(self):
@@ -531,8 +532,8 @@ class StreamingSpeaker:
                         import numpy as np
                         arr = (np.frombuffer(data, dtype=np.int16).astype(np.float32) * vmic_vol)
                         vmic_stream.write(np.clip(arr, -32768, 32767).astype(np.int16).tobytes())
-                except Exception:
-                    pass
+                except Exception as e:
+                    startup_logging.warn_once("virtual mic write", e)
 
         try:
             while not self.interrupted:
@@ -709,8 +710,8 @@ def _play_file_to_virtual_mic(path: str, stop_event=None):
                     pcm_bytes = b"".join(chunks)
                     sr = 24000
                     ch = 1
-            except Exception:
-                pass
+            except Exception as e:
+                startup_logging.warn_once("decode audio", e)
 
         if not pcm_bytes:
             return
@@ -786,8 +787,8 @@ def _play_file_to_virtual_mic(path: str, stop_event=None):
                 vmic_stream.stop()
             finally:
                 vmic_stream.close()
-    except Exception:
-        pass
+    except Exception as e:
+        startup_logging.warn_once("virtual mic", e)
 
 
 def _play(path: str, stop_event=None) -> bool:

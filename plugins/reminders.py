@@ -97,6 +97,12 @@ def _read_file() -> list:
             data = json.load(f)
     except (json.JSONDecodeError, OSError) as e:
         print(f"(couldn't read reminders.json, starting fresh: {e})")
+        if isinstance(e, json.JSONDecodeError):
+            try:  # keep the damaged file: the next save would overwrite it for good
+                os.replace(REMINDERS_FILE, REMINDERS_FILE + ".corrupt")
+                print(f"(saved the damaged copy as reminders.json.corrupt)")
+            except OSError:
+                pass
         return []
     return data if isinstance(data, list) else []
 

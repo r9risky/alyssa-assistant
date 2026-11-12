@@ -23,6 +23,7 @@ import config
 import credential_store
 import memory
 import user_settings
+import startup_logging
 from ..credential_checks import (
     _extract_elevenlabs_voice_id,
     _fetch_custom_openai_models,
@@ -1114,8 +1115,8 @@ class AssistantTabMixin:
             try:
                 import actions
                 actions.apply_security_preset(config.SECURITY_PRESET)
-            except Exception:
-                pass
+            except Exception as e:
+                startup_logging.warn_once("security preset", e)
         hotkey_mgr = getattr(self.companion, "_hotkey_manager", None)
         if hotkey_mgr is not None and hasattr(hotkey_mgr, "reload_from_config"):
             hotkey_mgr.reload_from_config()

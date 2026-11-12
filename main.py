@@ -336,11 +336,14 @@ def run_watcher_loop(bridge=None):
                 print(f"[watcher] {w['name']}: {alert}")
                 if getattr(config, "QUIET_MODE", False):
                     continue
-                announce = brain.dialogue._natural_announce_reply(
-                    "proactive_alert", {"message": alert}
-                )
-                if announce:
-                    speak(announce, bridge)
+                try:  # a failed announcement must not kill every future watcher check
+                    announce = brain.dialogue._natural_announce_reply(
+                        "proactive_alert", {"message": alert}
+                    )
+                    if announce:
+                        speak(announce, bridge)
+                except Exception as e:
+                    print(f"[watcher] Couldn't announce '{w['name']}' alert: {e}")
         time.sleep(max(0.5, min(soonest, 5.0)))
 
 
@@ -548,6 +551,9 @@ def _open_hang_dump():
         return None
 
 
+_watcher_thread = None
+
+
 def run_assistant_loop(bridge=None):
     """Always-listening loop. Main thread in console mode, background thread with GUI.
     Calls speak(reply, bridge) either way."""
@@ -592,8 +598,12 @@ def run_assistant_loop(bridge=None):
                 print(f"[preflight] User typed {text!r} but LLM is not configured yet.")
                 speak(msg, bridge)
 
-    if getattr(config, "ENABLE_BACKGROUND_WATCHER", True):
-        threading.Thread(target=run_watcher_loop, args=(bridge,), daemon=True).start()
+    global _watcher_thread
+    if getattr(config, "ENABLE_BACKGROUND_WATCHER", True) and not (
+        _watcher_thread and _watcher_thread.is_alive()  # the loop may be restarting after a crash
+    ):
+        _watcher_thread = threading.Thread(target=run_watcher_loop, args=(bridge,), daemon=True)
+        _watcher_thread.start()
     remote_error = phone_remote.start(bridge)
     if remote_error:
         print(f"[phone remote] {remote_error}")
