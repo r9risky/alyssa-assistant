@@ -11,6 +11,7 @@ from PySide6.QtWidgets import (
 import actions
 import brain
 import plugin_loader
+import plugin_permissions
 
 from ..theming import _apply_elevation
 
@@ -101,6 +102,16 @@ class PluginsTabMixin:
         header_row.addWidget(self.plugin_delete_btn, 0, 3)
         right_layout.addWidget(header_widget)
 
+        self.plugin_permission_label = self._help_label("")
+        self.plugin_permission_label.setWordWrap(True)
+        right_layout.addWidget(self.plugin_permission_label)
+
+        self.plugin_approve_btn = QPushButton("Approve and load")
+        self.plugin_approve_btn.setObjectName("primaryButton")
+        self.plugin_approve_btn.clicked.connect(self._on_approve_plugin)
+        self.plugin_approve_btn.hide()
+        right_layout.addWidget(self.plugin_approve_btn)
+
         self.plugin_status_label = self._help_label("")
         self.plugin_status_label.setStyleSheet(f"color: {self._t()['subtext']}; font-size: 11px;")
         right_layout.addWidget(self.plugin_status_label)
@@ -137,10 +148,15 @@ class PluginsTabMixin:
                     continue
                 enabled = not filename.startswith("_")
                 display_name = filename[1:] if not enabled else filename
-                dot = "🟢" if enabled else "⚪"
+                pending = enabled and plugin_permissions.needs_approval(
+                    filename, os.path.join(plugins_dir, filename)
+                ) is not None
+                dot = "🟡" if pending else "🟢" if enabled else "⚪"
                 item = QListWidgetItem(f"{dot}  {display_name}")
                 item.setData(Qt.UserRole, filename)
-                item.setToolTip("Loaded at startup" if enabled else "Not loaded")
+                item.setToolTip(
+                    "Waiting for your approval" if pending else "Loaded at startup" if enabled else "Not loaded"
+                )
                 self.plugin_list.addItem(item)
                 if select and filename == select:
                     self.plugin_list.setCurrentItem(item)
@@ -165,6 +181,8 @@ class PluginsTabMixin:
                 if self.plugin_list.count() == 0 else "Select a plugin to edit"
             )
             self.plugin_status_label.setText("")
+            self.plugin_permission_label.setText("")
+            self.plugin_approve_btn.hide()
 
     def _on_plugin_selected(self, current: QListWidgetItem, previous: QListWidgetItem):
         if previous is not None and self._plugin_dirty:
@@ -194,6 +212,34 @@ class PluginsTabMixin:
         self.plugin_enable_btn.setText("Enabled ✓" if enabled else "Disabled")
         self.plugin_file_label.setText(filename[1:] if not enabled else filename)
         self.plugin_status_label.setText("")
+        self._show_plugin_permissions(filename, path)
+
+    def _show_plugin_permissions(self, filename: str, path: str):
+        """What the plugin says it needs, plus an Approve button while it's waiting."""
+        if plugin_permissions.is_builtin(filename):
+            self.plugin_permission_label.setText("Built-in plugin - ships with Alyssa.")
+            self.plugin_approve_btn.hide()
+            return
+        wanted = plugin_permissions.declared(path) or [plugin_permissions.UNDECLARED]
+        pending = plugin_permissions.needs_approval(filename, path) is not None
+        heading = "⚠ Not loaded until you approve. It asks to:" if pending else "✓ Approved. It can:"
+        self.plugin_permission_label.setText(f"{heading}\n{plugin_permissions.describe(wanted)}")
+        self.plugin_approve_btn.setVisible(pending)
+
+    def _on_approve_plugin(self):
+        filename = self._current_plugin_file
+        if not filename:
+            return
+        path = os.path.join(plugin_loader.PLUGINS_DIR, filename)
+        try:
+            plugin_permissions.approve(filename, path)
+        except OSError as e:
+            self.plugin_status_label.setText(f"⚠ Couldn't save the approval: {e}")
+            return
+        self._reload_plugins_backend()
+        self._refresh_plugin_list(select=filename)
+        self._show_plugin_permissions(filename, path)
+        self.plugin_status_label.setText(f"✓ Approved and loaded {filename.lstrip('_')}")
 
     def _on_plugin_text_changed(self):
         self._plugin_dirty = True
@@ -248,6 +294,7 @@ class PluginsTabMixin:
         self._plugin_dirty = False
         bare_name = filename[1:] if filename.startswith("_") else filename
         self.plugin_file_label.setText(bare_name)
+        self._show_plugin_permissions(filename, path)
         if reload_after:
             self._reload_plugins_backend()
             if not quiet:
@@ -255,8 +302,13 @@ class PluginsTabMixin:
         return True
 
     def _on_save_plugin(self):
-        if self._current_plugin_file:
-            self._save_plugin_file(self._current_plugin_file)
+        filename = self._current_plugin_file
+        if filename:
+            try:  # pressing Save on code you edited here counts as approving it
+                plugin_permissions.approve(filename, os.path.join(plugin_loader.PLUGINS_DIR, filename))
+            except OSError:
+                pass
+            self._save_plugin_file(filename)
 
     def _reload_plugins_backend(self):
         """Reload plugins into this session (actions.FUNCTIONS/PLUGIN_TOOLS, brain.TOOLS) and rebuild plugin GUI tabs."""
@@ -298,6 +350,10 @@ class PluginsTabMixin:
         template = f'''"""
 {safe} plugin - describe what this adds here.
 """
+
+# What this plugin needs, shown to anyone who installs it. Pick from:
+# network, files, keyboard_mouse, screen, microphone, camera, shell, background
+PERMISSIONS = []
 
 def {safe}_example(message: str) -> str:
     """Replace this with your own function. Whatever it returns is what
@@ -351,6 +407,7 @@ TOOLS = [
             os.makedirs(plugin_loader.PLUGINS_DIR, exist_ok=True)
             with open(path, "w", encoding="utf-8") as f:
                 f.write(template)
+            plugin_permissions.approve(filename, path)
         except OSError as e:
             QMessageBox.critical(self, "Couldn't create plugin", str(e))
             return

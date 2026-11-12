@@ -284,6 +284,13 @@ TOOLS = [
 Add `check_watch() -> str | None` (plus an optional `WATCH_INTERVAL_SECONDS`)
 if you want her to speak up on her own. 🎲
 
+Say what your plugin needs with `PERMISSIONS = ["network", "files"]` (choices:
+`network`, `files`, `keyboard_mouse`, `screen`, `microphone`, `camera`, `shell`,
+`background`). A plugin that didn't come with Alyssa stays off until you approve
+it in **Settings → Plugins** (🟡 in the list), and asks again if an update wants
+more. Plugins you create or save in that editor count as approved. This is
+informed consent, not a sandbox: only approve code you trust.
+
 <details>
 <summary>Give your plugin its own Settings tab</summary>
 

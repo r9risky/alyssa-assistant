@@ -13,3 +13,13 @@ except (ImportError, OSError):
         {"name": "default", "max_input_channels": 1, "max_output_channels": 2}
     ]
     sys.modules["sounddevice"] = sd_mock
+
+
+import pytest
+
+
+@pytest.fixture(autouse=True)
+def _isolated_plugin_approvals(tmp_path, monkeypatch):
+    """Keep plugin approvals out of the repo; plugins already in plugins/ are built-ins."""
+    import plugin_permissions
+    monkeypatch.setattr(plugin_permissions, "APPROVALS_FILE", str(tmp_path / "plugin_approvals.json"))

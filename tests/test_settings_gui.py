@@ -12,6 +12,7 @@ from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QApplication, QFormLayout, QLabel
 
 import overlay
+import plugin_permissions
 from overlay import settings_dialog, widgets
 import config
 import updater
@@ -319,6 +320,7 @@ class SettingsGuiTests(unittest.TestCase):
         """Write plugin source, reload, rebuild GUI tabs (same as Settings > Plugins > Save)."""
         with open(os.path.join(temp_dir, filename), "w", encoding="utf-8") as f:
             f.write(source)
+        plugin_permissions.approve(filename, os.path.join(temp_dir, filename))  # the user wrote it
         settings_dialog.actions.reload_plugins()
         self.dialog._rebuild_plugin_gui_tabs()
 

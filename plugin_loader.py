@@ -5,6 +5,7 @@ import sys
 import types
 
 from config import PLUGIN_SETTINGS as config
+import plugin_permissions
 
 if getattr(sys, "frozen", False):
     _base_dir = os.path.dirname(sys.executable)
@@ -40,6 +41,9 @@ _load_errors = []
 # Populated as a side effect; ready by the time the watcher loop starts.
 _watchers = []
 
+# Plugins skipped until the user approves their PERMISSIONS: [{"name", "permissions"}].
+_pending_approvals = []
+
 # GUI panels from the most recent load_plugins() — see get_gui_panels().
 # Opt in with GUI_PANEL_TITLE + build_gui_panel() at module level.
 # Qt is not imported here; overlay builds the widget later (headless-safe).
@@ -58,14 +62,19 @@ def get_gui_panels():
     return _gui_panels
 
 
+def get_pending_approvals():
+    return _pending_approvals
+
+
 def load_plugins():
     """(functions, tools) merged from every .py in plugins/.
     functions: {name: callable}; tools: tool-schema dicts.
     Skip files starting with '_' (including __init__.py) — rename to disable."""
-    global _load_errors, _watchers, _gui_panels
+    global _load_errors, _watchers, _gui_panels, _pending_approvals
     _load_errors = []
     _watchers = []
     _gui_panels = []
+    _pending_approvals = []
     functions = {}
     tools = []
 
@@ -74,6 +83,7 @@ def load_plugins():
 
     if not os.path.isdir(PLUGINS_DIR):
         return functions, tools
+    plugin_permissions.grandfather_existing(PLUGINS_DIR)
 
     for filename in sorted(os.listdir(PLUGINS_DIR)):
         if not filename.endswith(".py") or filename.startswith("_"):
@@ -81,6 +91,13 @@ def load_plugins():
 
         path = os.path.join(PLUGINS_DIR, filename)
         module_name = f"alyssa_plugin_{filename[:-3]}"
+        # Checked before running any of its code: an unapproved plugin never executes.
+        pending = plugin_permissions.needs_approval(filename, path)
+        if pending is not None:
+            _pending_approvals.append({"name": filename, "permissions": pending})
+            print(f"[plugins] '{filename}' is waiting for approval ({', '.join(pending)}).")
+            _load_errors.append(f"'{filename}' is waiting for your approval in Settings > Plugins")
+            continue
 
         try:
             spec = importlib.util.spec_from_file_location(module_name, path)
