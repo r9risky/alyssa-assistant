@@ -50,3 +50,4 @@ dist/
 
 # --- Downloaded voice models (Kokoro, ~120 MB) ---
 models/
+briefing_state.json

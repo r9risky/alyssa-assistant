@@ -145,6 +145,9 @@ PLUGINS_ENABLED = True
 ENABLE_BACKGROUND_WATCHER = True
 SYSTEM_WATCH_ENABLED = False
 SYSTEM_WATCH_INTERVAL_SECONDS = 300
+BRIEFING_ENABLED = False  # spoken daily briefing (weather, calendar, reminders, news)
+BRIEFING_TIME = '08:00'  # 24h local time
+BRIEFING_NEWS_TOPICS = ''  # comma-separated, e.g. 'world news, AI'
 WEATHER_DEFAULT_LOCATION = ''
 WEATHER_UNITS = 'metric'
 AUTO_DETECT_LOCATION = True
@@ -380,6 +383,9 @@ class PluginSettings(_SettingsView):
     ENABLE_BACKGROUND_WATCHER: bool
     SYSTEM_WATCH_ENABLED: bool
     SYSTEM_WATCH_INTERVAL_SECONDS: int
+    BRIEFING_ENABLED: bool
+    BRIEFING_TIME: str
+    BRIEFING_NEWS_TOPICS: str
     SCREEN_WATCH_ENABLED: bool
     SCREEN_WATCH_INTERVAL_SECONDS: int
     SCREEN_WATCH_KEEP_CAUGHT_UP: bool
