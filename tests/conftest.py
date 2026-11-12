@@ -19,6 +19,13 @@ import pytest
 
 
 @pytest.fixture(autouse=True)
+def _isolated_user_settings(tmp_path, monkeypatch):
+    """Settings saved during tests go to a temp settings.json, never the repo's."""
+    import user_settings
+    monkeypatch.setattr(user_settings, "SETTINGS_FILE", str(tmp_path / "settings.json"))
+
+
+@pytest.fixture(autouse=True)
 def _isolated_plugin_approvals(tmp_path, monkeypatch):
     """Keep plugin approvals out of the repo; plugins already in plugins/ are built-ins."""
     import plugin_permissions

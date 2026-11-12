@@ -28,7 +28,7 @@ RELEASE_REPOSITORY = "alyssa-assistant"
 LATEST_RELEASE_URL = (
     f"https://api.github.com/repos/{RELEASE_OWNER}/{RELEASE_REPOSITORY}/releases/latest"
 )
-CURRENT_VERSION = "v1.10.2"
+CURRENT_VERSION = "v1.11.0"
 TRANSACTION_DIR = ".alyssa-update-transaction"
 COMMITTED_TRANSACTION_DIR = ".alyssa-update-committed"
 MAX_CHECKSUM_BYTES = 1024 * 1024
@@ -46,6 +46,7 @@ PRESERVED_FILES = {
     "phone_remote.json",
     "plugin_approvals.json",
     "reminders.json",
+    "settings.json",
     "token.json",
 }
 PRESERVED_DIRS = {".git", ".venv", "__pycache__", "build", "dist", "file_backups", "models"}

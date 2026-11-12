@@ -58,6 +58,7 @@ hiddenimports = [
     "telemetry",
     "transcribe",
     "updater",
+    "user_settings",
     "voice",
     "voice_dsp",
     "voice_playback",

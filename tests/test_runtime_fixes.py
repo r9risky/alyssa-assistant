@@ -35,22 +35,6 @@ class PortableTimeTests(unittest.TestCase):
         self.assertEqual(calendar_gmail._format_time(value), "9:05 AM")
 
 
-class AtomicConfigWriteTests(unittest.TestCase):
-    def test_failed_replace_preserves_original_config(self):
-        with tempfile.TemporaryDirectory() as temp_dir:
-            path = os.path.join(temp_dir, "config.py")
-            with open(path, "w", encoding="utf-8") as f:
-                f.write("VALUE = 'original'\n")
-
-            with patch.object(credential_checks.os, "replace", side_effect=OSError("disk error")):
-                with self.assertRaises(OSError):
-                    credential_checks._atomic_write_text(path, "VALUE = 'new'\n")
-
-            with open(path, "r", encoding="utf-8") as f:
-                self.assertEqual(f.read(), "VALUE = 'original'\n")
-            self.assertFalse(os.path.exists(path + ".tmp"))
-
-
 class GeminiVisionRetryTests(unittest.TestCase):
     def test_temporary_unavailable_response_is_retried(self):
         class Response:

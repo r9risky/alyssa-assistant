@@ -108,6 +108,7 @@ def post_process_bundle():
         "memory.py",
         "nameutil.py",
         "credential_store.py",
+        "user_settings.py",
         "plugin_loader.py",
         "recorder.py",
         "transcribe.py",

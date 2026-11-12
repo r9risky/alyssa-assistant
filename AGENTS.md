@@ -67,6 +67,7 @@ Options supported:
 - A new feature or bug fix comes with a test that would fail without it.
 - Take ideas from other projects, not their code or art. Some (like Capri) are under licences that forbid reuse without credit or commercial use.
 - Tools run on the assistant worker thread, not the Qt GUI thread. `overlay.widgets.get_active_companion()` hands tools a proxy that moves calls to the GUI thread for you; any widget a tool creates itself must be built inside a function passed to `overlay.widgets.run_on_gui_thread` (`tests/test_gui_thread_safety.py` checks this).
+- `config.py` holds defaults only. Settings the user changes are saved with `user_settings.save()` to `settings.json`, which `config.py` applies at import. Never rewrite `config.py` from the app.
 - Ensure Python code compiles cleanly without syntax errors before committing.
 - Respect preserved files listed in `updater.py` (`color_themes.json`, `credentials.json`, `memory.json`, etc.).
 - Never commit sensitive tokens or credentials (`.env`, `token.json`, API keys).
