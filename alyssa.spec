@@ -85,7 +85,9 @@ hiddenimports = [
 from PyInstaller.utils.hooks import collect_all
 
 binaries = []
-for _package in ("kokoro_onnx", "espeakng_loader", "phonemizer", "discord", "davey", "nacl"):
+# faster_whisper: its Silero VAD model (assets/silero_vad_v6.onnx); without it every
+# local transcription failed with NO_SUCHFILE.
+for _package in ("faster_whisper", "kokoro_onnx", "espeakng_loader", "phonemizer", "discord", "davey", "nacl"):
     try:
         _datas, _binaries, _hidden = collect_all(_package)
     except Exception:
