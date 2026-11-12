@@ -237,6 +237,7 @@ def run_with_assistant(assistant_loop_fn):
 
     bridge.speak_signal.connect(bubble.show_message)
     bridge.sources_signal.connect(bubble.show_sources)
+    bridge.steps_signal.connect(bubble.show_steps)
     bridge.thinking_signal.connect(bubble.show_thinking)
     bridge.thinking_signal.connect(lambda: window.set_mood("thinking"))
     bridge.mood_signal.connect(window.set_mood)

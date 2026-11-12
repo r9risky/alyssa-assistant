@@ -176,6 +176,16 @@ def _stream_command_reply(command: str, bridge=None, text_queue=None):
         listener_thread.start()
         speaker_finished = False
         sources.clear()
+        steps = []
+
+        def on_step(label, state):
+            if bridge is None:
+                return
+            if state == "running":
+                steps.append([label, state])
+            elif steps:
+                steps[-1][1] = state
+            bridge.steps_signal.emit([tuple(step) for step in steps])
 
         def show_and_feed(delta):
             nonlocal pending_emitted, last_ui_emit
@@ -205,6 +215,7 @@ def _stream_command_reply(command: str, bridge=None, text_queue=None):
                 on_partial_reply=on_partial_reply,
                 on_text_delta=show_and_feed,
                 cancel_event=stop_event,
+                on_step=on_step,
             )
             streamed_text = _clean_reply_for_speech("".join(streamed_parts))
             clean_reply = _clean_reply_for_speech(reply)
@@ -232,6 +243,8 @@ def _stream_command_reply(command: str, bridge=None, text_queue=None):
                         bridge.sources_signal.emit(found)
             return reply, interrupt_result["audio"]
         finally:
+            if steps:
+                bridge.steps_signal.emit([])  # the steps only show while she works
             if not speaker_finished:
                 stop_event.set()
                 speaker.finish()

@@ -36,6 +36,7 @@ class Bridge(QObject):
     talk_start_signal = Signal()  # emitted right before she starts talking
     talk_end_signal = Signal()  # emitted right after she finishes talking
     thinking_signal = Signal()  # emitted right after a command is captured, before the model replies
+    steps_signal = Signal(list)  # [(label, 'running'|'done'|'failed')] tool steps of the current turn
     sources_signal = Signal(list)  # [{url, title, site}] web pages behind the last reply
     mood_signal = Signal(str)  # emitted to set companion emotional mood ("happy", "surprised", etc.)
 
@@ -88,6 +89,7 @@ class SpeechBubble(_TopmostWindowMixin, QWidget):
         self._full_text = ""
         self._pages: list[str] = []
         self._page_index = 0
+        self._steps: list = []  # [(label, state)] while she works through tools
         self._sources: list[dict] = []
         self._sources_for = ""  # the reply text the sources belong to
 
@@ -157,10 +159,11 @@ class SpeechBubble(_TopmostWindowMixin, QWidget):
     def _format_current_page(self) -> str:
         """The current page as label HTML, with source links under the last page."""
         if not self._pages:
-            return html.escape(self._full_text).replace("\n", "<br>")
+            return html.escape(self._full_text).replace("\n", "<br>") + self._steps_html()
         page_html = html.escape(self._pages[self._page_index]).replace("\n", "<br>")
         if len(self._pages) > 1:
             page_html += f"<br>({self._page_index + 1}/{len(self._pages)})"
+        page_html += self._steps_html()
         if self._has_sources() and self._page_index == len(self._pages) - 1:
             color = _theme(self.settings)["bubble_text"]
             links = " · ".join(
@@ -170,6 +173,35 @@ class SpeechBubble(_TopmostWindowMixin, QWidget):
             )
             page_html += f'<br><span style="font-size:8pt;">Sources: {links}</span>'
         return page_html
+
+    _STEP_MARKS = {"running": "▸", "done": "✓", "failed": "✗"}
+    MAX_STEPS_SHOWN = 5
+
+    def _steps_html(self) -> str:
+        if not self._steps:
+            return ""
+        rows = [
+            f"{self._STEP_MARKS.get(state, '·')} {html.escape(label)}"
+            for label, state in self._steps[-self.MAX_STEPS_SHOWN:]
+        ]
+        return '<br><span style="font-size:8pt;">' + "<br>".join(rows) + "</span>"
+
+    def show_steps(self, steps: list):
+        """Show the tool steps of the current turn (from bridge.steps_signal); [] hides them."""
+        self._steps = list(steps or [])
+        if self._thinking:
+            self.label.setText(self._thinking_html())
+        elif self._pages or self._full_text:
+            self.label.setText(self._format_current_page())
+        else:
+            return
+        self.label.adjustSize()
+        self._resize_to_content()
+        if self.isVisible():
+            self.reposition()
+
+    def _thinking_html(self) -> str:
+        return "Thinking" + "." * self._thinking_dots + self._steps_html()
 
     def _has_sources(self) -> bool:
         return bool(self._sources) and self._sources_for == self._full_text
@@ -263,6 +295,7 @@ class SpeechBubble(_TopmostWindowMixin, QWidget):
         self._show_group.stop()
         self._thinking = True
         self._thinking_dots = 0
+        self._steps = []
 
         t = _theme(self.settings)
         self.label.setStyleSheet(f"QLabel {{ background: transparent; color: {t['bubble_text']}; }}")
@@ -306,7 +339,7 @@ class SpeechBubble(_TopmostWindowMixin, QWidget):
             self._thinking_timer.stop()
             return
         self._thinking_dots = (self._thinking_dots + 1) % 4
-        self.label.setText("Thinking" + "." * self._thinking_dots)
+        self.label.setText(self._thinking_html())
         self.label.adjustSize()
         self._resize_to_content()
 
