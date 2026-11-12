@@ -7,6 +7,7 @@ Whisper in a continuous loop, dropping idle listening CPU usage to < 1%.
 import os
 import threading
 import time
+import startup_logging
 import numpy as np
 
 from config import AUDIO_SETTINGS as config
@@ -162,8 +163,8 @@ class WakeWordDetector:
                 input_name = self._session.get_inputs()[0].name
                 out = self._session.run(None, {input_name: input_tensor})
                 return float(out[0][0])
-            except Exception:
-                pass
+            except Exception as e:
+                startup_logging.warn_once("wake word model", e)
 
         return self._score_acoustic_phonetic(self._buffer)
 
@@ -276,8 +277,8 @@ class WakeWordDetector:
                 vol = float(getattr(config, "WAKE_CHIME_VOLUME", 0.5))
                 self._chime_sound.set_volume(max(0.0, min(1.0, vol)))
                 self._chime_sound.play()
-        except Exception:
-            pass
+        except Exception as e:
+            startup_logging.warn_once("wake chime", e)
 
 
 _detector_instance = None

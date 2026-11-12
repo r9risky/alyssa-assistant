@@ -29,6 +29,7 @@ from .companion.rendering_mixin import RenderingMixin
 from .companion.interaction_mixin import InteractionMixin
 from .companion.window_mixin import WindowMixin
 from .companion.settings_mixin import SettingsMixin
+import startup_logging
 from .companion.talk_state_mixin import TalkStateMixin
 
 class Bridge(QObject):
@@ -937,24 +938,24 @@ class MiniPlayerWidget(_TopmostWindowMixin, QWidget):
             import actions
             actions.media_previous_track()
             self.status_label.setText("♪ PREV TRACK")
-        except Exception:
-            pass
+        except Exception as e:
+            startup_logging.warn_once("mini player prev", e)
 
     def _on_play_pause(self):
         try:
             import actions
             actions.media_play_pause()
             self.status_label.setText("♪ PLAY / PAUSE")
-        except Exception:
-            pass
+        except Exception as e:
+            startup_logging.warn_once("mini player play/pause", e)
 
     def _on_next(self):
         try:
             import actions
             actions.media_next_track()
             self.status_label.setText("♪ NEXT TRACK")
-        except Exception:
-            pass
+        except Exception as e:
+            startup_logging.warn_once("mini player next", e)
 
     def apply_theme(self):
         t = _theme(self.settings)

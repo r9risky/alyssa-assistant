@@ -8,6 +8,7 @@ import config
 from ..ledges import snap_to_nearest_ledge
 from ..rendering import BASE_H, BASE_W, MIN_W, RESIZE_GRIP
 from . import save_overlay_settings
+import startup_logging
 from ..theming import _build_menu_style
 
 _HEAD_PAT_LINES = [
@@ -237,8 +238,8 @@ class InteractionMixin:
             try:
                 from plugins import mini_games_and_ink
                 mini_games_and_ink.draw_on_screen(action="clear")
-            except Exception:
-                pass
+            except Exception as e:
+                startup_logging.warn_once("clear ink", e)
         elif chosen == top_action:
             self._set_always_on_top(top_action.isChecked())
         elif chosen == reset_action:

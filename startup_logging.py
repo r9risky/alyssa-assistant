@@ -12,6 +12,15 @@ import time
 
 _configured = False
 _log_path = None
+_warned = set()
+
+
+def warn_once(where: str, exc: BaseException) -> None:
+    """Log an error we recover from, once per place (a failing audio loop would flood the log)."""
+    if where in _warned:
+        return
+    _warned.add(where)
+    print(f"[warn] {where}: {type(exc).__name__}: {redact_sensitive_text(str(exc))}")
 
 FULL_CONTENT_LOG_ENV = "ALYSSA_LOG_FULL_CONTENT"
 _SECRET_CONFIG_FIELDS = (

@@ -8,6 +8,7 @@ import telemetry
 
 from ..common import _HTTP_SESSION, _iter_sse_json
 from .. import usage as _usage
+import startup_logging
 from ..tool_registry import TOOLS
 
 _gemini_tools_cache = None
@@ -273,8 +274,8 @@ def _describe_gemini_429(response) -> str:
             for violation in detail.get("violations", []):
                 if "PerDay" in (violation.get("quotaId") or ""):
                     is_daily_quota = True
-    except Exception:
-        pass
+    except Exception as e:
+        startup_logging.warn_once("gemini quota parse", e)
 
     if is_daily_quota:
         print(

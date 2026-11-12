@@ -1350,8 +1350,8 @@ def reply_to_call(speaker: str, text: str, recent_lines=()) -> str:
     persona = ""
     try:
         persona = memory.load_personality_notes() if os.path.exists(memory.get_personality_path()) else ""
-    except Exception:
-        pass
+    except Exception as e:
+        startup_logging.warn_once("personality notes", e)
     unknown = speaker.lower().startswith("someone")
     system = (
         persona.voice(name, owner)

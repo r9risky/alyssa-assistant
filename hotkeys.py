@@ -18,6 +18,7 @@ import ctypes
 import os
 import threading
 import time
+import startup_logging
 from collections.abc import Callable
 
 import config
@@ -173,7 +174,7 @@ class GlobalHotkeyManager:
                     if action_name not in self._pressed_last:
                         try:
                             self.trigger(action_name)
-                        except Exception:
-                            pass
+                        except Exception as e:
+                            startup_logging.warn_once("hotkey action", e)
             self._pressed_last = currently_down
             time.sleep(0.04)

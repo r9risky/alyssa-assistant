@@ -4,6 +4,7 @@ import io
 import os
 import tempfile
 import threading
+import startup_logging
 import wave
 
 import numpy as np
@@ -339,8 +340,8 @@ def process_audio_file(input_path: str) -> str | None:
                         if arr.size > 0:
                             samples = arr.astype(np.float32) / 32768.0
                             sample_rate = 24000
-            except Exception:
-                pass
+            except Exception as e:
+                startup_logging.warn_once("DSP decode", e)
 
         if samples is None or samples.size == 0:
             return None
@@ -406,5 +407,5 @@ def play_typing_blip():
                     _typing_blip_sound.set_volume(0.35)
         if _typing_blip_sound is not None:
             _typing_blip_sound.play()
-    except Exception:
-        pass
+    except Exception as e:
+        startup_logging.warn_once("typing blip", e)
