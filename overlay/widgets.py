@@ -931,6 +931,15 @@ class CompanionWindow(
         self._emote_float_phase = 0.0
         self._current_mood = "neutral"
 
+        # Code-driven poses (overlay/poses.py): tilt around her feet + squash.
+        self._pose_state = "idle"
+        self._pose_time = 0.0
+        self._pose_tilt = 0.0
+        self._pose_squash = 1.0
+        self._land_started = None
+        self._last_drag_x = None
+        self._frame_index = 0
+
         self._physics_timer = QTimer(self)
         self._physics_timer.timeout.connect(self._on_expressive_physics_tick)
         self._physics_timer.start(33)
@@ -1151,6 +1160,10 @@ class CompanionWindow(
             if self._blink_active:
                 self._blink_active = False
                 needs_repaint = True
+
+        # 3b. Poses: drag flail, landing squash, sleepy droop, music sway
+        if self._update_pose(dt):
+            needs_repaint = True
 
         # 4. Emote floating animation and countdown
         if self._current_emote:
