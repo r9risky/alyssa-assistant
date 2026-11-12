@@ -471,7 +471,12 @@ def run_assistant_loop(bridge=None):
     # Warm Whisper/LLM/TTS before the first command. Before preflight on purpose:
     # Whisper doesn't need a provider/key, so it can load while Settings is open.
     # Calls are idempotent.
-    threading.Thread(target=transcribe.preload, daemon=True).start()
+    def _preload_whisper():
+        error = transcribe.preload()
+        if error and bridge is not None:
+            bridge.error_signal.emit(error)
+
+    threading.Thread(target=_preload_whisper, daemon=True).start()
     threading.Thread(target=brain.warm_up_connections, daemon=True).start()
     threading.Thread(target=voice.warm_up, daemon=True).start()
 
