@@ -532,10 +532,12 @@ class StreamingSpeaker:
                 chunk = self._audio.get()
                 if chunk is None:
                     break
+                if not discord_bot.play_pcm(discord_bot.to_discord_pcm(chunk, 24000, 1)):
+                    # Before playback started this falls back to file playback on the speakers.
+                    raise RuntimeError(f"Discord voice playback failed ({discord_bot._cant_speak})")
                 if not started:
                     self._start_playback()
                     started = True
-                discord_bot.play_pcm(discord_bot.to_discord_pcm(chunk, 24000, 1))
             while discord_bot.busy() and not self.interrupted:
                 time.sleep(0.02)
             if self.interrupted:
@@ -549,7 +551,7 @@ class StreamingSpeaker:
 def _discord_bot_connected() -> bool:
     try:
         import discord_bot
-        return discord_bot.connected()
+        return discord_bot.can_speak()
     except Exception:
         return False
 
@@ -742,7 +744,9 @@ def _play_locked(path: str, stop_event=None) -> bool:
         if _discord_bot_connected():
             # She's in a Discord voice channel as the bot: speak there instead of the speakers.
             import discord_bot
-            return discord_bot.play_file(play_path, stop_event)
+            played = discord_bot.play_file(play_path, stop_event)
+            if played is not None:
+                return played
         music.load(play_path)
         volume = getattr(config, "EDGE_TTS_VOLUME", "+0%")
         music.set_volume(_volume_str_to_gain(volume))
