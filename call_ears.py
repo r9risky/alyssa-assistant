@@ -10,6 +10,7 @@ Inspired by Capri Desktop's `CallEars.cs` and `CallMode.cs`:
 
 from __future__ import annotations
 
+import random
 import re
 import threading
 import time
@@ -257,21 +258,119 @@ _recent_call_lines: list[str] = []
 _MAX_CALL_LINES = 8
 _last_reply_at = 0.0
 REPLY_COOLDOWN_SECONDS = 3.0
+# After she talks in the call, people can answer her without saying her name first.
+FOLLOW_UP_SECONDS = 20.0
+_MAX_FOLLOW_UPS = 2  # then they need her name again, so game sound can't keep her chatting
+_FOLLOW_UP_MIN_WORDS = 3  # "yeah" / "lol" alone isn't worth a reply
+_follow_up_until = 0.0
+_follow_ups_left = 0
 
 
 def recent_call_lines() -> list[str]:
     return list(_recent_call_lines)
 
 
+def open_follow_up(now=None) -> None:
+    """She just spoke in the call: answers for the next little while count as talking to her."""
+    global _follow_up_until, _follow_ups_left
+    _follow_up_until = (time.time() if now is None else now) + FOLLOW_UP_SECONDS
+    _follow_ups_left = _MAX_FOLLOW_UPS
+
+
+def _owner_name() -> str:
+    import config as root_config
+
+    return str(getattr(root_config, "USER_NICKNAME", "") or "").strip() or "my person"
+
+
+def _join_names(names) -> str:
+    names = [n for n in names if n]
+    if len(names) <= 1:
+        return "".join(names)
+    return ", ".join(names[:-1]) + " and " + names[-1]
+
+
+def greeting(people=(), message: str = "") -> str:
+    """What she says when she joins a call: short, casual, and different each time."""
+    import config as root_config
+
+    me = getattr(root_config, "ASSISTANT_NAME", "Alyssa")
+    owner = _owner_name()
+    people = [p for p in people if p and p.casefold() != owner.casefold()][:3]
+    hi = random.choice(["Hey", "Hi", "Hey hey", "Heyy"])
+    hello = f"{hi} {_join_names(people)}!" if people else random.choice(
+        ["Hey everyone!", "Hi all!", "Hey hey, hi everyone!"]
+    )
+    if message:
+        body = random.choice([
+            f"{owner} asked me to tell you: {message.strip().rstrip('.!')}.",
+            f"Message from {owner}: {message.strip().rstrip('.!')}.",
+            f"{owner} sent me with a message: {message.strip().rstrip('.!')}.",
+        ])
+    else:
+        body = random.choice([
+            f"It's {me}, {owner} brought me along. What are we up to?",
+            f"{me} here, {owner} sent me in to hang out. What are we playing?",
+            f"It's {me}. {owner} said you guys were here, so here I am.",
+            f"{me} here. Don't mind me, just say my name if you need me.",
+        ])
+    return f"{hello} {body}"
+
+
+_greeted: dict[str, float] = {}
+GREET_AGAIN_AFTER_SECONDS = 600.0
+
+
+def greet_joiner(name: str, *, speak_fn=None, now=None) -> Optional[str]:
+    """Someone joined her voice channel: say hi (once per person every 10 minutes, no AI call)."""
+    now = time.time() if now is None else now
+    key = (name or "").casefold()
+    if not key or now - _greeted.get(key, -1e9) < GREET_AGAIN_AFTER_SECONDS:
+        return None
+    _greeted[key] = now
+    line = random.choice([f"Hey {name}!", f"Oh hey {name}, welcome in.", f"{name}! Hi.", f"Hey {name}, good timing."])
+    _say(line, speak_fn)
+    return line
+
+
+def _say(text: str, speak_fn=None) -> None:
+    import config as root_config
+
+    get_call_session().post_caption(getattr(root_config, "ASSISTANT_NAME", "Alyssa"), text)
+    if speak_fn is not None:
+        speak_fn(text)
+        return
+    import voice_playback
+
+    # Wait for her to finish any reply first; overlapping voices sounded doubled.
+    with voice_playback.speech_lock:
+        voice_playback.speak(text)
+
+
+def _addressed_to_her(text: str, now: float):
+    """The words meant for her, or None. Her name anywhere counts; so does an answer right
+    after she spoke (a couple of times, and only real sentences)."""
+    global _follow_ups_left
+    import nameutil
+
+    span = nameutil.find_name_span(text)
+    if span is not None:
+        return nameutil.strip_name_at_span(text, span) or text
+    if now < _follow_up_until and _follow_ups_left > 0 and len(text.split()) >= _FOLLOW_UP_MIN_WORDS:
+        _follow_ups_left -= 1
+        return text
+    return None
+
+
 def handle_friend_line(speaker: str, text: str, *, reply_fn=None, speak_fn=None, now=None) -> Optional[str]:
     """React to one transcribed line from a friend in the call. Returns what she said, if anything.
 
-    Token budget: lines that don't say her name only go into a short local memory of the
+    Token budget: lines that aren't for her only go into a short local memory of the
     conversation (no AI call). Game/song requests are parsed locally and wait for the user's
-    yes. Only a line that names her, and isn't a request, costs one small chat-only AI call.
+    yes. Only a line that names her (or answers her right after she spoke), and isn't a
+    request, costs one small chat-only AI call.
     """
     global _last_reply_at
-    import nameutil
 
     text = sanitize_call_transcript(text).removeprefix(CALL_SPEAKER_TAG).strip()
     if not text:
@@ -282,18 +381,17 @@ def handle_friend_line(speaker: str, text: str, *, reply_fn=None, speak_fn=None,
     _recent_call_lines.append(f"{speaker}: {text}")
     del _recent_call_lines[:-_MAX_CALL_LINES]
 
-    span = nameutil.find_name_span(text)
-    if span is None:
-        return None
-    asked = nameutil.strip_name_at_span(text, span) or text
     now = time.time() if now is None else now
     if now - _last_reply_at < REPLY_COOLDOWN_SECONDS:
+        return None
+    asked = _addressed_to_her(text, now)
+    if asked is None:
         return None
     _last_reply_at = now
 
     import config as root_config
 
-    owner = str(getattr(root_config, "USER_NICKNAME", "") or "").strip() or "my person"
+    owner = _owner_name()
     request = parse_call_friend_intent(asked) if getattr(root_config, "CALL_FRIENDS_CAN_ASK", True) else None
     if request is not None:
         request.who = speaker
@@ -306,13 +404,8 @@ def handle_friend_line(speaker: str, text: str, *, reply_fn=None, speak_fn=None,
             from brain.dialogue import reply_to_call as reply_fn
         reply = reply_fn(speaker, asked, context)
     if reply:
-        session.post_caption(getattr(root_config, "ASSISTANT_NAME", "Alyssa"), reply)
-        if speak_fn is None:
-            import voice_playback
-
-            # Wait for her to finish any reply first; overlapping voices sounded doubled.
-            with voice_playback.speech_lock:
-                voice_playback.speak(reply)
-        else:
-            speak_fn(reply)
+        _recent_call_lines.append(f"{getattr(root_config, 'ASSISTANT_NAME', 'Alyssa')}: {reply}")
+        del _recent_call_lines[:-_MAX_CALL_LINES]
+        _say(reply, speak_fn)
+        open_follow_up(now)
     return reply

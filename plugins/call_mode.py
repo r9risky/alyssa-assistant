@@ -9,12 +9,11 @@ Inspired by Capri Desktop's `CallMode.cs`:
 
 from __future__ import annotations
 
-import random
 import sys
 import time
 from typing import Optional
 
-from call_ears import get_call_session, parse_call_friend_intent
+from call_ears import get_call_session, greeting, parse_call_friend_intent
 import config
 
 TAB_TITLE = "Call & Meeting Mode"
@@ -170,11 +169,9 @@ def join_call(
         session.start_call(app_name="Discord", channel_name=channel)
         if errand in ("open_app", "play_music", "game", "song"):
             session.set_errand(action="open_app" if errand in ("open_app", "game") else "play_music", ask=message, ttl_seconds=180.0)
-        name = getattr(config, "USER_NICKNAME", "") or "my person"
-        hello = f"Hey everyone! {name} sent me in." + (f" They said: {message}." if message else "")
-        if getattr(config, "DISCORD_LISTEN", True) and discord_bot.listen_mode() == "pc":
-            result += " I'll hear everyone through your PC's audio, so stay in the call too."
-        return f"{result} Say exactly this next, word for word: {hello}"
+        print(f"[discord] {result}")
+        # Her whole reply (spoken in the channel now): a hello to the people there.
+        return greeting(discord_bot.channel_members(), message)
 
     app_choice, pids = resolve_call_app(app)
     auto_join = getattr(config, "CALL_AUTO_JOIN_ENABLED", True)
@@ -224,27 +221,13 @@ def join_call(
     elif not pids:
         join_note = f" ({app_choice} doesn't seem to be running, so I couldn't click into the call.)"
 
-    # 4. Spoken intro for friends. Returned as the reply so it goes through the normal
-    # speech path (which also feeds the virtual mic) instead of a second, overlapping speaker.
-    user_name = getattr(config, "USER_NICKNAME", "your friend")
-    excuses = [
-        f"Hey everyone! {user_name} asked me to hop in and let you know they'll be on shortly.",
-        f"Hey! {user_name} is running about 15 minutes late — probably fighting a rogue burrito.",
-        f"Yo! {user_name} sent me to cover for them for a few minutes while they get ready.",
-        f"Hey all! {user_name} will be here in a few minutes.",
-    ]
-    base_intro = random.choice(excuses)
-    if message:
-        spoken_text = f"{base_intro} They said: '{message}'. What game are we playing tonight?"
-    else:
-        spoken_text = f"{base_intro} What game or music are we putting on today?"
-
+    # 4. Her reply is the hello, spoken through the normal speech path (which also feeds the
+    # virtual mic) instead of a second, overlapping speaker.
+    spoken_text = greeting((), message)
+    if join_note:
+        return f"Call Mode's on.{join_note}"
     session.post_caption(getattr(config, "ASSISTANT_NAME", "Alyssa"), spoken_text)
-
-    channel_info = f" in #{channel}" if channel else ""
-    if server:
-        channel_info += f" on {server}"
-    return f"Joined {app_choice}{channel_info} with Call Mode on.{join_note} {spoken_text}"
+    return spoken_text
 
 
 def leave_call(args: Optional[dict] = None, **kwargs) -> str:
@@ -263,7 +246,8 @@ def leave_call(args: Optional[dict] = None, **kwargs) -> str:
     secs = duration % 60
     session.end_call()
 
-    return f"Left the {app_name} call (call duration: {mins:02d}:{secs:02d}). Call Mode is now off."
+    length = f"{mins} minute{'s' if mins != 1 else ''}" if mins else f"{secs} seconds"
+    return f"Left the {app_name} call. We were in there for {length}."
 
 
 def relay_to_call(args: Optional[dict] = None, message: str = "", **kwargs) -> str:
@@ -281,8 +265,9 @@ def relay_to_call(args: Optional[dict] = None, message: str = "", **kwargs) -> s
 
     session.post_caption(getattr(config, "ASSISTANT_NAME", "Alyssa"), cleaned)
     # Never play audio from this tool thread (two players at once crash pygame).
-    # The reply is spoken by the normal speech path, which also feeds the call.
-    return f"Relaying to the call. Your whole reply must be exactly this, word for word: {cleaned}"
+    # This is her whole reply (see brain.dialogue._SAY_AS_IS_TOOLS), spoken by the normal
+    # speech path, which also feeds the call.
+    return cleaned
 
 
 def confirm_friend_request(args: Optional[dict] = None, confirm: bool = True, **kwargs) -> str:
@@ -319,9 +304,9 @@ TOOLS = [
             "name": "join_call",
             "description": (
                 "Join a voice call or meeting on Discord (or Vesktop), Zoom, Microsoft Teams, WhatsApp, "
-                "Steam, or Browser. Automatically clicks into the voice channel, speaks your message "
-                "with a cheeky excuse, activates Call Mode with live HUD, and listens for what game "
-                "or music your friends pick."
+                "Steam, or Browser. She says hello to everyone there herself (passing on your "
+                "message if you gave one), turns on Call Mode with its live HUD, and listens for "
+                "what game or music your friends pick."
             ),
             "parameters": {
                 "type": "object",

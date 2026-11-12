@@ -664,7 +664,31 @@ _WHISPER_VAD_AVAILABLE = bool(
 )
 
 
-def _transcribe_impl_locked(audio, initial_prompt: str | None = None) -> str:
+# Friends in a Discord call: give way to your own speech instead of queueing behind it.
+CALL_LOCK_WAIT_SECONDS = 5.0
+
+
+def transcribe_call_audio(audio, hint_names=()) -> str:
+    """Local Whisper for what people in a Discord call say (no cloud STT, no tokens).
+
+    One pass, no retries at higher temperatures: on game sound those took many seconds
+    each and held the model while your own commands waited. If Whisper stays busy with
+    your speech for a few seconds, this piece is skipped.
+    """
+    prompt = build_contextual_prompt()
+    names = [n for n in hint_names if n]
+    if names:
+        prompt = f"{prompt} In the call: {', '.join(names)}.".strip()
+    if not _model_lock.acquire(timeout=CALL_LOCK_WAIT_SECONDS):
+        return ""
+    try:
+        text = _transcribe_impl_locked(audio, initial_prompt=prompt, quick=True)
+    finally:
+        _model_lock.release()
+    return "" if _is_prompt_echo(text, prompt) else text
+
+
+def _transcribe_impl_locked(audio, initial_prompt: str | None = None, quick: bool = False) -> str:
     if initial_prompt is None:
         initial_prompt = build_contextual_prompt()
     model = _get_model()
@@ -673,7 +697,7 @@ def _transcribe_impl_locked(audio, initial_prompt: str | None = None) -> str:
             audio,
             language="en",
             beam_size=1,  # greedy first pass; low-confidence retries via temperature
-            temperature=(0.0, 0.2, 0.4, 0.6, 0.8, 1.0),
+            temperature=0.0 if quick else (0.0, 0.2, 0.4, 0.6, 0.8, 1.0),
             compression_ratio_threshold=2.4,
             # Don't tighten: room-noise clips retried constantly (big speed cost).
             log_prob_threshold=getattr(config, "WHISPER_LOG_PROB_THRESHOLD", -1.0),
@@ -711,7 +735,7 @@ def _transcribe_impl_locked(audio, initial_prompt: str | None = None) -> str:
                 audio,
                 language="en",
                 beam_size=1,
-                temperature=(0.0, 0.2, 0.4, 0.6, 0.8, 1.0),
+                temperature=0.0 if quick else (0.0, 0.2, 0.4, 0.6, 0.8, 1.0),
                 compression_ratio_threshold=2.4,
                 log_prob_threshold=getattr(config, "WHISPER_LOG_PROB_THRESHOLD", -1.0),
                 condition_on_previous_text=False,

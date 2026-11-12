@@ -34,7 +34,7 @@ def test_join_call_does_not_start_a_second_speaker():
         time.sleep(0.7)
     get_call_session().end_call()
     speak.assert_not_called()
-    assert "Joined Discord" in reply and "on in 15" in reply
+    assert "doesn't seem to be running" in reply
 
 
 def test_play_is_serialized_across_threads():
@@ -86,6 +86,6 @@ def test_discord_join_asks_for_server_and_channel_then_uses_quick_switcher():
         reply = call_mode.join_call({"channel": "General"})
     session.end_call()
     assert [c.args[0] for c in switch.call_args_list] == ["*Gaming Hub", "!General"]
-    assert "Joined Vesktop in #General on Gaming Hub" in reply
-    assert "on in 15" in reply  # message from the first ask survives the follow-ups
+    # Her reply is the hello to the call, passing on the message from the first ask.
+    assert "on in 15" in reply and "Joined" not in reply
     assert call_mode._pending_join == {}

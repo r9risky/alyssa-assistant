@@ -123,10 +123,10 @@ class TestCallModeSecurityAndSession:
 
     def test_call_mode_plugin_tools(self):
         res_join = join_call({"app": "discord"})
-        assert "Joined" in res_join and "Call Mode" in res_join
+        assert "Call Mode" in res_join  # Discord isn't running here, so she only turns call mode on
 
         res_relay = relay_to_call({"message": "I will be back in 10 minutes", "excuse": True})
-        assert "Spoke to call" in res_relay or "Relayed" in res_relay or "Relaying" in res_relay
+        assert res_relay == "I will be back in 10 minutes"  # her whole reply, said to the call
 
         res_leave = leave_call({})
         assert "Left" in res_leave or "Ended" in res_leave

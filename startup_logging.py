@@ -7,6 +7,7 @@ from pathlib import Path
 import re
 import sys
 import threading
+import time
 
 
 _configured = False
@@ -98,6 +99,31 @@ def redact_sensitive_text(text: str) -> str:
     return _JWT_RE.sub("[REDACTED]", redacted)
 
 
+# Set while this thread is inside a _Tee write. If logging fails (a log rotation the OS
+# refuses because something else has alyssa.log open), logging prints its error to
+# sys.stderr, another _Tee, from inside the first one; that used to deadlock the thread
+# with the log locks held, and every thread that printed after it froze too.
+_in_tee = threading.local()
+
+
+class _SafeRotatingFileHandler(RotatingFileHandler):
+    """Keeps writing to the same file when Windows won't let it rotate, and retries later."""
+
+    _RETRY_SECONDS = 60.0
+    _retry_at = 0.0
+
+    def shouldRollover(self, record):
+        return time.monotonic() >= self._retry_at and super().shouldRollover(record)
+
+    def doRollover(self):
+        try:
+            super().doRollover()
+        except OSError:
+            self._retry_at = time.monotonic() + self._RETRY_SECONDS
+            if self.stream is None:
+                self.stream = self._open()
+
+
 class _Tee:
     def __init__(self, original, logger, level):
         self._original = original
@@ -109,6 +135,18 @@ class _Tee:
     def write(self, text):
         if not text:
             return 0
+        if getattr(_in_tee, "active", False):
+            # Logging's own error report while we were logging: console only.
+            if self._original is not None:
+                self._original.write(text)
+            return len(text)
+        _in_tee.active = True
+        try:
+            return self._write(text)
+        finally:
+            _in_tee.active = False
+
+    def _write(self, text):
         with self._lock:
             if self._original is not None:
                 self._original.write(text)
@@ -122,6 +160,8 @@ class _Tee:
         return len(text)
 
     def flush(self):
+        if getattr(_in_tee, "active", False):
+            return
         with self._lock:
             if self._buffer:
                 self._logger.log(self._level, redact_sensitive_text(self._buffer))
@@ -151,7 +191,7 @@ def configure(app_dir):
         logger = logging.getLogger("alyssa.output")
         logger.setLevel(logging.INFO)
         logger.propagate = False
-        handler = RotatingFileHandler(
+        handler = _SafeRotatingFileHandler(
             _log_path, maxBytes=2_000_000, backupCount=3, encoding="utf-8"
         )
         handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
