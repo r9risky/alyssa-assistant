@@ -487,9 +487,11 @@ def run_assistant_loop(bridge=None):
 
     # In GUI mode, if preflight checks fail (e.g. fresh install without API key),
     # keep the assistant thread alive in standby instead of dying silently.
-    first_preflight = True
-    while not run_preflight_checks(bridge, notify=first_preflight):
-        first_preflight = False
+    # Re-notify when the provider changes (e.g. the setup wizard picked Ollama
+    # but its model isn't pulled yet), not every 2s while nothing changed.
+    notified_provider = None
+    while not run_preflight_checks(bridge, notify=notified_provider != config.LLM_PROVIDER):
+        notified_provider = config.LLM_PROVIDER
         if bridge is None:
             return  # In console mode, preflight checks already exited or reported
         try:

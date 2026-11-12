@@ -64,33 +64,32 @@ class SettingsMixin:
         self._settings_dialog = None
 
     def prompt_gemini_key_setup(self):
-        """First-launch Gemini key prompt (not a scary error box)."""
-        if self.bubble:
-            self.bubble.show_message(
-                "I need a free Gemini API key before I can think! "
-                "Right-click me and choose Settings to add one →"
-            )
-        box = QMessageBox(self)
-        box.setIcon(QMessageBox.Information)
-        box.setWindowTitle(f"Let's get {config.ASSISTANT_NAME} set up")
-        box.setStyleSheet(_build_messagebox_style(self.settings))
-        box.setText(
-            "One quick step before I can start listening: I need a free "
-            "Gemini API key.\n\n"
-            "1. Get a free key at aistudio.google.com/apikey\n"
-            "2. Come back here and click \"Open Settings\" below\n"
-            "3. Paste the key into \"Gemini API key\" (Assistant tab)\n"
-            "That's it - it takes effect immediately, no restart or Save "
-            "needed.\n\n"
-            "(You can always get back to this screen later by "
-            "right-clicking me and choosing Settings.)"
-        )
-        open_btn = box.addButton("Open Settings", QMessageBox.AcceptRole)
-        box.addButton("I'll do it later", QMessageBox.RejectRole)
-        box.setDefaultButton(open_btn)
-        box.exec()
-        if box.clickedButton() == open_btn:
-            self.open_settings(focus_gemini=True)
+        """First launch with no brain: the setup wizard (brain, mic, voice)."""
+        if getattr(self, "_setup_wizard_open", False):
+            return
+        from ..setup_wizard import SetupWizard
+
+        self._setup_wizard_open = True
+        try:
+            wizard = SetupWizard(self, self.settings)
+            accepted = wizard.exec() == SetupWizard.Accepted
+        finally:
+            self._setup_wizard_open = False
+        if not accepted:
+            if self.bubble:
+                self.bubble.show_message(
+                    "No rush! Right-click me and choose Settings when you're ready to give me a brain."
+                )
+            return
+        if wizard.problems:
+            box = QMessageBox(self)
+            box.setIcon(QMessageBox.Warning)
+            box.setWindowTitle("Setup")
+            box.setStyleSheet(_build_messagebox_style(self.settings))
+            box.setText("\n\n".join(wizard.problems))
+            box.exec()
+        elif self.bubble:
+            self.bubble.show_message("All set! Give me a second to wake up properly...")
 
     def apply_companion_settings(self, new_settings: dict):
         changed = {
