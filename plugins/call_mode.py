@@ -1,7 +1,7 @@
 """Call & Meeting Mode Plugin (`join_call`, `leave_call`, `relay_to_call`, `confirm_friend_request`).
 
 Inspired by Capri Desktop's `CallMode.cs`:
-- Joins Discord voice channels, Zoom, Microsoft Teams, WhatsApp, Steam, or Browser calls.
+- Joins Discord/Vesktop voice channels, Zoom, Microsoft Teams, WhatsApp, Steam, or Browser calls.
 - Relays messages to friends on the call (e.g. "tell them I'll be on in 15, and launch whatever they're playing").
 - Arms delegated errands to launch games or music that friends in the call choose.
 - Strict Security Gate: Friends' requests are quarantined and held for the user's explicit confirmation.
@@ -10,7 +10,7 @@ Inspired by Capri Desktop's `CallMode.cs`:
 from __future__ import annotations
 
 import random
-import threading
+import sys
 import time
 from typing import Optional
 
@@ -20,25 +20,114 @@ import config
 TAB_TITLE = "Call & Meeting Mode"
 
 
+# Process name -> display name used by call detection. Vesktop is a Discord client.
+CALL_APP_PROCESSES = {
+    "discord.exe": "Discord",
+    "discordptb.exe": "Discord",
+    "discordcanary.exe": "Discord",
+    "vesktop.exe": "Vesktop",
+    "zoom.exe": "Zoom",
+    "ms-teams.exe": "Teams",
+    "teams.exe": "Teams",
+    "whatsapp.exe": "WhatsApp",
+    "telegram.exe": "Telegram",
+    "slack.exe": "Slack",
+    "signal.exe": "Signal",
+    "skype.exe": "Skype",
+    "ts3client_win64.exe": "TeamSpeak",
+    "teamspeak.exe": "TeamSpeak",
+    "mumble.exe": "Mumble",
+    "steam.exe": "Steam",
+}
+# Asking for one of these also accepts the others (e.g. "join the Discord call" while Vesktop runs).
+_APP_FAMILIES = {"discord": {"Discord", "Vesktop"}, "vesktop": {"Discord", "Vesktop"}}
+
+
+def detect_call_apps() -> dict[str, list[int]]:
+    """Running call apps as {display name: [pids]}, in CALL_APP_PROCESSES order."""
+    try:
+        import psutil
+    except ImportError:
+        return {}
+    found: dict[str, list[int]] = {}
+    for proc in psutil.process_iter(["pid", "name"]):
+        try:
+            name = (proc.info.get("name") or "").lower()
+        except Exception:
+            continue
+        app = CALL_APP_PROCESSES.get(name)
+        if app:
+            found.setdefault(app, []).append(proc.info["pid"])
+    order = list(dict.fromkeys(CALL_APP_PROCESSES.values()))
+    return {app: found[app] for app in order if app in found}
+
+
+def resolve_call_app(requested: str = "") -> tuple[str, list[int]]:
+    """Pick which call app to use and the pids of its running processes (empty if not running)."""
+    wanted = (requested or "").strip()
+    if not wanted or wanted.lower() == "auto":
+        wanted = str(getattr(config, "CALL_APP", "auto") or "auto").strip()
+    running = detect_call_apps()
+    if wanted.lower() == "auto":
+        if running:
+            app = next(iter(running))
+            return app, running[app]
+        return "Discord", []
+    accepted = _APP_FAMILIES.get(wanted.lower(), set())
+    for app, pids in running.items():
+        if app.lower() == wanted.lower() or app in accepted:
+            return app, pids
+    return wanted[:1].upper() + wanted[1:], []
+
+
+def _focus_process_window(pids: list[int]) -> bool:
+    """Bring the first visible titled window of *pids* to the front (Windows only)."""
+    if sys.platform != "win32" or not pids:
+        return False
+    import ctypes
+    from ctypes import wintypes
+
+    user32 = ctypes.windll.user32
+    wanted = set(pids)
+    hits: list[int] = []
+
+    @ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
+    def _enum(hwnd, _lparam):
+        pid = wintypes.DWORD()
+        user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+        if pid.value in wanted and user32.IsWindowVisible(hwnd) and user32.GetWindowTextLengthW(hwnd) > 0:
+            hits.append(hwnd)
+            return False
+        return True
+
+    user32.EnumWindows(_enum, 0)
+    if not hits:
+        return False
+    hwnd = hits[0]
+    if user32.IsIconic(hwnd):
+        user32.ShowWindow(hwnd, 9)  # SW_RESTORE
+    return bool(user32.SetForegroundWindow(hwnd))
+
+
 def join_call(
     args: Optional[dict] = None,
-    app: str = "Discord",
+    app: str = "auto",
     channel: str = "",
     message: str = "",
     errand: str = "open_app",
     **kwargs,
 ) -> str:
-    """Join a Discord voice channel, Zoom, Teams, WhatsApp, or Browser call and relay a message."""
+    """Join a Discord/Vesktop voice channel, Zoom, Teams, WhatsApp, or Browser call and relay a message."""
     if isinstance(args, dict):
         app = args.get("app") or app
         channel = args.get("channel") or channel
         message = args.get("message") or message
         errand = args.get("errand") or errand
 
-    app_choice = (app or "Discord").strip()
+    app_choice, pids = resolve_call_app(app)
     session = get_call_session()
 
-    # 1. Start call session
+    # 1. Start call session (shows the HUD via a queued Qt signal)
     session.start_call(app_name=app_choice, channel_name=channel)
 
     # 2. Arm errand if requested (e.g. "launch whatever they're playing")
@@ -46,20 +135,25 @@ def join_call(
         action = "open_app" if errand in ("open_app", "game") else "play_music"
         session.set_errand(action=action, ask=message, ttl_seconds=180.0)
 
-    # 3. Attempt to focus app and click voice channel / Join button if auto-join is on
-    if getattr(config, "CALL_AUTO_JOIN_ENABLED", True):
+    # 3. Focus the call app and click the voice channel / Join button if auto-join is on.
+    # The user's own "join the call" plus the auto-join setting is the approval for the click.
+    join_note = ""
+    if getattr(config, "CALL_AUTO_JOIN_ENABLED", True) and pids:
         try:
-            import actions
-            # Bring app window to front
-            actions.switch_window(app_choice)
-            time.sleep(0.4)
-            # Locate Join button or channel name on screen
-            target_desc = f"{channel} voice channel" if channel else "Join Voice button"
-            actions.click_screen_element(target_desc)
-        except Exception:
-            pass
+            if _focus_process_window(pids):
+                time.sleep(0.4)
+                import actions
+                target_desc = f"{channel} voice channel" if channel else "Join Voice button"
+                result = actions.click_screen_element(target_desc, confirmed=True)
+                if not str(result).startswith("Clicked"):
+                    join_note = f" (Couldn't click into the channel myself: {result})"
+        except Exception as e:
+            join_note = f" (Couldn't click into the channel myself: {e})"
+    elif not pids:
+        join_note = f" ({app_choice} doesn't seem to be running, so I couldn't click into the call.)"
 
-    # 4. Formulate spoken intro message to friends on the call
+    # 4. Spoken intro for friends. Returned as the reply so it goes through the normal
+    # speech path (which also feeds the virtual mic) instead of a second, overlapping speaker.
     user_name = getattr(config, "USER_NICKNAME", "your friend")
     excuses = [
         f"Hey everyone! {user_name} asked me to hop in and let you know they'll be on shortly.",
@@ -73,25 +167,10 @@ def join_call(
     else:
         spoken_text = f"{base_intro} What game or music are we putting on today?"
 
-    # Queue message to call
-    asst_name = getattr(config, "ASSISTANT_NAME", "Alyssa")
-    session.post_caption(asst_name, spoken_text)
-
-    try:
-        import voice_playback
-        def _speak_delayed():
-            time.sleep(0.5)
-            voice_playback.speak(spoken_text)
-        threading.Thread(target=_speak_delayed, daemon=True).start()
-    except Exception:
-        pass
+    session.post_caption(getattr(config, "ASSISTANT_NAME", "Alyssa"), spoken_text)
 
     channel_info = f" in #{channel}" if channel else ""
-    return (
-        f"Joined {app_choice}{channel_info} and enabled Call Mode! "
-        f"Spoke your message to the call: '{spoken_text}'. "
-        "I'll listen for what game or music your friends pick and ask for your OK before launching."
-    )
+    return f"Joined {app_choice}{channel_info} with Call Mode on.{join_note} {spoken_text}"
 
 
 def leave_call(args: Optional[dict] = None, **kwargs) -> str:
@@ -165,7 +244,7 @@ TOOLS = [
         "function": {
             "name": "join_call",
             "description": (
-                "Join a voice call or meeting on Discord, Zoom, Microsoft Teams, WhatsApp, "
+                "Join a voice call or meeting on Discord (or Vesktop), Zoom, Microsoft Teams, WhatsApp, "
                 "Steam, or Browser. Automatically clicks into the voice channel, speaks your message "
                 "with a cheeky excuse, activates Call Mode with live HUD, and listens for what game "
                 "or music your friends pick."
@@ -175,8 +254,8 @@ TOOLS = [
                 "properties": {
                     "app": {
                         "type": "string",
-                        "description": "App name: 'Discord', 'Zoom', 'Teams', 'WhatsApp', 'Steam', or 'Browser'.",
-                        "default": "Discord",
+                        "description": "App name: 'auto' (detect the running call app), 'Discord', 'Vesktop', 'Zoom', 'Teams', 'WhatsApp', 'Steam', or 'Browser'.",
+                        "default": "auto",
                     },
                     "channel": {
                         "type": "string",
