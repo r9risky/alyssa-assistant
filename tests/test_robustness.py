@@ -55,3 +55,42 @@ def test_corrupt_memory_file_is_kept_not_overwritten(tmp_path, monkeypatch):
     monkeypatch.setattr(memory, "MEMORY_FILE", str(path))
     assert memory.load_memories() == []
     assert (tmp_path / "memory.json.corrupt").read_text() == "[\"likes tea\", "
+
+
+def test_fact_embeddings_are_reused_between_turns(monkeypatch):
+    import numpy as np
+
+    import memory
+
+    embedded = []
+
+    class FakeModel:
+        def passage_embed(self, facts):
+            embedded.extend(facts)
+            return (np.array([float(len(f)), 1.0]) for f in facts)
+
+    monkeypatch.setattr(memory, "_FACT_VECTORS", {})
+    model = FakeModel()
+    memory._fact_vectors(model, ["likes tea", "has a cat"])
+    vectors = memory._fact_vectors(model, ["likes tea", "has a cat", "plays piano"])
+    assert embedded == ["likes tea", "has a cat", "plays piano"] and len(vectors) == 3
+    memory._fact_vectors(model, ["plays piano"])
+    assert set(memory._FACT_VECTORS) == {"plays piano"}
+
+
+def test_call_reply_uses_persona_voice(monkeypatch):
+    from brain import dialogue, persona
+
+    seen = {}
+
+    def fake_call(messages, provider, label, tools=None):
+        seen["system"] = messages[0]["content"]
+        return {"message": {"content": "**Ha**, nice one!"}}, None
+
+    monkeypatch.setattr(dialogue, "_call_model_with_error_handling", fake_call)
+    monkeypatch.setattr(dialogue.memory, "load_personality_notes", lambda: "Loves puns.")
+    monkeypatch.setattr(dialogue.memory, "get_personality_path", lambda: __file__)
+    reply = dialogue.reply_to_call("Sam", "Alyssa, tell a joke")
+    assert reply == "Ha, nice one!"
+    assert persona.voice(dialogue.ui_config.ASSISTANT_NAME, "x").split()[0] in seen["system"]
+    assert "Loves puns." in seen["system"]
