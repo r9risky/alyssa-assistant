@@ -15,6 +15,7 @@ from config import (
     PROVIDER_SETTINGS as provider_config,
     UI_SETTINGS as ui_config,
 )
+import fondness
 import memory
 import nameutil
 import startup_logging
@@ -208,6 +209,7 @@ def _build_system_prompt(user_text: str = "") -> str:
     if nickname:
         base += f"\n\nThe user's preferred name or nickname is '{nickname}'. Address them naturally when appropriate."
     try:
+        base += fondness.prompt_line()
         personality_path = memory.get_personality_path()
         if os.path.exists(personality_path):
             custom_persona = memory.load_personality_notes()
