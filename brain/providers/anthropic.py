@@ -8,6 +8,7 @@ from config import PROVIDER_SETTINGS as config
 import telemetry
 
 from ..common import _HTTP_SESSION, _iter_sse_json
+from .. import usage as _usage
 from ..tool_registry import TOOLS
 
 _anthropic_tools_cache = None
@@ -126,11 +127,16 @@ def _call_anthropic(messages, on_text_delta=None, cancel_event=None, tools=None)
     streamed_calls = {}
     first_token_at = None
     started_at = time.time()
+    usage = {}
     try:
         for event in _iter_sse_json(response, cancel_event):
             kind = event.get("type")
             index = event.get("index", 0)
-            if kind == "content_block_start":
+            if kind == "message_start":
+                usage.update((event.get("message") or {}).get("usage") or {})
+            elif kind == "message_delta":
+                usage.update(event.get("usage") or {})
+            elif kind == "content_block_start":
                 block = event.get("content_block") or {}
                 if block.get("type") == "tool_use":
                     streamed_calls[index] = {
@@ -156,6 +162,7 @@ def _call_anthropic(messages, on_text_delta=None, cancel_event=None, tools=None)
                     current["arguments"].append(delta.get("partial_json") or "")
     finally:
         response.close()
+    _usage.record("anthropic", usage.get("input_tokens"), usage.get("output_tokens"))
 
     tool_calls = []
     for current in streamed_calls.values():

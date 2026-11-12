@@ -16,6 +16,7 @@ class SettingsMixin:
         existing = getattr(self, "_settings_dialog", None)
         if existing is not None:
             try:
+                existing.refresh_tokens_today()
                 if existing.isMinimized():
                     existing.showNormal()
                 else:
