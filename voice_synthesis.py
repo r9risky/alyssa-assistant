@@ -25,6 +25,9 @@ async def _synthesize(text: str, out_path: str):
     if provider == "elevenlabs":
         loop = asyncio.get_running_loop()
         await loop.run_in_executor(None, _synthesize_elevenlabs, text, out_path)
+    elif provider == "kokoro":
+        loop = asyncio.get_running_loop()
+        await loop.run_in_executor(None, _synthesize_kokoro, text, out_path)
     else:
         await _synthesize_edge(text, out_path)
 
@@ -63,6 +66,70 @@ async def _synthesize_edge(text: str, out_path: str):
             if attempt or not _is_cert_error(e):
                 raise
             _use_os_trust_store_for_edge_tts()
+
+
+# --- Kokoro: free local voice (kokoro-onnx). Model files download once. ---
+KOKORO_RELEASE_URL = "https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0/"
+KOKORO_FILES = ("kokoro-v1.0.int8.onnx", "voices-v1.0.bin")  # int8: ~90 MB, fast on CPU
+_kokoro = None
+_kokoro_lock = threading.Lock()
+
+
+def kokoro_models_dir() -> str:
+    import config as config_module  # config.py sits next to the exe in frozen builds
+    return os.path.join(os.path.dirname(os.path.abspath(config_module.__file__)), "models", "kokoro")
+
+
+def _download_file(url: str, dest: str):
+    partial = dest + ".part"
+    with requests.get(url, stream=True, timeout=30) as response:
+        response.raise_for_status()
+        with open(partial, "wb") as f:
+            for chunk in response.iter_content(chunk_size=1 << 20):
+                f.write(chunk)
+    os.replace(partial, dest)  # only a complete download gets the real name
+
+
+def _get_kokoro():
+    global _kokoro
+    with _kokoro_lock:
+        if _kokoro is None:
+            try:
+                from kokoro_onnx import Kokoro
+            except ImportError as exc:
+                raise RuntimeError(
+                    "The Kokoro voice needs the kokoro-onnx package: pip install kokoro-onnx"
+                ) from exc
+            folder = kokoro_models_dir()
+            os.makedirs(folder, exist_ok=True)
+            paths = [os.path.join(folder, name) for name in KOKORO_FILES]
+            for name, path in zip(KOKORO_FILES, paths):
+                if not os.path.isfile(path):
+                    print(f"Downloading Kokoro voice file {name} (first run only)...")
+                    _download_file(KOKORO_RELEASE_URL + name, path)
+            _kokoro = Kokoro(*paths)
+        return _kokoro
+
+
+def _synthesize_kokoro(text: str, out_path: str):
+    import wave
+
+    import numpy as np
+
+    kokoro = _get_kokoro()
+    with _kokoro_lock:  # one onnxruntime run at a time
+        samples, sample_rate = kokoro.create(
+            text,
+            voice=getattr(config, "KOKORO_VOICE", "af_heart") or "af_heart",
+            speed=1.0,
+            lang="en-us",
+        )
+    pcm = (np.clip(samples, -1.0, 1.0) * 32767).astype(np.int16)
+    with wave.open(out_path, "wb") as wf:
+        wf.setnchannels(1)
+        wf.setsampwidth(2)
+        wf.setframerate(sample_rate)
+        wf.writeframes(pcm.tobytes())
 
 
 # Reused Session: keep-alive to api.elevenlabs.io so pipelined sentences
@@ -280,9 +347,10 @@ class _ElevenRealtimeTTS:
 _eleven_realtime_tts = _ElevenRealtimeTTS()
 
 def _synthesize_to_temp_file(text: str) -> str:
-    """Synthesize *text* to a new temp .mp3 and return its path.
-    Raises on failure after cleaning up the temp file."""
-    fd, path = tempfile.mkstemp(suffix=".mp3")
+    """Synthesize *text* to a new temp audio file (.mp3, or .wav for Kokoro)
+    and return its path. Raises on failure after cleaning up the temp file."""
+    suffix = ".wav" if getattr(config, "TTS_PROVIDER", "edge") == "kokoro" else ".mp3"
+    fd, path = tempfile.mkstemp(suffix=suffix)
     os.close(fd)
     try:
         _run_on_loop(_synthesize(text, path))
