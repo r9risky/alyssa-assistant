@@ -291,6 +291,11 @@ it in **Settings → Plugins** (🟡 in the list), and asks again if an update w
 more. Plugins you create or save in that editor count as approved. This is
 informed consent, not a sandbox: only approve code you trust.
 
+**Plugin gallery:** Settings → Plugins → 🧩 Browse Gallery lists extra plugins
+(`gallery/` in this repo), shows what each needs, and installs it in one click.
+Downloads are checked against the sha256 in `gallery/index.json`. To add one, drop
+the file in `gallery/plugins/` and run `python scripts/build_gallery_index.py`.
+
 <details>
 <summary>Give your plugin its own Settings tab</summary>
 

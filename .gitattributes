@@ -1,0 +1,2 @@
+# Gallery plugins are hashed byte-for-byte (gallery/index.json); keep LF everywhere.
+gallery/** -text

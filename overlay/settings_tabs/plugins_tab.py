@@ -62,6 +62,11 @@ class PluginsTabMixin:
         new_plugin_btn.clicked.connect(self._on_new_plugin)
         left_layout.addWidget(new_plugin_btn)
 
+        gallery_btn = QPushButton("🧩 Browse Gallery")
+        gallery_btn.setObjectName("secondaryButton")
+        gallery_btn.clicked.connect(self._on_browse_gallery)
+        left_layout.addWidget(gallery_btn)
+
         reload_btn = QPushButton("⟳ Reload Plugins")
         reload_btn.setToolTip("Reload plugin changes now.")
         reload_btn.clicked.connect(self._on_reload_plugins)
@@ -331,6 +336,16 @@ class PluginsTabMixin:
             self.plugin_status_label.setText(f"⚠ Reloaded - {count} loaded, but: {'; '.join(errors)}")
         else:
             self.plugin_status_label.setText(f"✓ Reloaded - {count} plugin function(s) active")
+
+    def _on_browse_gallery(self):
+        from ..plugin_gallery_dialog import PluginGalleryDialog
+
+        dialog = PluginGalleryDialog(self, dark=self.companion.settings)
+        dialog.exec()
+        if dialog.installed_any:
+            self._reload_plugins_backend()
+            self._refresh_plugin_list(select=self._current_plugin_file)
+            self.plugin_status_label.setText("✓ Gallery plugins installed and loaded")
 
     def _on_new_plugin(self):
         name, ok = QInputDialog.getText(
