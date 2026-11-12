@@ -408,6 +408,32 @@ class AssistantTabMixin:
         self.briefing_topics_edit.editingFinished.connect(self._queue_assistant_apply)
         self._add_row(brief_form, "News topics:", self.briefing_topics_edit)
         outer.addWidget(brief_card)
+
+        remote_card, remote_form = self._create_card(
+            "Phone Remote",
+            "Chat with her from your phone's browser on the same Wi-Fi. Only devices on your "
+            "local network with this secret link get in.",
+            "📱",
+        )
+        self.phone_remote_check = QCheckBox("Let my phone talk to her")
+        self.phone_remote_check.setChecked(bool(getattr(config, "PHONE_REMOTE_ENABLED", False)))
+        self.phone_remote_check.toggled.connect(self._queue_assistant_apply)
+        self.phone_remote_check.toggled.connect(self._refresh_phone_remote_link)
+        self._add_row(remote_form, "Phone remote:", self.phone_remote_check)
+
+        self.phone_remote_qr = QLabel()
+        self.phone_remote_qr.setAlignment(Qt.AlignLeft)
+        self._add_row(remote_form, "Scan:", self.phone_remote_qr)
+        self.phone_remote_url = QLabel()
+        self.phone_remote_url.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        self.phone_remote_url.setWordWrap(True)
+        self._add_row(remote_form, "Or open:", self.phone_remote_url)
+        self.phone_remote_new_btn = QPushButton("New link (logs other phones out)")
+        self.phone_remote_new_btn.setObjectName("secondaryButton")
+        self.phone_remote_new_btn.clicked.connect(lambda: self._refresh_phone_remote_link(regenerate=True))
+        self._add_row(remote_form, "", self.phone_remote_new_btn)
+        outer.addWidget(remote_card)
+        self._refresh_phone_remote_link()
         outer.addStretch(1)
 
         self._update_provider_rows_visibility()
@@ -599,6 +625,36 @@ class AssistantTabMixin:
         return w
 
     # -- Credential & Verification Helpers ---------------------------------
+
+    def _refresh_phone_remote_link(self, *args, regenerate: bool = False):
+        """Show the phone link and its QR code while the remote is switched on."""
+        import phone_remote
+
+        on = self.phone_remote_check.isChecked()
+        for widget in (self.phone_remote_qr, self.phone_remote_url, self.phone_remote_new_btn):
+            widget.setVisible(on)
+        if not on:
+            return
+        try:
+            if regenerate:
+                phone_remote.token(regenerate=True)
+            url = phone_remote.phone_url()
+        except OSError as e:
+            self.phone_remote_url.setText(f"Couldn't create the link: {e}")
+            return
+        self.phone_remote_url.setText(f"{url}\n(Windows may ask to allow network access the first time.)")
+        try:
+            import io
+            import segno
+            from PySide6.QtGui import QPixmap
+
+            buffer = io.BytesIO()
+            segno.make(url, error="m").save(buffer, kind="png", scale=5, border=2)
+            pixmap = QPixmap()
+            pixmap.loadFromData(buffer.getvalue(), "PNG")
+            self.phone_remote_qr.setPixmap(pixmap)
+        except ImportError:
+            self.phone_remote_qr.setText("(QR code needs the segno package - use the link below)")
 
     def _toggle_key_visibility(self, edit, show: bool):
         edit.setEchoMode(QLineEdit.Normal if show else QLineEdit.Password)
@@ -829,6 +885,7 @@ class AssistantTabMixin:
             "BRIEFING_ENABLED": self.briefing_enabled_check.isChecked(),
             "BRIEFING_TIME": self.briefing_time_edit.time().toString("HH:mm"),
             "BRIEFING_NEWS_TOPICS": self.briefing_topics_edit.text().strip(),
+            "PHONE_REMOTE_ENABLED": self.phone_remote_check.isChecked(),
             "WHISPER_MODEL_SIZE": self.whisper_model_combo.currentText().strip() or config.WHISPER_MODEL_SIZE,
             "WHISPER_DEVICE": self._whisper_device_display_to_value.get(self.whisper_device_combo.currentText(), "auto"),
             "WHISPER_COMPUTE_TYPE": self.whisper_compute_combo.currentText().strip() or "auto",
@@ -965,6 +1022,10 @@ class AssistantTabMixin:
         old_audio_output = getattr(config, "AUDIO_OUTPUT_DEVICE", "default")
         for key, value in values.items():
             setattr(config, key, value)
+        import phone_remote
+        remote_error = phone_remote.start()
+        if remote_error:
+            QMessageBox.warning(self, "Phone remote", remote_error)
 
         if old_preset != getattr(config, "SECURITY_PRESET", "trusted"):
             try:
