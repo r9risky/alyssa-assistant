@@ -83,14 +83,17 @@ and she doesn't touch your Discord window.
    and hops in.
 
 - *"tell them I'm joining in ten minutes"* passes your message on word for word.
-- Friends can talk to her too. She **only replies when they say her name**, so the call doesn't eat
-  your AI quota.
+- When she joins she **says hi to everyone there by name**, and she greets people who join later.
+- Friends can talk to her too. She replies when they **say her name**, or when they answer her right
+  after she spoke (a couple of times, then they need her name again), so the call doesn't eat your
+  AI quota.
 - If a friend asks her to open a game or play a song, she **asks you first**. Say *"yes"* or *"no"*.
-- *"leave the call"* makes her disconnect.
+- *"leave the call"* makes her disconnect. She also leaves by herself a minute after everyone else has.
 
 **How she hears your friends:**
 - **By default she uses your PC's audio**, so stay in the call yourself. She can't tell people apart
-  that way, and she can hear game sounds.
+  that way, and she can hear game sounds. She listens to your **Windows default output device**, so
+  Discord has to play through that one (the log says which device she's listening to).
 - **Bot ears (optional, experimental):** she hears each friend separately through her own
   connection. This needs a community voice-receive add-on that can decode Discord's encrypted voice,
   and it isn't installed automatically. It's for source installs only, not the .exe:

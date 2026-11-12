@@ -1,6 +1,7 @@
 """Text-to-speech provider synthesis and realtime ElevenLabs transport."""
 
 import asyncio
+import concurrent.futures
 import base64
 import json
 import os
@@ -248,9 +249,18 @@ def _get_loop():
         return _loop
 
 
+# A voice server that stops answering mid-line must not hold her speech lock forever
+# (everything else that speaks, including your next command, waits on it).
+SYNTHESIS_TIMEOUT_SECONDS = 90.0
+
+
 def _run_on_loop(coro):
     fut = asyncio.run_coroutine_threadsafe(coro, _get_loop())
-    return fut.result()
+    try:
+        return fut.result(SYNTHESIS_TIMEOUT_SECONDS)
+    except concurrent.futures.TimeoutError:
+        fut.cancel()
+        raise TimeoutError(f"the voice took over {SYNTHESIS_TIMEOUT_SECONDS:.0f}s to answer") from None
 
 
 class _ElevenRealtimeTTS:

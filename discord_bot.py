@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import queue
 import sys
 import threading
 import time
@@ -133,6 +134,9 @@ def play_pcm(pcm48_stereo: bytes) -> bool:
         _audio.extend(pcm48_stereo)
     try:
         _run(_ensure_playing(), timeout=5)
+        import call_ears
+
+        call_ears.open_follow_up()  # friends can answer her without saying her name first
         return True
     except Exception as e:  # e.g. Opus missing: say why and fall back to the speakers
         stop_audio()
@@ -269,6 +273,21 @@ def start() -> str | None:
                 _status = f"online as {client.user}"
                 print(f"[discord] Logged in as {client.user}.")
 
+            @client.event
+            async def on_voice_state_update(member, before, after):
+                vc = _voice_client()
+                if vc is None or member.bot or before.channel == after.channel:
+                    return
+                if after.channel == vc.channel:
+                    import call_ears
+
+                    # Spoken off this loop: speech waits on her lock and calls back into it.
+                    threading.Thread(
+                        target=call_ears.greet_joiner, args=(member.display_name,), daemon=True
+                    ).start()
+                elif before.channel == vc.channel and not _humans(vc.channel):
+                    asyncio.get_running_loop().create_task(_leave_if_still_alone())
+
             try:
                 _loop.run_until_complete(client.start(token))
             except discord.LoginFailure:
@@ -324,6 +343,35 @@ def ready() -> bool:
 
 
 # ---------------------------------------------------------------- joining
+
+def _humans(channel) -> list:
+    return [m for m in getattr(channel, "members", []) if not getattr(m, "bot", False)]
+
+
+def channel_members() -> list[str]:
+    """Display names of your friends (not you, not bots) in her voice channel."""
+    vc = _voice_client()
+    if vc is None:
+        return []
+    return [m.display_name for m in _humans(vc.channel) if m.id != owner_id()]
+
+
+LEAVE_EMPTY_CALL_AFTER_SECONDS = 60.0
+
+
+async def _leave_if_still_alone():
+    """Everyone left: hang up after a minute instead of sitting in an empty channel forever."""
+    await asyncio.sleep(LEAVE_EMPTY_CALL_AFTER_SECONDS)
+    vc = _voice_client()
+    if vc is None or _humans(vc.channel):
+        return
+    print("[discord] Everyone left the voice channel, so she left too.")
+    stop_audio()
+    await _leave()
+    import call_ears
+
+    call_ears.get_call_session().end_call()
+
 
 def _norm(text: str) -> str:
     return "".join(ch for ch in (text or "").lower() if ch.isalnum())
@@ -419,6 +467,7 @@ def _start_listening(vc) -> None:
             print(f"[discord] Bot listening failed ({e}); using the PC's audio instead.")
             if _listener is not None:
                 _listener.stop()
+    print("[discord] Hearing the call through this PC's audio, so stay in the call yourself.")
     _pc_listener = PCListener(transcribe=True)
     _listen_mode = "pc"
 
@@ -529,22 +578,9 @@ def _transcribe_and_handle(name: str, audio: np.ndarray) -> None:
 
     if not audio.size or float(np.sqrt(np.mean(audio ** 2))) < 0.01:
         return  # breathing / background hum: don't even transcribe
-    with transcribe._model_lock:  # local Whisper only: no cloud STT, no tokens
-        text = transcribe._transcribe_impl_locked(audio)
+    text = transcribe.transcribe_call_audio(audio, hint_names=channel_members())  # local, no tokens
     if text and text.strip():
         call_ears.handle_friend_line(name, text.strip())
-
-
-_pc_transcribe_slot = threading.Semaphore(1)
-
-
-def _transcribe_one_pc_segment(segment: np.ndarray) -> None:
-    try:
-        _transcribe_and_handle("Someone in the call", segment)
-    except Exception as e:
-        print(f"[discord] Couldn't handle what the call said: {e}")
-    finally:
-        _pc_transcribe_slot.release()
 
 
 def _speaking_on_pc() -> bool:
@@ -558,10 +594,10 @@ def _speaking_on_pc() -> bool:
 class EnergySegmenter:
     """Cuts a 16 kHz mono stream into speech segments by loudness (no ML, nearly free)."""
 
-    THRESHOLD = 0.02
+    THRESHOLD = 0.012  # quiet friends (low Discord volume) sat under the old 0.02
     GAP_SECONDS = 0.8
     MIN_SECONDS = 0.5
-    MAX_SECONDS = 15.0
+    MAX_SECONDS = 10.0  # shorter pieces keep each Whisper job quick
 
     def __init__(self):
         self._chunks: list[np.ndarray] = []
@@ -596,6 +632,8 @@ class PCListener:
     """
 
     BLOCK = 1600  # 0.1 s at 16 kHz
+    BACKLOG = 3  # speech waiting for Whisper; past this the oldest is dropped
+    SILENT_HINT_SECONDS = 90.0
 
     def __init__(self, transcribe: bool = True, on_speech=None):
         self.transcribe = transcribe
@@ -603,10 +641,35 @@ class PCListener:
         self._on_speech = on_speech
         self._stopped = threading.Event()
         self._muted_until = 0.0
+        # A queue, not "drop while busy": friends talking during one slow job used to be lost.
+        self._pending: queue.Queue = queue.Queue(maxsize=self.BACKLOG)
         threading.Thread(target=self._run, daemon=True, name="discord-pc-ears").start()
+        threading.Thread(target=self._transcribe_loop, daemon=True, name="discord-pc-whisper").start()
 
     def stop(self) -> None:
         self._stopped.set()
+
+    def queue_speech(self, segment: np.ndarray) -> None:
+        while True:
+            try:
+                self._pending.put_nowait(segment)
+                return
+            except queue.Full:
+                try:
+                    self._pending.get_nowait()
+                except queue.Empty:
+                    pass
+
+    def _transcribe_loop(self) -> None:
+        while not self._stopped.is_set():
+            try:
+                segment = self._pending.get(timeout=0.5)
+            except queue.Empty:
+                continue
+            try:
+                _transcribe_and_handle("Someone in the call", segment)
+            except Exception as e:
+                print(f"[discord] Couldn't handle what the call said: {e}")
 
     def _run(self) -> None:
         try:
@@ -617,7 +680,10 @@ class PCListener:
         except Exception as e:  # not Windows, no audio device, package missing
             print(f"[discord] Can't listen to the PC's audio: {e}")
             return
+        print(f"[discord] Listening to the call through what plays on '{speaker.name}'.")
         segmenter = EnergySegmenter()
+        started = loudest_at = time.monotonic()
+        hinted = False
         with mic.recorder(samplerate=16000, channels=1, blocksize=self.BLOCK) as recorder:
             while not self._stopped.is_set():
                 block = recorder.record(numframes=self.BLOCK)[:, 0].astype(np.float32)
@@ -625,13 +691,16 @@ class PCListener:
                 if busy() or _speaking_on_pc():
                     # Her own voice: back through your Discord, or straight from the speakers.
                     self._muted_until = now + 0.5
+                if block.size and float(np.abs(block).max()) > 0.003:
+                    loudest_at = now
+                elif not hinted and now - max(started, loudest_at) > self.SILENT_HINT_SECONDS:
+                    hinted = True
+                    print(f"[discord] '{speaker.name}' has played nothing for a while. If Discord "
+                          "plays through a different device, make that the Windows default output "
+                          "so she can hear the call.")
                 for segment in segmenter.feed(block, muted=now < self._muted_until):
                     self.speech_times = [t for t in self.speech_times if now - t < 120] + [now]
                     if self._on_speech is not None:
                         self._on_speech(self)
-                    if self.transcribe and _pc_transcribe_slot.acquire(blocking=False):
-                        # One at a time: game sound and chatter used to pile up Whisper jobs
-                        # that held its lock, so your own commands to her waited behind them.
-                        threading.Thread(
-                            target=_transcribe_one_pc_segment, args=(segment,), daemon=True
-                        ).start()
+                    if self.transcribe:
+                        self.queue_speech(segment)

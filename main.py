@@ -1,4 +1,5 @@
 """Main listening loop and application entrypoint."""
+import faulthandler
 import queue
 import random
 import re
@@ -520,6 +521,19 @@ def run_preflight_checks(bridge=None, notify: bool = True) -> bool:
 _gemini_calls_this_session = 0
 
 
+# If she ever stops responding again, logs/hang-stacks.txt shows where every thread was stuck.
+_HANG_DUMP_SECONDS = 300
+
+
+def _open_hang_dump():
+    if _startup_log_path is None:
+        return None
+    try:
+        return open(os.path.join(os.path.dirname(_startup_log_path), "hang-stacks.txt"), "a")
+    except OSError:
+        return None
+
+
 def run_assistant_loop(bridge=None):
     """Always-listening loop. Main thread in console mode, background thread with GUI.
     Calls speak(reply, bridge) either way."""
@@ -593,7 +607,11 @@ def run_assistant_loop(bridge=None):
         print(f"(startup greeting failed, continuing without it: {e})")
         pending_interrupt_audio = None
 
+    hang_dump = _open_hang_dump()
     while True:
+        if hang_dump is not None:
+            # Each pass re-arms it: only a loop stuck for minutes writes every thread's stack.
+            faulthandler.dump_traceback_later(_HANG_DUMP_SECONDS, file=hang_dump)
         try:
             typed_text = None
             audio = None  # reset each pass; stays None for typed input
