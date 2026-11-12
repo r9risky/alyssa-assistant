@@ -8,6 +8,7 @@ from config import PROVIDER_SETTINGS as config
 import telemetry
 
 from ..common import GenerationCancelled, _HTTP_SESSION
+from .. import usage as _usage
 from ..tool_registry import TOOLS
 
 def _call_ollama(messages, on_text_delta=None, cancel_event=None, tools=None):
@@ -35,6 +36,7 @@ def _call_ollama(messages, on_text_delta=None, cancel_event=None, tools=None):
     tool_calls = []
     first_token_at = None
     started_at = time.time()
+    usage = {}
     try:
         for line in response.iter_lines(decode_unicode=True):
             if cancel_event is not None and cancel_event.is_set():
@@ -42,6 +44,8 @@ def _call_ollama(messages, on_text_delta=None, cancel_event=None, tools=None):
             if not line:
                 continue
             event = json.loads(line)
+            if event.get("done"):
+                usage = event
             message = event.get("message") or {}
             delta = message.get("content") or ""
             if delta:
@@ -56,6 +60,7 @@ def _call_ollama(messages, on_text_delta=None, cancel_event=None, tools=None):
                     tool_calls.append(call)
     finally:
         response.close()
+    _usage.record("ollama", usage.get("prompt_eval_count"), usage.get("eval_count"))
     return {
         "message": {
             "role": "assistant",

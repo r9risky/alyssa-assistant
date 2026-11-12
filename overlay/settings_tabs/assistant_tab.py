@@ -90,7 +90,27 @@ class AssistantTabMixin:
         self.provider_combo.setCurrentText(config.LLM_PROVIDER)
         self.provider_combo.currentTextChanged.connect(self._queue_assistant_apply)
         self.provider_combo.currentTextChanged.connect(self._update_provider_rows_visibility)
-        self._add_row(form, "LLM provider:", self.provider_combo)
+        self._add_row(form, "Main model:", self.provider_combo)
+
+        # Which model answers: the main one always (cheapest), or a stronger one for heavy work.
+        self.reasoning_tier_combo = QComboBox()
+        self.reasoning_tier_combo.addItem("Always the main model (cheapest)", "fast")
+        self.reasoning_tier_combo.addItem("Stronger model for planning, research and writing", "auto")
+        self.reasoning_tier_combo.addItem("Stronger model for everything", "strong")
+        tier_idx = self.reasoning_tier_combo.findData(str(getattr(config, "LLM_REASONING_TIER", "fast")))
+        self.reasoning_tier_combo.setCurrentIndex(max(0, tier_idx))
+        self.reasoning_tier_combo.currentIndexChanged.connect(self._queue_assistant_apply)
+        self.reasoning_tier_combo.currentIndexChanged.connect(self._update_strong_provider_visibility)
+        self.tokens_today_label = self._help_label("")
+        self._add_row(form, "Use for chat:", self._stack_under(self.reasoning_tier_combo, self.tokens_today_label))
+
+        self.strong_provider_combo = QComboBox()
+        self.strong_provider_combo.addItems(["anthropic", "openai", "gemini", "custom_openai", "ollama"])
+        self.strong_provider_combo.setCurrentText(str(getattr(config, "LLM_STRONG_PROVIDER", "anthropic")))
+        self.strong_provider_combo.currentTextChanged.connect(self._queue_assistant_apply)
+        self._strong_provider_row = self._add_row(form, "Stronger model:", self.strong_provider_combo)
+        self._update_strong_provider_visibility()
+        self.refresh_tokens_today()
 
         # -- Ollama (local) --
         self.ollama_model_edit = QLineEdit(config.OLLAMA_MODEL)
@@ -900,6 +920,8 @@ class AssistantTabMixin:
         return {
             "ASSISTANT_NAME": self.name_edit.text().strip() or config.ASSISTANT_NAME,
             "LLM_PROVIDER": self.provider_combo.currentText(),
+            "LLM_REASONING_TIER": self.reasoning_tier_combo.currentData() or "fast",
+            "LLM_STRONG_PROVIDER": self.strong_provider_combo.currentText(),
             "OLLAMA_MODEL": self.ollama_model_edit.text().strip() or config.OLLAMA_MODEL,
             "GEMINI_MODEL": self.gemini_model_edit.currentText().strip() or config.GEMINI_MODEL,
             "OPENAI_MODEL": self.openai_model_edit.currentText().strip() or getattr(config, "OPENAI_MODEL", ""),
@@ -1003,6 +1025,20 @@ class AssistantTabMixin:
             key: values[key] for key in originals
             if values[key] != originals[key]
         }
+
+    def _update_strong_provider_visibility(self, *args):
+        visible = (self.reasoning_tier_combo.currentData() or "fast") != "fast"
+        self._set_rows_visible(self._assistant_form, [self._strong_provider_row], visible)
+
+    def refresh_tokens_today(self):
+        from brain import usage
+
+        used = usage.today()
+        total = used["input"] + used["output"]
+        self.tokens_today_label.setText(
+            f"Today: {total:,} tokens over {used['calls']} model calls." if used["calls"] else ""
+        )
+        self.tokens_today_label.setVisible(bool(used["calls"]))
 
     def _gather_assistant_updates(self, values=None) -> dict:
         """Non-secret fields to save to settings.json. SECRET_ENV_VARS go through _gather_secret_updates()."""

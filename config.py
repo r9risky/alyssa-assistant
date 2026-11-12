@@ -20,7 +20,7 @@ ASSISTANT_NAME_ALIASES = [
 
 LLM_PROVIDER = 'gemini'
 LLM_STRONG_PROVIDER = 'anthropic'
-LLM_REASONING_TIER = 'auto'  # "auto", "fast", or "strong"
+LLM_REASONING_TIER = 'fast'  # "fast" (always the main model), "auto" (strong model for heavy tasks), or "strong"
 
 OLLAMA_MODEL = 'qwen2.5:3b'
 OLLAMA_URL = "http://localhost:11434/api/chat"

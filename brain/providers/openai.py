@@ -8,6 +8,7 @@ from config import PROVIDER_SETTINGS as config
 import telemetry
 
 from ..common import _HTTP_SESSION, _iter_sse_json, is_api_key_transport_secure
+from .. import usage as _usage
 from ..tool_registry import TOOLS
 
 def _messages_to_openai(messages):
@@ -79,6 +80,11 @@ def _call_openai_compatible(
         del body["tools"], body["tool_choice"]
     if provider_label != "OpenAI":
         body["temperature"] = 0.2
+    if provider_label == "OpenAI":
+        body["stream_options"] = {"include_usage": True}
+        if str(model).startswith(("gpt-5", "o1", "o3", "o4")):
+            # Reasoning models default to medium effort, which can spend the whole small output cap thinking.
+            body["reasoning_effort"] = "low"
     token_field = "max_completion_tokens" if provider_label == "OpenAI" else "max_tokens"
     body[token_field] = getattr(config, "LLM_MAX_OUTPUT_TOKENS", 256)
 
@@ -95,8 +101,10 @@ def _call_openai_compatible(
     streamed_calls = {}
     first_token_at = None
     started_at = time.time()
+    usage = {}
     try:
         for event in _iter_sse_json(response, cancel_event):
+            usage = event.get("usage") or usage
             choices = event.get("choices") or []
             if not choices:
                 continue
@@ -121,6 +129,7 @@ def _call_openai_compatible(
                     current["arguments"].append(function["arguments"])
     finally:
         response.close()
+    _usage.record(provider_label, usage.get("prompt_tokens"), usage.get("completion_tokens"))
 
     tool_calls = []
     for current in streamed_calls.values():

@@ -7,6 +7,7 @@ from config import PROVIDER_SETTINGS as config
 import telemetry
 
 from ..common import _HTTP_SESSION, _iter_sse_json
+from .. import usage as _usage
 from ..tool_registry import TOOLS
 
 _gemini_tools_cache = None
@@ -138,8 +139,10 @@ def _call_gemini(messages, force_tools: bool = False, on_text_delta=None, cancel
     safety_blocked = False
     first_token_at = None
     started_at = time.time()
+    usage = {}
     try:
         for data in _iter_sse_json(response, cancel_event):
+            usage = data.get("usageMetadata") or usage  # cumulative; the last chunk has the totals
             block_reason = block_reason or data.get("promptFeedback", {}).get("blockReason")
             candidates = data.get("candidates") or []
             if not candidates:
@@ -165,6 +168,7 @@ def _call_gemini(messages, force_tools: bool = False, on_text_delta=None, cancel
                         tool_calls.append(call)
     finally:
         response.close()
+    _usage.record("gemini", usage.get("promptTokenCount"), usage.get("candidatesTokenCount"))
 
     if block_reason:
         text_chunks = [f"Gemini blocked that request ({block_reason})."]

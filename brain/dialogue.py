@@ -431,6 +431,17 @@ _SAFE_AFTER_UNTRUSTED_WEB_TOOLS = _UNTRUSTED_WEB_TOOLS
 _SAY_AS_IS_TOOLS = {"join_call", "leave_call", "relay_to_call", "confirm_friend_request"}
 
 
+# Tools whose result _natural_fast_reply already phrases as her full answer: once a round of
+# only these succeeds, she says it herself instead of paying for a second model call.
+_SELF_PHRASED_TOOLS = {
+    "open_app", "type_text", "press_keys", "open_url", "open_file", "delete_file",
+    "remember_fact", "forget_fact", "play_music", "media_play_pause", "media_next_track",
+    "media_previous_track", "volume_up", "volume_down", "toggle_mute", "set_volume_level",
+    "minimize_window", "maximize_window", "close_window", "switch_window", "snap_window",
+    "show_desktop", "set_clipboard", "set_quiet_mode", "reset_conversation",
+}
+
+
 _SKIP_ANNOUNCE_TOOLS = {"get_datetime", "read_clipboard", "run_diagnostics", "reset_conversation"}
 
 
@@ -743,30 +754,25 @@ _CANT_DO_THAT_REPLY = (
 )
 
 
-_FAST_INTENT_RE = re.compile(
-    r"\b(?:timers?|stopwatches?|weather|forecast|temperature|umbrella|outside|"
-    r"play|pause|resume|skip|next|previous|volume|mute|songs?|music|tracks?)\b",
+# "auto" sends only real thinking work to the strong model; chat, trivia and commands stay on the fast one.
+_HEAVY_TASK_RE = re.compile(
+    r"\b(?:plan|compare|analy[sz]e|research|summari[sz]e|explain|draft|write|debug|"
+    r"step by step|think (?:hard|carefully|it through))\b",
     re.IGNORECASE,
 )
-_PLANNING_RE = re.compile(
-    r"\b(?:and|then|after|before|compare|plan|analy[sz]e|research|summari[sz]e|"
-    r"explain|why|steps?)\b",
-    re.IGNORECASE,
-)
+# More may be needed after the first tool round ("open Spotify and play X").
+_MULTI_STEP_RE = re.compile(r"\b(?:and|then|after|afterwards|also)\b", re.IGNORECASE)
 
 
 def _reasoning_tier(user_text: str) -> str:
-    configured = str(getattr(provider_config, "LLM_REASONING_TIER", "auto")).casefold()
+    """'fast' or 'strong'. Settings > Engine picks always-fast (default), auto, or always-strong."""
+    configured = str(getattr(provider_config, "LLM_REASONING_TIER", "fast")).casefold()
     if configured in {"fast", "strong"}:
         return configured
     text = user_text or ""
-    if (
-        len(text.split()) <= 24
-        and _FAST_INTENT_RE.search(text)
-        and not _PLANNING_RE.search(text)
-    ):
-        return "fast"
-    return "strong"
+    if len(text.split()) > 24 or _HEAVY_TASK_RE.search(text):
+        return "strong"
+    return "fast"
 
 
 def _call_model_with_error_handling(
@@ -1280,11 +1286,13 @@ def handle_command(
         messages.append(message)
         completed_outputs = []
         said_as_is = []
+        self_phrased = not _MULTI_STEP_RE.search(user_text or "")
         opened_app_this_round = False
         used_web_content_this_round = False
         for call in tool_calls:
             name, arguments, validation_error = _normalize_tool_call(call)
             if validation_error is not None:
+                self_phrased = False  # the model gets to fix its arguments
                 completed_outputs.append(validation_error)
                 continue
 
@@ -1303,8 +1311,11 @@ def handle_command(
                 untrusted_web_content_seen=untrusted_web_content_seen,
                 on_partial_reply=announce_once,
             )
+            failed = _step_failed(tool_output)
             if on_step is not None:
-                on_step(step_label, "failed" if _step_failed(tool_output) else "done")
+                on_step(step_label, "failed" if failed else "done")
+            if failed or name not in _SELF_PHRASED_TOOLS:
+                self_phrased = False
             opened_app_this_round |= opened_app
             used_web_content_this_round |= used_web_content
             if untrusted_output and not blocked_by_web_content:
@@ -1346,6 +1357,13 @@ def handle_command(
             reply = " ".join(part for part in said_as_is if part)
             if already_delivered_partial:
                 return ""
+            _remember_turn(user_text, reply)
+            return reply
+
+        if self_phrased and completed_outputs:
+            if already_delivered_partial:
+                return ""
+            reply = " ".join(completed_outputs)
             _remember_turn(user_text, reply)
             return reply
 
