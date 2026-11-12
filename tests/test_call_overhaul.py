@@ -31,6 +31,7 @@ def test_a_failing_log_write_never_freezes_the_app():
     # A refused log rotation made logging report the error to stderr from inside the
     # stdout tee; that deadlocked, and every thread that printed afterwards froze.
     logger = logging.getLogger("test.broken-log")
+    logger.setLevel(logging.INFO)
     logger.propagate = False
     logger.addHandler(_BrokenHandler())
     out = startup_logging._Tee(None, logger, logging.INFO)
@@ -114,8 +115,12 @@ def test_join_greets_the_call_herself():
             patch.object(call_mode.config, "USER_NICKNAME", "Riya", create=True):
         reply = call_mode.join_call({})
     session.end_call()
-    assert "Sam and Jo" in reply and "Riya" in reply
-    assert "say" not in reply.lower().replace("says", "")  # never "Just say 'Hey everyone'"
+    assert " Sam and Jo! " in reply
+    # She greets them herself: never "Just say 'Hey everyone!'" or "You should announce...".
+    assert "word for word" not in reply and "you should" not in reply.lower()
+    with patch.object(call_mode.config, "USER_NICKNAME", "Riya", create=True), \
+            patch.object(call_ears.random, "choice", lambda options: options[0]):
+        assert call_ears.greeting([], "on in 15.") == "Hey everyone! Riya asked me to tell you: on in 15."
 
 
 def test_call_tools_are_her_whole_reply_without_a_second_model_call():
@@ -131,7 +136,7 @@ def test_call_tools_are_her_whole_reply_without_a_second_model_call():
     try:
         with patch.object(dialogue, "_build_model_request", return_value=([], "openai", "OpenAI", [])), \
                 patch.object(dialogue, "_invoke_model_turn", side_effect=model_turn):
-            reply = dialogue.handle_command("tell the call I'll be there in five")
+            reply = dialogue.handle_command("could you let my friends know I will be there in five")
     finally:
         session.end_call()
     assert reply == "be there in five" and len(turns) == 1
@@ -152,6 +157,7 @@ def test_friends_can_answer_her_without_saying_her_name():
         assert call_ears.handle_friend_line("Someone", "anyway back to the match", reply_fn=reply_fn, speak_fn=said.append, now=1100) is None
     finally:
         session.end_call()
+        call_ears._last_reply_at = call_ears._follow_up_until = 0.0
     assert asked == ["we're playing valorant tonight", "you any good at it"]
 
 
