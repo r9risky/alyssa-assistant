@@ -44,7 +44,7 @@ PRESERVED_FILES = {
     "reminders.json",
     "token.json",
 }
-PRESERVED_DIRS = {".git", ".venv", "__pycache__", "build", "dist", "models"}
+PRESERVED_DIRS = {".git", ".venv", "__pycache__", "build", "dist", "file_backups", "models"}
 SECRET_CONFIG_FIELDS = frozenset(
     {
         "GEMINI_API_KEY", "OPENAI_API_KEY", "ANTHROPIC_API_KEY",
