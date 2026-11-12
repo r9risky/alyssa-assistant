@@ -59,6 +59,10 @@ Options supported:
 ---
 
 ## Code Quality & Verification
+- **One feature or fix per pull request.** Don't bundle unrelated changes, and don't port a batch of features from another project in one go. Small PRs are what keep a bad change from breaking everything at once.
+- Run `python -m pytest -q` and `python scripts/smoke_test.py` before committing. CI runs both on every push and pull request (`.github/workflows/tests.yml`), and a release build won't start if the tests fail.
+- A new feature or bug fix comes with a test that would fail without it.
+- Take ideas from other projects, not their code or art. Some (like Capri) are under licences that forbid reuse without credit or commercial use.
 - Ensure Python code compiles cleanly without syntax errors before committing.
 - Respect preserved files listed in `updater.py` (`color_themes.json`, `credentials.json`, `memory.json`, etc.).
 - Never commit sensitive tokens or credentials (`.env`, `token.json`, API keys).

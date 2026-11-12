@@ -380,9 +380,22 @@ def reload_model_async():
 
 def preload():
     """Load Whisper now instead of lazily. Call on a background thread at startup.
-    Idempotent — only the first load does anything."""
-    if start_streaming() is None:
+    Idempotent — only the first load does anything. Returns a friendly error
+    message if the model couldn't load (e.g. offline on first run), else None;
+    the next transcription retries the load."""
+    if start_streaming() is not None:
+        return None
+    try:
         _get_model()
+    except Exception as e:
+        message = (
+            f"I couldn't load my speech model ({config.WHISPER_MODEL_SIZE}), so I can't "
+            "hear you yet. It downloads once on first run, so check your internet "
+            "connection. I'll try again next time you talk, and you can still type to me."
+        )
+        print(f"[transcribe] {message} Details: {e!r}")
+        return message
+    return None
 
 
 def build_contextual_prompt() -> str:
