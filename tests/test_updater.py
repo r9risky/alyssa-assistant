@@ -1,6 +1,7 @@
 import hashlib
 import io
 import json
+import shutil
 import tempfile
 from pathlib import Path
 from types import SimpleNamespace
@@ -731,42 +732,200 @@ class UpdaterTests(unittest.TestCase):
         self.assertEqual(metadata["archive_name"], "Alyssa-Windows-x64.zip")
         self.assertEqual(metadata["sha256"], "b" * 64)
 
-    def test_locked_files_prepare_restart_helper_and_pending_restart(self):
+    def _locked_exe_update(self, install, release):
+        """Apply a release where Alyssa.exe is locked, leaving a pending_restart journal."""
+        install.mkdir()
+        release.mkdir()
+        (install / "Alyssa.exe").write_bytes(b"old-exe")
+        (release / "Alyssa.exe").write_bytes(b"new-exe")
+        (install / "a.py").write_text("old\n", encoding="utf-8")
+        (release / "a.py").write_text("new\n", encoding="utf-8")
+        (release / "added.py").write_text("added\n", encoding="utf-8")
+        (install / "config.py").write_text("API_KEY = 'mine'\n", encoding="utf-8")
+        (release / "config.py").write_text("API_KEY = ''\n", encoding="utf-8")
+        real_copy = updater._atomic_copy
+
+        def simulated_sharing_violation(source, destination):
+            if destination.name == "Alyssa.exe" and destination.read_bytes() == b"old-exe":
+                err = PermissionError("being used by another process")
+                err.winerror = 32
+                raise err
+            return real_copy(source, destination)
+
+        with (
+            patch.object(updater.sys, "platform", "win32"),
+            patch.object(updater, "_atomic_copy", side_effect=simulated_sharing_violation),
+        ):
+            updater._apply_release(
+                release, install, {"Alyssa.exe", "a.py", "added.py"}, version="v9.9.0"
+            )
+
+    def test_locked_file_defers_the_whole_update_without_mixing_versions(self):
         with tempfile.TemporaryDirectory() as temporary:
-            install = Path(temporary) / "install"
-            release = Path(temporary) / "release"
-            install.mkdir()
-            release.mkdir()
-
-            (install / "Alyssa.exe").write_bytes(b"old-exe")
-            (release / "Alyssa.exe").write_bytes(b"new-exe")
-            (install / "config.py").write_text("API_KEY = 'mine'\n", encoding="utf-8")
-            (release / "config.py").write_text("API_KEY = ''\n", encoding="utf-8")
-
-            real_copy = updater._atomic_copy
-
-            def simulated_sharing_violation(source, destination):
-                if destination.name == "Alyssa.exe":
-                    err = PermissionError("The process cannot access the file because it is being used by another process")
-                    err.winerror = 32
-                    raise err
-                return real_copy(source, destination)
-
-            with (
-                patch.object(updater.sys, "platform", "win32"),
-                patch.object(updater, "_atomic_copy", side_effect=simulated_sharing_violation),
-            ):
-                updater._apply_release(release, install, {"Alyssa.exe"})
+            root = Path(temporary).resolve()
+            install = root / "install"
+            self._locked_exe_update(install, root / "release")
 
             state = updater._load_transaction_state(install / updater.TRANSACTION_DIR)
             self.assertEqual(state["phase"], "pending_restart")
-            self.assertTrue((install / "apply_update.bat").is_file())
+            # Nothing is half-applied while the old exe keeps running.
+            self.assertEqual((install / "Alyssa.exe").read_bytes(), b"old-exe")
+            self.assertEqual((install / "a.py").read_text(encoding="utf-8"), "old\n")
+            self.assertFalse((install / "added.py").exists())
+            self.assertEqual(
+                (install / "config.py").read_text(encoding="utf-8"), "API_KEY = 'mine'\n"
+            )
+            # A plain version check leaves the waiting update alone.
+            self.assertFalse(updater._recover_incomplete_update(install))
+            self.assertTrue((install / updater.TRANSACTION_DIR).is_dir())
 
-            # Verify that recovery completes when the lock clears on next launch
-            self.assertTrue(updater._recover_incomplete_update(install))
-            self.assertEqual((install / "Alyssa.exe").read_bytes(), b"new-exe")
+    def test_frozen_windows_app_always_applies_after_exit(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary).resolve()
+            install, release = root / "install", root / "release"
+            install.mkdir()
+            release.mkdir()
+            (install / "a.py").write_text("old\n", encoding="utf-8")
+            (release / "a.py").write_text("new\n", encoding="utf-8")
+            with (
+                patch.object(updater.sys, "platform", "win32"),
+                patch.object(updater.sys, "frozen", True, create=True),
+            ):
+                updater._apply_release(release, install, {"a.py"}, version="v9.9.0")
+
+            state = updater._load_transaction_state(install / updater.TRANSACTION_DIR)
+            self.assertEqual(state["phase"], "pending_restart")
+            self.assertEqual((install / "a.py").read_text(encoding="utf-8"), "old\n")
+
+    def test_launch_pending_update_writes_helper_and_starts_it(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary).resolve()
+            install = root / "install"
+            self._locked_exe_update(install, root / "release")
+            with (
+                patch.object(updater.sys, "platform", "win32"),
+                patch.object(updater.subprocess, "Popen") as popen,
+            ):
+                self.assertTrue(updater.launch_pending_update(install, r"C:\A\Alyssa.exe"))
+
+            command = popen.call_args.args[0]
+            self.assertEqual(command[2], str(install / updater.RESTART_HELPER))
+            self.assertEqual(command[4:], [str(install), r"C:\A\Alyssa.exe"])
+            helper = (install / updater.RESTART_HELPER).read_text(encoding="utf-8")
+            self.assertIn('robocopy "%TXN%\\new" "%INSTALL_ROOT%"', helper)
+            self.assertIn("if errorlevel 8 goto failed", helper)
+            # A file the update adds is removed again if applying fails.
+            self.assertIn('del /f /q "%INSTALL_ROOT%\\added.py"', helper)
+            state = updater._load_transaction_state(install / updater.TRANSACTION_DIR)
+            self.assertEqual(state["helper_attempts"], 1)
+            # Off Windows there is never a helper to start.
+            with (
+                patch.object(updater.sys, "platform", "linux"),
+                patch.object(updater.subprocess, "Popen") as popen,
+            ):
+                self.assertFalse(updater.launch_pending_update(install))
+            popen.assert_not_called()
+
+    def test_helper_that_never_runs_is_rolled_back_instead_of_looping(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary).resolve()
+            install = root / "install"
+            self._locked_exe_update(install, root / "release")
+            with (
+                patch.object(updater.sys, "platform", "win32"),
+                patch.object(updater.subprocess, "Popen") as popen,
+            ):
+                for _ in range(updater.MAX_HELPER_ATTEMPTS):
+                    self.assertTrue(updater.launch_pending_update(install))
+                self.assertFalse(updater.launch_pending_update(install))
+
+            self.assertEqual(popen.call_count, updater.MAX_HELPER_ATTEMPTS)
             self.assertFalse((install / updater.TRANSACTION_DIR).exists())
+            self.assertEqual((install / "Alyssa.exe").read_bytes(), b"old-exe")
 
+    def test_helper_markers_are_settled_on_next_launch(self):
+        for marker in (updater.HELPER_APPLIED_MARKER, updater.HELPER_FAILED_MARKER):
+            with self.subTest(marker=marker), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary).resolve()
+                install = root / "install"
+                self._locked_exe_update(install, root / "release")
+                transaction = install / updater.TRANSACTION_DIR
+                if marker == updater.HELPER_APPLIED_MARKER:
+                    shutil.copytree(transaction / "new", install, dirs_exist_ok=True)
+                else:
+                    # The helper copied a.py, failed on the exe, and put a.py back.
+                    (install / "added.py").write_text("added\n", encoding="utf-8")
+                (transaction / marker).write_text("x", encoding="utf-8")
+                (install / updater.RESTART_HELPER).write_text("", encoding="utf-8")
+
+                self.assertTrue(updater._recover_incomplete_update(install))
+
+                self.assertFalse(transaction.exists())
+                self.assertFalse((install / updater.RESTART_HELPER).exists())
+                applied = marker == updater.HELPER_APPLIED_MARKER
+                self.assertEqual(
+                    (install / "Alyssa.exe").read_bytes(), b"new-exe" if applied else b"old-exe"
+                )
+                self.assertEqual((install / "added.py").exists(), applied)
+
+    def _release_zip(self, version_text):
+        archive_bytes = io.BytesIO()
+        with zipfile.ZipFile(archive_bytes, "w") as zipped:
+            zipped.writestr("alyssa-release/main.py", version_text)
+            zipped.writestr("alyssa-release/overlay/__init__.py", "overlay\n")
+            zipped.writestr("alyssa-release/config.py", "SETTING = 'default'\n")
+        data = archive_bytes.getvalue()
+        response = Mock()
+        response.iter_content.return_value = [data]
+        response.headers = {}
+        response.url = FINAL_DOWNLOAD_URL
+        release = {
+            "latest_version": "v9.9.0",
+            "archive_name": ARCHIVE_NAME,
+            "download_url": DOWNLOAD_URL,
+            "sha256": hashlib.sha256(data).hexdigest(),
+        }
+        return response, release
+
+    def test_stale_waiting_update_no_longer_blocks_a_new_one(self):
+        # The WinError 183 bug: an older update stuck waiting for restart made
+        # every later install fail on the leftover transaction folder.
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary).resolve()
+            install = root / "install"
+            self._locked_exe_update(install, root / "release")
+            transaction = install / updater.TRANSACTION_DIR
+            state = updater._load_transaction_state(transaction)
+            state["version"] = "v9.8.0"
+            updater._write_transaction_state(transaction, state)
+
+            response, release = self._release_zip("new main\n")
+            with patch.object(updater.requests, "get", return_value=response):
+                self.assertEqual(updater.install_release(install, release), "v9.9.0")
+
+            self.assertEqual((install / "main.py").read_text(encoding="utf-8"), "new main\n")
+            self.assertEqual((install / "Alyssa.exe").read_bytes(), b"old-exe")
+            self.assertEqual(updater.current_version(install), "v9.9.0")
+            self.assertFalse(transaction.exists())
+
+    def test_same_update_already_waiting_is_not_downloaded_again(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary).resolve()
+            install = root / "install"
+            self._locked_exe_update(install, root / "release")
+            response, release = self._release_zip("new main\n")
+            with patch.object(updater.requests, "get", return_value=response) as get:
+                self.assertEqual(updater.install_release(install, release), "v9.9.0")
+            get.assert_not_called()
+            self.assertTrue((install / updater.TRANSACTION_DIR).is_dir())
+
+    def test_half_staged_or_committed_leftovers_are_cleaned_up(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            install = Path(temporary).resolve()
+            (install / updater.TRANSACTION_DIR / "new").mkdir(parents=True)
+            (install / (updater.COMMITTED_TRANSACTION_DIR + "-1-2") / "x").mkdir(parents=True)
+            self.assertTrue(updater._recover_incomplete_update(install))
+            self.assertEqual(list(install.iterdir()), [])
 
 if __name__ == "__main__":
     unittest.main()

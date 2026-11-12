@@ -250,7 +250,7 @@ class UpdatesTabMixin:
             return
 
         self.current_version_label.setText(
-            f"{updater.current_version(_BASE_DIR)}  ·  restart to finish updating"
+            f"{detail}  ·  restart to finish updating"
         )
         self.update_status_label.setStyleSheet(
             f"color: {self._t()['success']}; font-size: 11.5px;"
