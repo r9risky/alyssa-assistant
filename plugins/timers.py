@@ -6,6 +6,7 @@ check_watch() speaks when a timer elapses.
 """
 import time
 
+ANNOUNCE_IN_QUIET_MODE = True  # you asked for this one, so quiet mode doesn't mute it
 WATCH_INTERVAL_SECONDS = 5
 
 _active_timers = []

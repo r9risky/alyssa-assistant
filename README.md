@@ -315,7 +315,9 @@ TOOLS = [
 ```
 
 Add `check_watch() -> str | None` (plus an optional `WATCH_INTERVAL_SECONDS`)
-if you want her to speak up on her own. 🎲
+if you want her to speak up on her own. 🎲 Quiet mode mutes these, unless the
+plugin sets `ANNOUNCE_IN_QUIET_MODE = True` (timers and the focus timer do,
+because you asked for them).
 
 Two more hooks keep a plugin cheap on tokens:
 

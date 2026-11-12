@@ -33,7 +33,7 @@ UNDECLARED = "undeclared"  # no PERMISSIONS list: it could do anything
 # Shipped with Alyssa (tests/test_plugin_permissions.py keeps this in sync with plugins/).
 BUILTIN_PLUGINS = frozenset({
     "calculator_converter", "calendar_gmail", "call_mode", "caveman_mode", "code_husk_mode",
-    "companion_life", "daily_briefing", "desktop_chaos", "file_editor", "fondness_meter",
+    "companion_life", "daily_briefing", "desktop_chaos", "file_editor", "focus_timer", "fondness_meter",
     "game_autoplay", "game_copilot", "location", "mini_games_and_ink", "news_digest",
     "ponytail_mode", "process_manager", "reminders", "routines", "screen_lookout", "security_camera",
     "sticky_notes", "system_watch", "timers", "watch_along", "weather", "web_search",

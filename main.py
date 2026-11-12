@@ -334,7 +334,7 @@ def run_watcher_loop(bridge=None):
                 alert = None
             if alert:
                 print(f"[watcher] {w['name']}: {alert}")
-                if getattr(config, "QUIET_MODE", False):
+                if getattr(config, "QUIET_MODE", False) and not w.get("always"):
                     continue
                 try:  # a failed announcement must not kill every future watcher check
                     announce = brain.dialogue._natural_announce_reply(

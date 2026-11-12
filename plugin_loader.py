@@ -174,7 +174,10 @@ def load_plugins():
                 interval = max(10, int(interval))
             except (TypeError, ValueError):
                 interval = 120
-            _watchers.append({"name": filename, "func": watch_func, "interval": interval})
+            _watchers.append({
+                "name": filename, "func": watch_func, "interval": interval,
+                "always": bool(getattr(module, "ANNOUNCE_IN_QUIET_MODE", False)),
+            })
             print(f"[plugins] '{filename}' registered a background watcher (every {interval}s)")
 
         panel_title = getattr(module, "GUI_PANEL_TITLE", None)
