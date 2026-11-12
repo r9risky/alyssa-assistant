@@ -30,3 +30,14 @@ def _isolated_plugin_approvals(tmp_path, monkeypatch):
     """Keep plugin approvals out of the repo; plugins already in plugins/ are built-ins."""
     import plugin_permissions
     monkeypatch.setattr(plugin_permissions, "APPROVALS_FILE", str(tmp_path / "plugin_approvals.json"))
+
+
+@pytest.fixture(autouse=True)
+def _no_real_portaudio_reset(monkeypatch):
+    """Mic-error tests can trigger recorder's PortAudio reset. Doing that for real on the
+    test (Qt) thread broke later Qt tests on Windows CI, so it's a no-op here."""
+    import recorder
+    monkeypatch.setattr(recorder.sd, "_terminate", lambda: None, raising=False)
+    monkeypatch.setattr(recorder.sd, "_initialize", lambda: None, raising=False)
+    monkeypatch.setattr(recorder, "_consecutive_mic_errors", 0)
+    monkeypatch.setattr(recorder, "_last_rescan", 0.0)
