@@ -102,6 +102,8 @@ class LatencyPipelineTests(unittest.TestCase):
         speaker.text = ""
         speaker._pending = ""
         speaker._chunks = queue.Queue()
+        speaker._chunks_emitted = 0
+        speaker._realtime = False
 
         speaker.feed("Chrome is ready. The rest is still generating")
 
@@ -114,11 +116,60 @@ class LatencyPipelineTests(unittest.TestCase):
         speaker.text = ""
         speaker._pending = ""
         speaker._chunks = queue.Queue()
+        speaker._chunks_emitted = 0
+        speaker._realtime = False
 
         speaker.feed("Well, still thinking")
 
         self.assertTrue(speaker._chunks.empty())
         self.assertEqual(speaker._pending, "Well, still thinking")
+
+    def test_file_tts_splits_only_first_chunk_at_commas(self):
+        speaker = object.__new__(voice.StreamingSpeaker)
+        speaker.stop_event = threading.Event()
+        speaker.text = ""
+        speaker._pending = ""
+        speaker._chunks = queue.Queue()
+        speaker._chunks_emitted = 0
+        speaker._realtime = False
+
+        speaker.feed("Sure, I opened Chrome for you just now, and YouTube, and then ")
+
+        self.assertEqual(speaker._chunks.get_nowait(), "Sure, I opened Chrome for you just now,")
+        self.assertTrue(speaker._chunks.empty())
+        speaker.feed("some more. Next")
+        self.assertEqual(speaker._chunks.get_nowait(), "and YouTube, and then some more.")
+
+    def test_speech_text_flattens_ellipsis_and_groups_sentences(self):
+        self.assertEqual(voice._smooth_speech_text("Opening chrome...  Done\u2026"), "Opening chrome. Done.")
+        self.assertEqual(
+            voice._group_sentences(["One.", "Two.", "Three."]),
+            ["One.", "Two. Three."],
+        )
+
+    def test_file_pipeline_merges_queued_chunks_and_plays_in_order(self):
+        speaker = object.__new__(voice.StreamingSpeaker)
+        speaker.stop_event = threading.Event()
+        speaker._chunks = queue.Queue()
+        speaker._playback_started = False
+        speaker.on_playback_start = None
+        for chunk in ("Opening chrome.", "Done, it's up.", "Opened YouTube.", None):
+            speaker._chunks.put(chunk)
+        synthesized, played = [], []
+
+        def fake_synth(text):
+            synthesized.append(text)
+            return f"path{len(synthesized)}"
+
+        with (
+            patch("voice_playback._synthesize_to_temp_file", side_effect=fake_synth),
+            patch("voice_playback._play", side_effect=lambda p, e: played.append(p) or True),
+            patch("voice_playback._remove_quietly"),
+        ):
+            speaker._run_file_pipeline()
+
+        self.assertEqual(synthesized, ["Opening chrome. Done, it's up. Opened YouTube."])
+        self.assertEqual(played, ["path1"])
 
     def test_history_slides_by_character_budget_in_whole_turns(self):
         brain.clear_conversation_history()
