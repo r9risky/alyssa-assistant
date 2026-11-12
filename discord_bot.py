@@ -49,6 +49,7 @@ _status = "off"
 _audio = bytearray()
 _audio_lock = threading.Lock()
 _listener = None
+_cant_speak = ""  # why playing in the channel failed; her voice goes to the speakers until she rejoins
 
 
 # ---------------------------------------------------------------- audio out
@@ -116,18 +117,34 @@ def connected() -> bool:
     return _client is not None and _voice_client() is not None
 
 
-def play_pcm(pcm48_stereo: bytes) -> None:
-    """Queue 48 kHz stereo s16 audio to say in the channel."""
-    if not pcm48_stereo or _loop is None:
-        return
+def can_speak() -> bool:
+    """True while her voice should go to the channel (connected, and playing there works)."""
+    return not _cant_speak and connected()
+
+
+def play_pcm(pcm48_stereo: bytes) -> bool:
+    """Queue 48 kHz stereo s16 audio to say in the channel. False if Discord won't play it."""
+    global _cant_speak, _status
+    if not pcm48_stereo:
+        return True
     with _audio_lock:
         _audio.extend(pcm48_stereo)
-    _loop.call_soon_threadsafe(_ensure_playing)
+    try:
+        _run(_ensure_playing(), timeout=5)
+        return True
+    except Exception as e:  # e.g. Opus missing: say why and fall back to the speakers
+        stop_audio()
+        _cant_speak = f"{type(e).__name__}: {e}"
+        _status = f"in the call but can't speak there ({_cant_speak})"
+        print(f"[discord] Couldn't play audio in the voice channel: {_cant_speak}")
+        return False
 
 
-def _ensure_playing():
+async def _ensure_playing():
     vc = _voice_client()
-    if vc is not None and not vc.is_playing():
+    if vc is None:
+        raise RuntimeError("not in a voice channel")
+    if not vc.is_playing():
         vc.play(_QueueSource())
 
 
@@ -144,9 +161,11 @@ def stop_audio() -> None:
         _audio.clear()
 
 
-def play_file(path: str, stop_event=None) -> bool:
-    """Say an audio file in the channel and wait. True if it finished, False if cut off."""
-    play_pcm(decode_file(path))
+def play_file(path: str, stop_event=None) -> bool | None:
+    """Say an audio file in the channel and wait. True if it finished, False if cut off,
+    None if Discord couldn't play it (the caller then plays it on the speakers)."""
+    if not play_pcm(decode_file(path)):
+        return None
     while busy():
         if stop_event is not None and stop_event.is_set():
             stop_audio()
@@ -272,6 +291,7 @@ def find_channel(guilds, owner: int, server: str = "", channel: str = ""):
 
 
 async def _join(server: str, channel: str) -> str:
+    global _cant_speak
     target = find_channel(_client.guilds, owner_id(), server, channel)
     if target is None:
         if not _client.guilds:
@@ -282,7 +302,8 @@ async def _join(server: str, channel: str) -> str:
         await vc.move_to(target)
     else:
         cls = voice_recv.VoiceRecvClient if voice_recv is not None else discord.VoiceClient
-        vc = await target.connect(cls=cls, self_deaf=voice_recv is None)
+        vc = await target.connect(cls=cls)  # never self-deafen: friends think she can't hear them
+    _cant_speak = ""
     _start_listening(vc)
     return f"I'm in #{target.name} on {target.guild.name}."
 

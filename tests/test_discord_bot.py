@@ -131,3 +131,22 @@ def test_falls_back_only_when_the_pc_hears_talk_and_the_bot_hears_nothing():
     assert discord_bot.should_fall_back(talking, last_bot_packet=now - 60, now=now)
     assert not discord_bot.should_fall_back(talking, last_bot_packet=now - 5, now=now)  # bot is fine
     assert not discord_bot.should_fall_back([now - 2], last_bot_packet=now - 60, now=now)  # quiet call
+
+
+def test_if_discord_wont_play_her_voice_goes_to_the_speakers():
+    connected_vc = SimpleNamespace(is_connected=lambda: True, is_playing=lambda: False)
+    fake_client = SimpleNamespace(voice_clients=[connected_vc])
+
+    def fail(coro, timeout=20.0):
+        coro.close()
+        raise RuntimeError("Opus missing")
+
+    with patch.object(discord_bot, "_client", fake_client), patch.object(discord_bot, "_run", side_effect=fail):
+        try:
+            assert discord_bot.can_speak()
+            assert discord_bot.play_pcm(b"\0" * 3840) is False
+            assert not discord_bot.can_speak() and not discord_bot.busy()
+            import voice_playback
+            assert not voice_playback._discord_bot_connected()  # speech now plays locally
+        finally:
+            discord_bot._cant_speak = ""
