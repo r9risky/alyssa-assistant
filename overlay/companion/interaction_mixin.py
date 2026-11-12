@@ -127,6 +127,8 @@ class InteractionMixin:
         if self._dragging or self._resizing:
             was_dragging = self._dragging
             self._dragging = False
+            if was_dragging:
+                self._land_started = time.monotonic()  # squash-and-spring pose
             self._resizing = False
             if was_dragging and self.settings.get("perch_on_windows", True):
                 snapped_x, snapped_y, _ledge = snap_to_nearest_ledge(

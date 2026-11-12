@@ -1,11 +1,16 @@
 import math
+import os
+import time
 
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QColor, QMovie, QPainter, QPixmap, QRegion
 
+from .. import poses
 from ..rendering import (
-    RESIZE_GRIP, _resolve_character_path, _scale_centered, render_character,
+    ASSETS_DIR, RESIZE_GRIP, _resolve_character_path, _scale_centered, render_character,
 )
+
+FRAMES_DIR = os.path.join(ASSETS_DIR, "frames")
 from ..theming import _theme
 
 
@@ -13,7 +18,12 @@ class RenderingMixin:
     def _update_pixmap(self):
         mouth_open = self._talking and self._mouth_open and self.settings.get("talk_mouth_flap_enabled", True)
         path = _resolve_character_path(self.settings, mouth_open)
-        if path.lower().endswith(".gif"):
+        frames = poses.frame_paths(FRAMES_DIR, getattr(self, "_pose_state", "idle"))
+        if frames:
+            self._stop_active_movie()
+            frame = QPixmap(frames[getattr(self, "_frame_index", 0) % len(frames)])
+            self._pixmap = _scale_centered(frame, self.size())
+        elif path.lower().endswith(".gif"):
             self._pixmap = self._frame_from_movie(path, mouth_open)
         else:
             self._stop_active_movie()
@@ -54,16 +64,84 @@ class RenderingMixin:
         if self.sender() is self._movies.get(self._active_movie_path):
             self._update_pixmap()
 
+    def _update_pose(self, dt: float) -> bool:
+        """Advance the pose clock; True if she needs repainting."""
+        land_age = 0.0
+        landing = False
+        if self._land_started is not None:
+            land_age = time.monotonic() - self._land_started
+            landing = land_age < 0.6
+            if not landing:
+                self._land_started = None
+        drag_dx = 0.0
+        if self._dragging:
+            if self._last_drag_x is not None:
+                drag_dx = self.x() - self._last_drag_x
+            self._last_drag_x = self.x()
+        else:
+            self._last_drag_x = None
+
+        state = poses.pick_state(
+            dragging=self._dragging, landing=landing, sleeping=self._sleeping,
+            talking=self._talking, mood=getattr(self, "_current_mood", ""),
+        )
+        changed = False
+        if state != self._pose_state:
+            self._pose_state = state
+            self._frame_index = 0
+            changed = True
+        self._pose_time += dt
+        if poses.frame_paths(FRAMES_DIR, state):
+            index = int(self._pose_time * poses.FRAME_FPS)
+            if index != self._frame_index or changed:
+                self._frame_index = index
+                self._update_pixmap()
+        elif changed:
+            self._update_pixmap()  # leaving a drawn-frames state: back to the base art
+
+        if not self.settings.get("poses_enabled", True):
+            tilt, squash = 0.0, 1.0
+        else:
+            tilt, squash = poses.pose_for(state, self._pose_time, drag_dx, land_age)
+        if abs(tilt - self._pose_tilt) < 0.05 and abs(squash - self._pose_squash) < 0.001:
+            return changed
+        remask = abs(tilt - getattr(self, "_mask_tilt", 0.0)) > 1.5 or (tilt == 0.0 and squash == 1.0)
+        self._pose_tilt, self._pose_squash = tilt, squash
+        if remask:
+            self._update_mask()
+        return True
+
+    def _posed_pixmap(self) -> QPixmap:
+        """The character leaned (sheared above the bottom edge) and squashed, on a same-size canvas."""
+        tilt = getattr(self, "_pose_tilt", 0.0)
+        squash = getattr(self, "_pose_squash", 1.0)
+        if abs(tilt) < 0.05 and abs(squash - 1.0) < 0.001:
+            return self._pixmap
+        out = QPixmap(self._pixmap.size())
+        out.fill(Qt.transparent)
+        p = QPainter(out)
+        p.setRenderHint(QPainter.SmoothPixmapTransform)
+        w, h = self._pixmap.width(), self._pixmap.height()
+        p.translate(w / 2, h)
+        # Shear, not rotate: her art is a bust cut off at the bottom edge, so the
+        # bottom row must stay put while her head and shoulders lean.
+        p.shear(-math.tan(math.radians(tilt)), 0.0)
+        p.scale(2.0 - squash, squash)  # keep volume: wider as she squashes
+        p.drawPixmap(int(-w / 2), -h, self._pixmap)
+        p.end()
+        return out
+
     def _update_mask(self):
         if self._pixmap is None or self._pixmap.isNull():
             return
+        self._mask_tilt = getattr(self, "_pose_tilt", 0.0)
         total_y = int(
             self._bounce_offset
             + getattr(self, "_breathing_offset", 0.0)
             + getattr(self, "_gaze_y_offset", 0.0)
         )
         total_x = int(getattr(self, "_gaze_x_offset", 0.0))
-        region = QRegion(self._pixmap.mask()).translated(total_x, total_y)
+        region = QRegion(self._posed_pixmap().mask()).translated(total_x, total_y)
         # Keep the resize grip clickable even if that corner of the image is transparent.
         gx = self.width() - RESIZE_GRIP
         gy = self.height() - RESIZE_GRIP
@@ -89,16 +167,17 @@ class RenderingMixin:
         )
 
         if self._pixmap is not None:
+            posed = self._posed_pixmap()
             if getattr(self, "_blink_active", False) and self.settings.get("blinking_enabled", True):
                 # Subtle eye-squash micro-blink
-                squash_h = max(1, int(self._pixmap.height() * 0.93))
-                squashed = self._pixmap.scaled(
-                    self._pixmap.width(), squash_h, Qt.IgnoreAspectRatio, Qt.SmoothTransformation
+                squash_h = max(1, int(posed.height() * 0.93))
+                squashed = posed.scaled(
+                    posed.width(), squash_h, Qt.IgnoreAspectRatio, Qt.SmoothTransformation
                 )
-                squash_y = draw_y + (self._pixmap.height() - squash_h)
+                squash_y = draw_y + (posed.height() - squash_h)
                 painter.drawPixmap(draw_x, squash_y, squashed)
             else:
-                painter.drawPixmap(draw_x, draw_y, self._pixmap)
+                painter.drawPixmap(draw_x, draw_y, posed)
 
         # Dynamic floating mood emote badge
         emote = getattr(self, "_current_emote", None)

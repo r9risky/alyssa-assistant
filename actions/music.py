@@ -202,6 +202,17 @@ _MUSIC_SERVICE_ALIASES = {
 }
 
 
+def _sway_companion_to_music():
+    """Put her in the "music" mood so she sways (overlay/poses.py). Best effort."""
+    try:
+        from overlay.widgets import get_active_companion, run_on_gui_thread
+    except ImportError:
+        return
+    companion = get_active_companion()
+    if companion is not None and hasattr(companion, "set_mood"):
+        run_on_gui_thread(lambda: companion.set_mood("music"))
+
+
 def play_music(query: str = "", service: str = "spotify") -> str:
     """Spotify (default) or YouTube Music.
 
@@ -212,6 +223,7 @@ def play_music(query: str = "", service: str = "spotify") -> str:
     service_key = _MUSIC_SERVICE_ALIASES.get(service.strip().lower(), "spotify")
     info = _MUSIC_SERVICES[service_key]
     query = query.strip()
+    _sway_companion_to_music()
 
     action_desc = f"play '{query}' on {info['display_name']}" if query else f"open {info['display_name']}"
     if not _confirm(action_desc):
