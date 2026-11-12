@@ -1101,6 +1101,21 @@ def _execute_tool_call(
     return output, untrusted_output, False, opened_app, untrusted_output
 
 
+def _step_label(name: str, arguments: dict) -> str:
+    """Short checklist label for a tool call, e.g. 'Search web: manila weather'."""
+    label = name.replace("_", " ").capitalize()
+    detail = next((str(v) for v in arguments.values() if isinstance(v, str) and v.strip()), "")
+    if detail:
+        detail = " ".join(detail.split())
+        label += ": " + (detail[:32] + "…" if len(detail) > 33 else detail)
+    return label
+
+
+def _step_failed(output) -> bool:
+    # shortcut: guesses failure from the wording tools already use; upgrade if tools grow a status field.
+    return str(output).startswith(("Error", "Unknown tool", "Blocked"))
+
+
 def _finalize_model_reply(user_text: str, reply: str, already_delivered_partial: bool) -> str:
     """Record and return a final text reply, suppressing redundant follow-up text."""
     if already_delivered_partial:
@@ -1114,8 +1129,12 @@ def handle_command(
     on_partial_reply=None,
     on_text_delta=None,
     cancel_event=None,
+    on_step=None,
 ) -> str:
-    """Send a command to the configured model and execute its tool calls."""
+    """Send a command to the configured model and execute its tool calls.
+
+    on_step(label, state) reports each tool call as "running", then "done" or "failed".
+    """
     _maybe_expire_conversation_history()
     pre_model_reply = _handle_pre_model_intent(user_text)
     if pre_model_reply is not None:
@@ -1190,6 +1209,9 @@ def handle_command(
                 completed_outputs.append(validation_error)
                 continue
 
+            step_label = _step_label(name, arguments)
+            if on_step is not None:
+                on_step(step_label, "running")
             (
                 tool_output,
                 untrusted_output,
@@ -1202,6 +1224,8 @@ def handle_command(
                 untrusted_web_content_seen=untrusted_web_content_seen,
                 on_partial_reply=announce_once,
             )
+            if on_step is not None:
+                on_step(step_label, "failed" if _step_failed(tool_output) else "done")
             opened_app_this_round |= opened_app
             used_web_content_this_round |= used_web_content
             if untrusted_output and not blocked_by_web_content:
