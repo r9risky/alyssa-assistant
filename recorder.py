@@ -151,6 +151,32 @@ _STARTUP_DEVICE_WAIT_SECONDS = 20.0
 _startup_device_wait_used = False
 
 
+_RESCAN_MIN_INTERVAL_SECONDS = 30.0
+_last_rescan = 0.0
+
+
+def _rescan_portaudio_if_idle(force: bool = False) -> bool:
+    """Reset PortAudio so it sees devices plugged in since startup. Only while no
+    input stream is open: resetting under a live stream gave "Invalid stream pointer"
+    errors and could hang the mic for good. At most once per 30s unless forced."""
+    global _last_rescan
+    now = time.monotonic()
+    if not force and now - _last_rescan < _RESCAN_MIN_INTERVAL_SECONDS:
+        return False
+    with _recovery_lock:
+        with _active_streams_lock:
+            if _active_streams:
+                return False
+            _last_rescan = now
+            try:
+                sd._terminate()
+                sd._initialize()
+                return True
+            except Exception as e:
+                print(f"(device re-scan failed: {e})")
+                return False
+
+
 def _find_configured_device(needle):
     """First input index whose name matches *needle*. Prefers
     check_input_settings() success (1-channel or stereo fallback); falls back to the first name match if
@@ -196,8 +222,9 @@ def _find_configured_device(needle):
     return fallback
 
 
-def _configured_input_device():
-    """Return the first compatible input whose name matches the setting."""
+def _configured_input_device(allow_rescan: bool = True):
+    """Return the first compatible input whose name matches the setting.
+    allow_rescan=False never resets PortAudio (the barge-in listener runs next to other streams)."""
     configured = getattr(config, "MICROPHONE_DEVICE", None)
     if not configured or str(configured).lower() == "default":
         return None
@@ -210,7 +237,7 @@ def _configured_input_device():
         return index
 
     global _startup_device_wait_used
-    if not _startup_device_wait_used:
+    if allow_rescan and not _startup_device_wait_used:
         _startup_device_wait_used = True
         deadline = time.time() + _STARTUP_DEVICE_WAIT_SECONDS
         print(
@@ -221,13 +248,8 @@ def _configured_input_device():
         while time.time() < deadline:
             time.sleep(1.0)
             # Re-scan PortAudio's device list — query_devices() alone only
-            # reflects devices seen at init. Safe: no InputStream open yet.
-            with _recovery_lock:
-                try:
-                    sd._terminate()
-                    sd._initialize()
-                except Exception as e:
-                    print(f"(device re-scan failed: {e})")
+            # reflects devices seen at init.
+            _rescan_portaudio_if_idle(force=True)
             index = _find_configured_device(needle)
             if index is not None:
                 print(f"(Found microphone {configured!r} after waiting.)")
@@ -236,17 +258,11 @@ def _configured_input_device():
             f"(Gave up waiting for microphone {configured!r} after "
             f"{_STARTUP_DEVICE_WAIT_SECONDS:.0f}s.)"
         )
-    else:
-        # Quick re-scan in case device was plugged in or selected after startup
-        with _recovery_lock:
-            try:
-                sd._terminate()
-                sd._initialize()
-                index = _find_configured_device(needle)
-                if index is not None:
-                    return index
-            except Exception:
-                pass
+    elif allow_rescan and _rescan_portaudio_if_idle():
+        # The mic may have been plugged in or picked after startup.
+        index = _find_configured_device(needle)
+        if index is not None:
+            return index
 
     print(f"(Microphone {configured!r} not found, falling back to default recording device)")
     return None
@@ -312,13 +328,14 @@ class _ResamplingStream:
 
 
 @contextlib.contextmanager
-def _open_stream(**kwargs):
+def _open_stream(allow_rescan: bool = True, **kwargs):
     """sd.InputStream(**kwargs), tracked so _reap_and_recover knows if any stream is live.
     Automatically falls back to stereo/multichannel (downmixed to mono) and native sample rates
     (resampled to 16kHz) if requested settings are rejected by the hardware.
     """
     global _active_streams
-    kwargs.setdefault("device", _configured_input_device())
+    if "device" not in kwargs:
+        kwargs["device"] = _configured_input_device(allow_rescan=allow_rescan)
     req_rate = kwargs.get("samplerate", config.SAMPLE_RATE)
     req_channels = kwargs.get("channels", 1)
 
@@ -405,6 +422,8 @@ _last_wake_word_triggered = False
 _talk_request = threading.Event()
 _PUSH_TO_TALK_POLL_SECONDS = 0.25
 _MIC_ERROR_BACKOFF_SECONDS = 1.0
+_MIC_ERRORS_BEFORE_RESET = 2
+_consecutive_mic_errors = 0
 
 
 def request_push_to_talk() -> None:
@@ -712,6 +731,7 @@ def listen_for_barge_in(
         pre_roll_limit = max(2, int(pre_roll_ms / frame_ms))
 
         with _open_stream(
+            allow_rescan=False,
             samplerate=config.SAMPLE_RATE,
             channels=1,
             dtype="int16",
@@ -762,6 +782,10 @@ def listen_for_barge_in(
                 silent_run = 0
                 total_speech_frames = speech_run
                 for _ in range(max_frames):
+                    if require_name and playback_done_event.is_set():
+                        # She stopped on her own, so there's nothing left to interrupt. Recording
+                        # on held a second mic stream (and Whisper) next to the next listen.
+                        break
                     chunk, _ = stream.read(frame_size)
                     chunk = chunk.flatten()
                     frames.append(chunk)
@@ -779,6 +803,10 @@ def listen_for_barge_in(
                     if silent_run >= silence_frames_needed:
                         break
 
+                if require_name and playback_done_event.is_set():
+                    if streaming_stt is not None:
+                        streaming_stt.disconnect()
+                    return None
                 if not frames:
                     continue
 
@@ -823,17 +851,8 @@ def _reap_and_recover(worker: threading.Thread) -> None:
     then _active_streams == 0, before touching global state. If the device is
     gone forever this waits forever, harmlessly, in the background."""
     worker.join()
-    while True:
-        with _active_streams_lock:
-            if _active_streams == 0:
-                break
+    while not _rescan_portaudio_if_idle(force=True):
         time.sleep(0.2)
-    with _recovery_lock:
-        try:
-            sd._terminate()
-            sd._initialize()
-        except Exception as e:
-            print(f"(deferred device re-scan failed: {e})")
 
 
 def record_command(
@@ -890,11 +909,20 @@ def record_command(
         ).start()
         return None
 
+    global _consecutive_mic_errors
     audio, error = result_q.get()
     if error is not None:
+        _consecutive_mic_errors += 1
         print(f"(Microphone recording encountered error: {error}, retrying...)")
         # Back off: an instant None spun the main loop at full speed (and flooded
         # the log) whenever the mic failed to open.
         time.sleep(_MIC_ERROR_BACKOFF_SECONDS)
+        if _consecutive_mic_errors >= _MIC_ERRORS_BEFORE_RESET:
+            # A broken PortAudio state ("Invalid stream pointer") never heals by
+            # itself; she stayed deaf until restarted. Reset it once nothing is open.
+            if _rescan_portaudio_if_idle(force=True):
+                print("(Reset the audio system after repeated microphone errors.)")
+                _consecutive_mic_errors = 0
         return None
+    _consecutive_mic_errors = 0
     return audio

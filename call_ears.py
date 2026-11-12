@@ -310,6 +310,9 @@ def handle_friend_line(speaker: str, text: str, *, reply_fn=None, speak_fn=None,
         if speak_fn is None:
             import voice_playback
 
-            speak_fn = voice_playback.speak
-        speak_fn(reply)
+            # Wait for her to finish any reply first; overlapping voices sounded doubled.
+            with voice_playback.speech_lock:
+                voice_playback.speak(reply)
+        else:
+            speak_fn(reply)
     return reply
