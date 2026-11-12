@@ -108,9 +108,10 @@ SPECULATIVE_EXECUTION_ENABLED = True
 SPECULATIVE_TIMEOUT_SECONDS = 3.0
 
 SPEAK_RESPONSES = True
-TTS_PROVIDER = 'edge'  # "edge" or "elevenlabs"
+TTS_PROVIDER = 'edge'  # "edge", "elevenlabs" or "kokoro" (free, offline after a one-time ~120 MB download)
 
 EDGE_TTS_VOICE = 'ja-JP-NanamiNeural'
+KOKORO_VOICE = 'af_heart'  # Kokoro voice id, e.g. af_heart, af_bella, af_sky, bf_emma, jf_alpha
 EDGE_TTS_RATE = "+0%"
 EDGE_TTS_VOLUME = '+0%'
 EDGE_TTS_PITCH = "+0Hz"
@@ -320,6 +321,7 @@ class AudioSettings(_SettingsView):
     SPEAK_RESPONSES: bool
     TTS_PROVIDER: str
     EDGE_TTS_VOICE: str
+    KOKORO_VOICE: str
     EDGE_TTS_RATE: str
     EDGE_TTS_VOLUME: str
     EDGE_TTS_PITCH: str

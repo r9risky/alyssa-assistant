@@ -80,6 +80,19 @@ hiddenimports = [
     "core.memory",
 ]
 
+# Kokoro offline voice: its config.json and espeak-ng's DLL + phoneme data.
+from PyInstaller.utils.hooks import collect_all
+
+binaries = []
+for _package in ("kokoro_onnx", "espeakng_loader", "phonemizer"):
+    try:
+        _datas, _binaries, _hidden = collect_all(_package)
+    except Exception:
+        continue  # optional voice package not installed in this build env
+    datas += _datas
+    binaries += _binaries
+    hiddenimports += _hidden
+
 excludes = [
     "tkinter",
     "matplotlib",
@@ -91,7 +104,7 @@ excludes = [
 a = Analysis(
     [os.path.join(BASE_DIR, "main.py")],
     pathex=[BASE_DIR],
-    binaries=[],
+    binaries=binaries,
     datas=datas,
     hiddenimports=hiddenimports,
     hookspath=[],

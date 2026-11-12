@@ -10,6 +10,8 @@ pyperclip
 requests
 webrtcvad-wheels
 edge-tts
+# Free offline voice (TTS_PROVIDER = "kokoro"); model files download once on first use.
+kokoro-onnx
 # Plays her TTS audio. Used instead of playsound because pygame.mixer.music
 # can be stopped mid-playback (playsound can't), which is what lets you
 # interrupt her by talking - see ALLOW_INTERRUPTIONS in config.py.

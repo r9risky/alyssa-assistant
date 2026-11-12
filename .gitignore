@@ -47,3 +47,6 @@ Thumbs.db
 build/
 dist/
 *.egg-info/
+
+# --- Downloaded voice models (Kokoro, ~120 MB) ---
+models/

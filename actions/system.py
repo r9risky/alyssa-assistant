@@ -289,7 +289,7 @@ def run_diagnostics() -> str:
         _append_check("Text-to-speech", True, "turned off in settings - replies are text-only right now")
     else:
         provider = getattr(config, "TTS_PROVIDER", "edge")
-        provider_label = "ElevenLabs" if provider == "elevenlabs" else "Edge TTS"
+        provider_label = {"elevenlabs": "ElevenLabs", "kokoro": "Kokoro (local)"}.get(provider, "Edge TTS")
         try:
             test_path = voice._synthesize_to_temp_file("Diagnostics test.")
             ok = os.path.exists(test_path) and os.path.getsize(test_path) > 0

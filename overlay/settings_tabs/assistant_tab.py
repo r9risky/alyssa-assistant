@@ -54,6 +54,7 @@ class AssistantTabMixin:
         provider = self.tts_provider_combo.currentText()
         form = getattr(self, "_tts_form", self._assistant_form)
         self._set_rows_visible(form, self._edge_voice_rows, provider == "edge")
+        self._set_rows_visible(form, self._kokoro_rows, provider == "kokoro")
         self._set_rows_visible(form, self._elevenlabs_rows, provider == "elevenlabs")
 
     # -- Assistant tab -----------------------------------------------------
@@ -203,13 +204,13 @@ class AssistantTabMixin:
         # -- Card 2: Voice Synthesis (TTS) --
         tts_card, tts_form = self._create_card(
             "Voice Synthesis (TTS)",
-            "Select Alyssa's spoken voice engine — free Microsoft Edge Neural TTS or ElevenLabs cloned voices.",
+            "Select Alyssa's spoken voice engine — free Microsoft Edge Neural TTS, free offline Kokoro, or ElevenLabs cloned voices.",
             "🔊",
         )
         self._tts_form = tts_form
 
         self.tts_provider_combo = QComboBox()
-        self.tts_provider_combo.addItems(["edge", "elevenlabs"])
+        self.tts_provider_combo.addItems(["edge", "kokoro", "elevenlabs"])
         self.tts_provider_combo.setCurrentText(getattr(config, "TTS_PROVIDER", "edge"))
         self.tts_provider_combo.currentTextChanged.connect(self._queue_assistant_apply)
         self.tts_provider_combo.currentTextChanged.connect(self._update_tts_provider_rows_visibility)
@@ -232,6 +233,19 @@ class AssistantTabMixin:
         edge_note.setStyleSheet(f"color: {self._t()['subtext']}; font-size: 11.5px;")
         edge_voice_field = self._stack_under(edge_voice_row, edge_note)
         self._edge_voice_rows.append(self._add_row(tts_form, "Edge voice:", edge_voice_field))
+
+        self.kokoro_voice_combo = QComboBox()
+        self.kokoro_voice_combo.setEditable(True)
+        self.kokoro_voice_combo.addItems(["af_heart", "af_bella", "af_nicole", "af_sky", "bf_emma", "bf_isabella", "jf_alpha"])
+        self.kokoro_voice_combo.setCurrentText(getattr(config, "KOKORO_VOICE", "af_heart"))
+        self.kokoro_voice_combo.currentTextChanged.connect(self._queue_assistant_apply)
+        kokoro_note = self._help_label(
+            "Runs on your PC, no internet or key needed. Downloads about 120 MB once, the first time she speaks."
+        )
+        kokoro_note.setStyleSheet(f"color: {self._t()['subtext']}; font-size: 11.5px;")
+        self._kokoro_rows = [
+            self._add_row(tts_form, "Kokoro voice:", self._stack_under(self.kokoro_voice_combo, kokoro_note))
+        ]
 
         self._elevenlabs_rows = []
         self._original_elevenlabs_key = getattr(config, "ELEVENLABS_API_KEY", "")
@@ -773,6 +787,7 @@ class AssistantTabMixin:
             "CUSTOM_MODEL": self.custom_model_edit.currentText().strip(),
             "TTS_PROVIDER": self.tts_provider_combo.currentText(),
             "EDGE_TTS_VOICE": self.voice_combo.currentText().strip() or config.EDGE_TTS_VOICE,
+            "KOKORO_VOICE": self.kokoro_voice_combo.currentText().strip() or "af_heart",
             "EDGE_TTS_VOLUME": _percent_to_volume_str(self.volume_slider.value()),
             "ELEVENLABS_VOICE_ID": _extract_elevenlabs_voice_id(self.elevenlabs_voice_combo.currentText()),
             "ELEVENLABS_MODEL": (
