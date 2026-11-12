@@ -266,7 +266,7 @@ def relay_to_call(args: Optional[dict] = None, message: str = "", **kwargs) -> s
 
     session.post_caption(getattr(config, "ASSISTANT_NAME", "Alyssa"), cleaned)
     # Never play audio from this tool thread (two players at once crash pygame).
-    # This is her whole reply (see brain.dialogue._SAY_AS_IS_TOOLS), spoken by the normal
+    # This is her whole reply (see brain.tool_replies._SAY_AS_IS_TOOLS), spoken by the normal
     # speech path, which also feeds the call.
     return cleaned
 

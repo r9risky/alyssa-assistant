@@ -65,6 +65,9 @@ hiddenimports = [
     "voice_synthesis",
     "wake_word",
     "brain.persona",
+    "brain.prompts",
+    "brain.quick_replies",
+    "brain.tool_replies",
     "brain.usage",
 ]
 
