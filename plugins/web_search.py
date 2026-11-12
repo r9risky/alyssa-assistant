@@ -13,6 +13,8 @@ import urllib.parse
 
 import requests
 
+import sources
+
 UNTRUSTED_OUTPUTS = {"search_web"}
 
 _BRAVE_API_KEY = os.environ.get("BRAVE_SEARCH_API_KEY", "")
@@ -108,6 +110,7 @@ def search_web(query: str, num_results: int = 5) -> str:
 
     lines = [f"Web search results for '{query}':"]
     for i, r in enumerate(results, start=1):
+        sources.record(r["url"], r["title"])
         title = r["title"] or r["url"]
         line = f"{i}. {title}"
         if r["snippet"]:

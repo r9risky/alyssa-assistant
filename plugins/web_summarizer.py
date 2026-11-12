@@ -8,6 +8,8 @@ import urllib.parse
 import requests
 from requests.adapters import HTTPAdapter
 
+import sources
+
 UNTRUSTED_OUTPUTS = {"summarize_webpage"}
 
 try:
@@ -182,6 +184,7 @@ def summarize_webpage(url: str) -> str:
     if not text_content:
         return f"Fetched webpage '{title or clean_url}', but couldn't find readable text content."
 
+    sources.record(clean_url, title)
     max_chars = 2000
     snippet = text_content[:max_chars] if len(text_content) > max_chars else text_content
 

@@ -80,6 +80,7 @@ import voice
 import plugin_loader
 import nameutil
 import telemetry
+import sources
 
 # Serializes speak() between the listen loop and the watcher thread so
 # alerts never overlap a reply. Watcher alerts wait; nothing is dropped.
@@ -174,6 +175,7 @@ def _stream_command_reply(command: str, bridge=None, text_queue=None):
         listener_thread = threading.Thread(target=listen, daemon=True)
         listener_thread.start()
         speaker_finished = False
+        sources.clear()
 
         def show_and_feed(delta):
             nonlocal pending_emitted, last_ui_emit
@@ -225,6 +227,9 @@ def _stream_command_reply(command: str, bridge=None, text_queue=None):
                 )
                 if bridge is not None:
                     bridge.speak_signal.emit(visible_reply)
+                    found = sources.take()
+                    if found:
+                        bridge.sources_signal.emit(found)
             return reply, interrupt_result["audio"]
         finally:
             if not speaker_finished:
