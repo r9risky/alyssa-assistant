@@ -172,8 +172,8 @@ def join_call(
             session.set_errand(action="open_app" if errand in ("open_app", "game") else "play_music", ask=message, ttl_seconds=180.0)
         name = getattr(config, "USER_NICKNAME", "") or "my person"
         hello = f"Hey everyone! {name} sent me in." + (f" They said: {message}." if message else "")
-        if not discord_bot.can_listen():
-            result += " I can talk here, but I can't hear the call (listening isn't installed)."
+        if getattr(config, "DISCORD_LISTEN", True) and discord_bot.listen_mode() == "pc":
+            result += " I'll hear everyone through your PC's audio, so stay in the call too."
         return f"{result} Say exactly this next, word for word: {hello}"
 
     app_choice, pids = resolve_call_app(app)

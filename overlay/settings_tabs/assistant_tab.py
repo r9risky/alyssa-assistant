@@ -665,7 +665,8 @@ class AssistantTabMixin:
 
         text = f"Bot: {discord_bot.status()}."
         if not discord_bot.can_listen():
-            text += " Listening isn't installed, so she can talk but not hear the call."
+            text += (" Bot listening isn't installed, so she hears the call through this PC's "
+                     "audio (stay in the call yourself).")
         link = discord_bot.invite_url()
         if link:
             text += f"\nAdd her to a server: {link}"

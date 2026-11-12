@@ -8,9 +8,14 @@ Setup (Settings > Assistant > Discord bot):
    then right-click your name > Copy User ID) into Settings.
 
 Speaking needs discord.py 2.7+ (it handles Discord's voice encryption through `davey`).
-Listening needs discord-ext-voice-recv with DAVE support; without it she still talks but
-can't hear the call. Friends' speech is transcribed on this PC, and the AI is only called
-when someone says her name (see call_ears.handle_friend_line), so listening costs no tokens.
+
+Listening, two ways:
+- Bot ears (best: knows who's talking): needs a voice-receive extension that can decrypt
+  Discord's DAVE voice, installed by hand (see README). Experimental.
+- PC ears (backup): records what this PC plays while you're in the call too. Used when bot
+  ears aren't installed, fail to start, or go deaf (the PC hears talking, the bot hears nothing).
+Either way speech is transcribed on this PC, and the AI is only called when someone says her
+name (see call_ears.handle_friend_line), so listening costs no tokens.
 """
 from __future__ import annotations
 
@@ -295,8 +300,7 @@ async def _leave() -> str:
     if vc is None:
         return "I wasn't in a voice channel."
     await vc.disconnect()
-    if _listener is not None:
-        _listener.stop()
+    _stop_listening()
     return "Left the voice channel."
 
 
@@ -310,12 +314,72 @@ def leave() -> str:
 
 # ---------------------------------------------------------------- listening
 
+_pc_listener = None
+_listen_mode = "off"  # "bot" (her Discord connection hears each friend), "pc" (backup), "off"
+
+
+def listen_mode() -> str:
+    return _listen_mode
+
+
 def _start_listening(vc) -> None:
-    global _listener
-    if voice_recv is None or not getattr(config, "DISCORD_LISTEN", True) or vc.is_listening():
+    """Listen through the bot when the receive extension works; otherwise hear the PC's audio.
+
+    In bot mode a PC-audio meter keeps running (no transcription, no tokens) so that if the
+    call is clearly audible on this PC but the bot gets no voice packets, we switch over.
+    """
+    global _listener, _pc_listener, _listen_mode
+    _stop_listening()
+    if not getattr(config, "DISCORD_LISTEN", True):
         return
-    _listener = FriendListener()
-    vc.listen(voice_recv.BasicSink(_listener.on_audio))
+    if voice_recv is not None and hasattr(vc, "listen"):
+        try:
+            _listener = FriendListener()
+            vc.listen(voice_recv.BasicSink(_listener.on_audio))
+            _listen_mode = "bot"
+            _pc_listener = PCListener(transcribe=False, on_speech=_check_fallback)
+            return
+        except Exception as e:
+            print(f"[discord] Bot listening failed ({e}); using the PC's audio instead.")
+            if _listener is not None:
+                _listener.stop()
+    _pc_listener = PCListener(transcribe=True)
+    _listen_mode = "pc"
+
+
+def _stop_listening() -> None:
+    global _listener, _pc_listener, _listen_mode
+    for listener in (_listener, _pc_listener):
+        if listener is not None:
+            listener.stop()
+    _listener = _pc_listener = None
+    _listen_mode = "off"
+
+
+FALLBACK_AFTER_SECONDS = 30.0
+
+
+def should_fall_back(pc_speech_times, last_bot_packet: float, now: float) -> bool:
+    """The PC clearly heard people talking for a while, but the bot got nothing."""
+    recent = [t for t in pc_speech_times if now - t <= FALLBACK_AFTER_SECONDS]
+    return len(recent) >= 3 and now - last_bot_packet > FALLBACK_AFTER_SECONDS
+
+
+def _check_fallback(pc_listener) -> None:
+    global _listen_mode
+    bot = _listener
+    if _listen_mode != "bot" or bot is None:
+        return
+    if not should_fall_back(pc_listener.speech_times, bot.last_packet, time.monotonic()):
+        return
+    print("[discord] The bot isn't hearing the call (voice decryption may have broken); "
+          "switching to the PC's audio.")
+    bot.stop()
+    vc = _voice_client()
+    if vc is not None and _loop is not None and hasattr(vc, "stop_listening"):
+        _loop.call_soon_threadsafe(vc.stop_listening)
+    pc_listener.transcribe = True
+    _listen_mode = "pc"
 
 
 class FriendListener:
@@ -333,6 +397,7 @@ class FriendListener:
         self._lock = threading.Lock()
         self._handle = handle
         self._stopped = threading.Event()
+        self.last_packet = time.monotonic()
         threading.Thread(target=self._loop, daemon=True, name="discord-listen").start()
 
     def on_audio(self, user, data) -> None:
@@ -341,6 +406,7 @@ class FriendListener:
         pcm = getattr(data, "pcm", b"")
         if not pcm:
             return
+        self.last_packet = time.monotonic()
         with self._lock:
             name, buf, _ = self._buffers.get(user.id, (user.display_name, bytearray(), 0.0))
             buf.extend(pcm)
@@ -378,13 +444,95 @@ def to_whisper_audio(pcm48_stereo: bytes) -> np.ndarray:
 
 
 def _handle_utterance(name: str, pcm: bytes) -> None:
+    _transcribe_and_handle(name, to_whisper_audio(pcm))
+
+
+def _transcribe_and_handle(name: str, audio: np.ndarray) -> None:
     import call_ears
     import transcribe
 
-    audio = to_whisper_audio(pcm)
-    if float(np.sqrt(np.mean(audio ** 2))) < 0.01:
+    if not audio.size or float(np.sqrt(np.mean(audio ** 2))) < 0.01:
         return  # breathing / background hum: don't even transcribe
     with transcribe._model_lock:  # local Whisper only: no cloud STT, no tokens
         text = transcribe._transcribe_impl_locked(audio)
     if text and text.strip():
         call_ears.handle_friend_line(name, text.strip())
+
+
+class EnergySegmenter:
+    """Cuts a 16 kHz mono stream into speech segments by loudness (no ML, nearly free)."""
+
+    THRESHOLD = 0.02
+    GAP_SECONDS = 0.8
+    MIN_SECONDS = 0.5
+    MAX_SECONDS = 15.0
+
+    def __init__(self):
+        self._chunks: list[np.ndarray] = []
+        self._quiet = 0.0
+
+    def feed(self, block: np.ndarray, muted: bool = False) -> list[np.ndarray]:
+        """Add one block; returns any finished segments. Muted blocks (her own voice) are dropped."""
+        seconds = len(block) / 16000
+        loud = not muted and float(np.sqrt(np.mean(block ** 2))) >= self.THRESHOLD
+        done = []
+        if loud:
+            self._chunks.append(block)
+            self._quiet = 0.0
+        elif self._chunks:
+            self._quiet += seconds
+            if not muted:
+                self._chunks.append(block)
+        total = sum(len(c) for c in self._chunks) / 16000
+        if self._chunks and (self._quiet >= self.GAP_SECONDS or total >= self.MAX_SECONDS or muted):
+            if total - self._quiet >= self.MIN_SECONDS:
+                done.append(np.concatenate(self._chunks))
+            self._chunks, self._quiet = [], 0.0
+        return done
+
+
+class PCListener:
+    """Backup ears: records what this PC plays (WASAPI loopback) while you're in the call.
+
+    It can't tell friends apart and also hears game sound, so it's only used when bot
+    listening isn't available or stops working. With transcribe=False it only notes when it
+    hears speech, for the fallback check.
+    """
+
+    BLOCK = 1600  # 0.1 s at 16 kHz
+
+    def __init__(self, transcribe: bool = True, on_speech=None):
+        self.transcribe = transcribe
+        self.speech_times: list[float] = []
+        self._on_speech = on_speech
+        self._stopped = threading.Event()
+        self._muted_until = 0.0
+        threading.Thread(target=self._run, daemon=True, name="discord-pc-ears").start()
+
+    def stop(self) -> None:
+        self._stopped.set()
+
+    def _run(self) -> None:
+        try:
+            import soundcard as sc
+
+            speaker = sc.default_speaker()
+            mic = sc.get_microphone(id=str(speaker.name), include_loopback=True)
+        except Exception as e:  # not Windows, no audio device, package missing
+            print(f"[discord] Can't listen to the PC's audio: {e}")
+            return
+        segmenter = EnergySegmenter()
+        with mic.recorder(samplerate=16000, channels=1, blocksize=self.BLOCK) as recorder:
+            while not self._stopped.is_set():
+                block = recorder.record(numframes=self.BLOCK)[:, 0].astype(np.float32)
+                now = time.monotonic()
+                if busy():
+                    self._muted_until = now + 0.5  # her own voice comes back through your Discord
+                for segment in segmenter.feed(block, muted=now < self._muted_until):
+                    self.speech_times = [t for t in self.speech_times if now - t < 120] + [now]
+                    if self._on_speech is not None:
+                        self._on_speech(self)
+                    if self.transcribe:
+                        threading.Thread(
+                            target=_transcribe_and_handle, args=("Someone in the call", segment), daemon=True
+                        ).start()

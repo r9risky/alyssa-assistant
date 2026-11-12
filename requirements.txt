@@ -26,6 +26,8 @@ send2trash
 segno
 # Her Discord bot (discord_bot.py): voice with Discord's encryption via davey
 discord.py[voice]>=2.7.1
+# Backup listening for the bot: records what the PC plays (WASAPI loopback)
+soundcard
 PySide6
 # Local semantic memory retrieval. Downloads the quantized
 # BAAI/bge-small-en-v1.5 model (~67MB) once on first use.

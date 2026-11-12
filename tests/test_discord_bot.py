@@ -100,3 +100,34 @@ def test_chat_only_requests_send_no_tools():
         except Exception:
             pass
     assert captured and "tools" not in captured and "tool_choice" not in captured
+
+
+def test_energy_segmenter_cuts_speech_and_ignores_her_voice():
+    seg = discord_bot.EnergySegmenter()
+    loud = np.full(1600, 0.1, dtype=np.float32)
+    quiet = np.zeros(1600, dtype=np.float32)
+    out = []
+    for _ in range(10):  # 1 s of talking
+        out += seg.feed(loud)
+    for _ in range(9):  # 0.9 s pause ends it
+        out += seg.feed(quiet)
+    assert len(out) == 1 and len(out[0]) >= 16000
+    out = []
+    for _ in range(10):  # her own voice coming back through Discord: dropped
+        out += seg.feed(loud, muted=True)
+    for _ in range(9):
+        out += seg.feed(quiet)
+    assert out == []
+    for _ in range(3):  # a 0.3 s blip is too short
+        out += seg.feed(loud)
+    for _ in range(9):
+        out += seg.feed(quiet)
+    assert out == []
+
+
+def test_falls_back_only_when_the_pc_hears_talk_and_the_bot_hears_nothing():
+    now = 1000.0
+    talking = [now - 20, now - 10, now - 2]
+    assert discord_bot.should_fall_back(talking, last_bot_packet=now - 60, now=now)
+    assert not discord_bot.should_fall_back(talking, last_bot_packet=now - 5, now=now)  # bot is fine
+    assert not discord_bot.should_fall_back([now - 2], last_bot_packet=now - 60, now=now)  # quiet call

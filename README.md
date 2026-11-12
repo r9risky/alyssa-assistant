@@ -88,6 +88,16 @@ and she doesn't touch your Discord window.
 - If a friend asks her to open a game or play a song, she **asks you first**. Say *"yes"* or *"no"*.
 - *"leave the call"* makes her disconnect.
 
+**How she hears your friends:**
+- **By default she uses your PC's audio**, so stay in the call yourself. She can't tell people apart
+  that way, and she can hear game sounds.
+- **Bot ears (optional, experimental):** she hears each friend separately through her own
+  connection. This needs a community voice-receive add-on that can decode Discord's encrypted voice,
+  and it isn't installed automatically. It's for source installs only, not the .exe:
+  `pip install "git+https://github.com/zacker150/discord-ext-voice-recv@dcf543a1618d6212f10db5d5dbb7a45f76a955e9"`.
+  If the bot ever stops hearing anything while your PC clearly does, she switches back to the PC's
+  audio by herself.
+
 ### Without the bot
 
 - Works with **Discord and Vesktop**, plus Zoom, Teams, WhatsApp, Steam, and browser calls.
