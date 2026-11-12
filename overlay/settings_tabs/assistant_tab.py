@@ -1063,7 +1063,6 @@ class AssistantTabMixin:
         remote_error = phone_remote.start()
         if remote_error:
             QMessageBox.warning(self, "Phone remote", remote_error)
-        import credential_store
         import discord_bot
         new_token = self.discord_token_edit.text().strip()
         if new_token:

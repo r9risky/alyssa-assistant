@@ -1,5 +1,6 @@
 """Text-to-speech streaming and audio playback."""
 
+import contextlib
 import os
 import queue
 import re
@@ -28,6 +29,34 @@ _mixer_ready = False
 # pygame.mixer.music is one global stream; two threads loading/stopping it at once
 # crashes SDL natively (e.g. a tool speaking into a call while her reply plays).
 _play_lock = threading.RLock()
+# One whole utterance at a time across threads (her reply, watcher alerts, replies to
+# friends in a call), so two voices never overlap. main.speak holds it too.
+speech_lock = threading.RLock()
+_playing = 0  # files/streams playing right now; PC call ears ignore audio while > 0
+
+# pygame's music clock stops when the output device stalls or vanishes; get_busy()
+# then stayed True forever and she never listened again.
+_PLAYBACK_STALL_SECONDS = 3.0
+
+
+_playing_lock = threading.Lock()
+
+
+@contextlib.contextmanager
+def _counting_playback():
+    global _playing
+    with _playing_lock:
+        _playing += 1
+    try:
+        yield
+    finally:
+        with _playing_lock:
+            _playing -= 1
+
+
+def is_playing() -> bool:
+    """True while her voice is playing on this PC."""
+    return _playing > 0
 
 
 def _configured_output_device():
@@ -221,6 +250,9 @@ def _volume_str_to_gain(volume_str: str) -> float:
     return max(0.0, min(1.0, 1.0 + percent / 50.0))
 
 
+_NO_AUDIO_YET = object()
+
+
 class StreamingSpeaker:
     """Turns LLM deltas into clause-sized TTS work while generation continues."""
 
@@ -400,7 +432,10 @@ class StreamingSpeaker:
             if self._audio_error and not self._playback_started:
                 raise self._audio_error
         except Exception as exc:
-            if not self.interrupted:
+            if self._playback_started:
+                # Replaying the whole reply from the top made her say it twice.
+                print(f"(realtime TTS failed mid-reply, stopping there: {exc})")
+            elif not self.interrupted:
                 print(f"(realtime TTS failed, falling back to file playback: {exc})")
                 _speak_one(
                     self.text,
@@ -418,6 +453,14 @@ class StreamingSpeaker:
                     pass
             self._audio.put(chunk)
 
+    def _next_audio(self):
+        # Polls so a socket that goes quiet without a final message can't park this
+        # thread forever (it would also keep is_playing() True and mute call ears).
+        try:
+            return self._audio.get(timeout=0.1)
+        except queue.Empty:
+            return _NO_AUDIO_YET
+
     def _finish_audio(self):
         self._audio.put(None)
 
@@ -426,8 +469,12 @@ class StreamingSpeaker:
         self._audio.put(None)
 
     def _play_pcm(self):
-        if _discord_bot_connected():
-            return self._play_pcm_to_discord()
+        with _counting_playback():
+            if _discord_bot_connected():
+                return self._play_pcm_to_discord()
+            return self._play_pcm_to_speakers()
+
+    def _play_pcm_to_speakers(self):
         buffer_bytes = max(
             1,
             int(24000 * 2 * getattr(config, "TTS_AUDIO_BUFFER_MS", 100) / 1000),
@@ -469,7 +516,9 @@ class StreamingSpeaker:
 
         try:
             while not self.interrupted:
-                chunk = self._audio.get()
+                chunk = self._next_audio()
+                if chunk is _NO_AUDIO_YET:
+                    continue
                 if chunk is None:
                     if buffered:
                         if stream is None:
@@ -527,19 +576,22 @@ class StreamingSpeaker:
         import discord_bot
 
         started = False
+        queued_seconds = 0.0
         try:
             while not self.interrupted:
-                chunk = self._audio.get()
+                chunk = self._next_audio()
+                if chunk is _NO_AUDIO_YET:
+                    continue
                 if chunk is None:
                     break
+                queued_seconds += len(chunk) / (24000 * 2)
                 if not discord_bot.play_pcm(discord_bot.to_discord_pcm(chunk, 24000, 1)):
                     # Before playback started this falls back to file playback on the speakers.
                     raise RuntimeError(f"Discord voice playback failed ({discord_bot._cant_speak})")
                 if not started:
                     self._start_playback()
                     started = True
-            while discord_bot.busy() and not self.interrupted:
-                time.sleep(0.02)
+            discord_bot.wait_for_playback(queued_seconds, self.stop_event)
             if self.interrupted:
                 discord_bot.stop_audio()
         except Exception as exc:
@@ -726,6 +778,11 @@ def _play(path: str, stop_event=None) -> bool:
 
 
 def _play_locked(path: str, stop_event=None) -> bool:
+    with _counting_playback():
+        return _play_file_locked(path, stop_event)
+
+
+def _play_file_locked(path: str, stop_event=None) -> bool:
     _ensure_mixer()
     music = pygame.mixer.music
     play_path = path
@@ -756,6 +813,7 @@ def _play_locked(path: str, stop_event=None) -> bool:
                 target=_play_file_to_virtual_mic, args=(play_path, stop_event), daemon=True
             )
             vmic_thread.start()
+        last_pos, last_progress = -1, time.monotonic()
         while music.get_busy():
             current_volume = getattr(config, "EDGE_TTS_VOLUME", "+0%")
             if current_volume != volume:
@@ -763,6 +821,12 @@ def _play_locked(path: str, stop_event=None) -> bool:
                 music.set_volume(_volume_str_to_gain(volume))
             if stop_event is not None and stop_event.is_set():
                 return False
+            pos, now = music.get_pos(), time.monotonic()
+            if pos != last_pos:
+                last_pos, last_progress = pos, now
+            elif now - last_progress > _PLAYBACK_STALL_SECONDS:
+                print("(audio output stalled - skipping the rest of this line)")
+                return True
             time.sleep(0.02)
         return True
     finally:
@@ -775,7 +839,9 @@ def _play_locked(path: str, stop_event=None) -> bool:
                 pass
             if vmic_thread is not None:
                 try:
-                    vmic_thread.join(timeout=0.25)
+                    # It trails the speakers a little; let it finish so the next line
+                    # doesn't start over its tail in the call.
+                    vmic_thread.join(timeout=2.0)
                 except Exception:
                     pass
             if dsp_temp:

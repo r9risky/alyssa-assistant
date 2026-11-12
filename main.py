@@ -84,9 +84,24 @@ import sources
 import fondness
 import phone_remote
 
-# Serializes speak() between the listen loop and the watcher thread so
-# alerts never overlap a reply. Watcher alerts wait; nothing is dropped.
-_speak_lock = threading.Lock()
+# Serializes speak() between the listen loop, the watcher thread and replies to
+# friends in a Discord call, so two voices never overlap. Others wait; nothing is
+# dropped. Reentrant: a tool may speak while her reply holds it.
+_speak_lock = voice.speech_lock
+
+# Longest the reply waits for the barge-in listener to finish recording what you
+# said over her (it stops on its own after MAX_RECORD_SECONDS).
+_INTERRUPT_JOIN_GRACE_SECONDS = 2.0
+
+
+def _join_listener(listener_thread, stop_event):
+    """Wait for the barge-in listener. When it cut her off it is still recording what you
+    said; returning after 1s dropped that command and opened a second mic stream."""
+    if stop_event.is_set():
+        timeout = config.MAX_RECORD_SECONDS + _INTERRUPT_JOIN_GRACE_SECONDS
+    else:
+        timeout = 1.0  # stream.read() can block forever; the listener is a daemon
+    listener_thread.join(timeout=timeout)
 
 
 def _clean_reply_for_speech(text: str) -> str:
@@ -140,10 +155,21 @@ def speak(text: str, bridge=None):
             )
         finally:
             playback_done_event.set()
-            # stream.read() can block forever; listener is a daemon — don't freeze replies.
-            listener_thread.join(timeout=1.0)
+            _join_listener(listener_thread, stop_speaking_event)
 
         return interrupt_result["audio"]
+
+
+def _already_spoken(streamed_text: str, reply: str) -> bool:
+    """True if the streamed text already ends with the final reply. Compared without
+    spacing and fake tool-call JSON (which the final reply has stripped), since any
+    difference there made her read the whole reply a second time."""
+    from brain.text_utils import _strip_fake_tool_call
+
+    def norm(text):
+        return " ".join(_strip_fake_tool_call(text or "").split())
+
+    return norm(streamed_text).endswith(norm(reply))
 
 
 def _stream_command_reply(command: str, bridge=None, text_queue=None):
@@ -225,7 +251,7 @@ def _stream_command_reply(command: str, bridge=None, text_queue=None):
             clean_reply = _clean_reply_for_speech(reply)
             if (
                 clean_reply
-                and not streamed_text.rstrip().endswith(clean_reply)
+                and not _already_spoken(streamed_text, clean_reply)
                 and not stop_event.is_set()
             ):
                 show_and_feed(clean_reply)
@@ -254,7 +280,7 @@ def _stream_command_reply(command: str, bridge=None, text_queue=None):
                 stop_event.set()
                 speaker.finish()
             response_done_event.set()
-            listener_thread.join(timeout=1.0)
+            _join_listener(listener_thread, stop_event)
 
 
 def run_watcher_loop(bridge=None):

@@ -171,11 +171,16 @@ def _dave_state(vc) -> str:
 
 
 def busy() -> bool:
+    vc = _voice_client()
+    if vc is None:
+        # Out of the channel (left, kicked, connection dropped): nothing will drain the
+        # queue, and waiting on it kept her from ever listening again.
+        stop_audio()
+        return False
     with _audio_lock:
         if _audio:
             return True
-    vc = _voice_client()
-    return vc is not None and vc.is_playing()
+    return vc.is_playing()
 
 
 def stop_audio() -> None:
@@ -186,14 +191,30 @@ def stop_audio() -> None:
 def play_file(path: str, stop_event=None) -> bool | None:
     """Say an audio file in the channel and wait. True if it finished, False if cut off,
     None if Discord couldn't play it (the caller then plays it on the speakers)."""
-    if not play_pcm(decode_file(path)):
+    pcm = decode_file(path)
+    if not play_pcm(pcm):
         return None
+    wait_for_playback(len(pcm) / (48000 * 4), stop_event)
+    return not (stop_event is not None and stop_event.is_set())
+
+
+# Extra wait past the audio's own length before giving up on the channel playing it
+# (a voice reconnect pauses discord.py's player with is_playing() still True).
+PLAYBACK_SLACK_SECONDS = 5.0
+
+
+def wait_for_playback(seconds: float, stop_event=None) -> None:
+    """Wait until the queued audio has played, she's cut off, or it clearly stalled."""
+    deadline = time.monotonic() + seconds + PLAYBACK_SLACK_SECONDS
     while busy():
         if stop_event is not None and stop_event.is_set():
             stop_audio()
-            return False
+            return
+        if time.monotonic() > deadline:
+            print("[discord] Voice playback stalled; skipping the rest of this line.")
+            stop_audio()
+            return
         time.sleep(0.02)
-    return True
 
 
 # ---------------------------------------------------------------- lifecycle
@@ -514,6 +535,26 @@ def _transcribe_and_handle(name: str, audio: np.ndarray) -> None:
         call_ears.handle_friend_line(name, text.strip())
 
 
+_pc_transcribe_slot = threading.Semaphore(1)
+
+
+def _transcribe_one_pc_segment(segment: np.ndarray) -> None:
+    try:
+        _transcribe_and_handle("Someone in the call", segment)
+    except Exception as e:
+        print(f"[discord] Couldn't handle what the call said: {e}")
+    finally:
+        _pc_transcribe_slot.release()
+
+
+def _speaking_on_pc() -> bool:
+    try:
+        import voice_playback
+        return voice_playback.is_playing()
+    except Exception:
+        return False
+
+
 class EnergySegmenter:
     """Cuts a 16 kHz mono stream into speech segments by loudness (no ML, nearly free)."""
 
@@ -581,13 +622,16 @@ class PCListener:
             while not self._stopped.is_set():
                 block = recorder.record(numframes=self.BLOCK)[:, 0].astype(np.float32)
                 now = time.monotonic()
-                if busy():
-                    self._muted_until = now + 0.5  # her own voice comes back through your Discord
+                if busy() or _speaking_on_pc():
+                    # Her own voice: back through your Discord, or straight from the speakers.
+                    self._muted_until = now + 0.5
                 for segment in segmenter.feed(block, muted=now < self._muted_until):
                     self.speech_times = [t for t in self.speech_times if now - t < 120] + [now]
                     if self._on_speech is not None:
                         self._on_speech(self)
-                    if self.transcribe:
+                    if self.transcribe and _pc_transcribe_slot.acquire(blocking=False):
+                        # One at a time: game sound and chatter used to pile up Whisper jobs
+                        # that held its lock, so your own commands to her waited behind them.
                         threading.Thread(
-                            target=_transcribe_and_handle, args=("Someone in the call", segment), daemon=True
+                            target=_transcribe_one_pc_segment, args=(segment,), daemon=True
                         ).start()

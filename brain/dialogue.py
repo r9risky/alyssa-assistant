@@ -1185,13 +1185,24 @@ def handle_command(
     retried_lazy_turn = False
     untrusted_web_content_seen = False
     announce_once = None
+    streamed_any_text = []
+    if on_text_delta is not None:
+        caller_on_text_delta = on_text_delta
+
+        def on_text_delta(delta):
+            if delta and delta.strip():
+                streamed_any_text.append(True)
+            caller_on_text_delta(delta)
+
     if on_partial_reply is not None:
         # One "Opening X..." per command: a multi-tool request otherwise
         # speaks a choppy string of progress lines before the actual result.
         announced = []
 
         def announce_once(text):
-            if not announced:
+            # The model often says "Sure, opening Spotify!" next to its tool call;
+            # adding our own "Opening Spotify..." made her say it twice.
+            if not announced and not streamed_any_text:
                 announced.append(text)
                 on_partial_reply(text)
 
@@ -1221,7 +1232,7 @@ def handle_command(
                     provider,
                     provider_label,
                     request_tools,
-                    on_text_delta,
+                    None,  # a text answer here is discarded below; streaming it was spoken anyway
                     cancel_event,
                     force_tools=True,
                 )

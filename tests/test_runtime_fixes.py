@@ -167,6 +167,7 @@ class VoiceLifecycleTests(unittest.TestCase):
                     config.EDGE_TTS_VOLUME = "-50%"
                     return True
                 return False
+            def get_pos(self): return len(volumes)
             def stop(self): pass
             def unload(self): pass
 
