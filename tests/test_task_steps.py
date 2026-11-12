@@ -49,6 +49,7 @@ def test_bubble_lists_steps_while_working_and_hides_them_after():
         assert "✓ Open app: &lt;Spotify&gt;" in text and "▸ Play music: lofi" in text
 
         bubble.show_message("Putting that on...")
+        bubble.finish_typing()
         assert "▸ Play music" in bubble.label.text()
 
         bubble.show_steps([])

@@ -114,11 +114,22 @@ class _SidebarTabs(QWidget):
         search_layout.setContentsMargins(10, 0, 10, 2)
         self.search_edit = QLineEdit()
         self.search_edit.setObjectName("sidebarSearch")
-        self.search_edit.setPlaceholderText("Jump to setting…")
+        self.search_edit.setPlaceholderText("Search settings…")
         self.search_edit.setClearButtonEnabled(True)
         self.search_edit.textChanged.connect(self._on_search_changed)
         search_layout.addWidget(self.search_edit)
         sidebar_col.addWidget(search_wrap)
+
+        self.advanced_check = QCheckBox("Show advanced")
+        self.advanced_check.setObjectName("sidebarAdvanced")
+        self.advanced_check.toggled.connect(lambda *_: self.apply_filter())
+        advanced_wrap = QWidget()
+        advanced_layout = QHBoxLayout(advanced_wrap)
+        advanced_layout.setContentsMargins(14, 0, 10, 2)
+        advanced_layout.addWidget(self.advanced_check)
+        sidebar_col.addWidget(advanced_wrap)
+        self._filter_hidden_rows = []  # (form, row) the filter hid; other hidden rows are the tabs' own
+        self._filter_hidden_cards = []
 
         self.navigation = QListWidget()
         self.navigation.setObjectName("settingsNavigation")
@@ -191,24 +202,97 @@ class _SidebarTabs(QWidget):
             color = t["accent_hover"] if idx == current else t["subtext"]
             item.setIcon(build_nav_icon(kind, color, 17))
 
+    # Tuning knobs most people never touch; "Show advanced" brings them back (search finds them too).
+    ADVANCED_LABELS = frozenset({
+        "Pre-speech buffer:", "VAD engine:", "Compute device:", "Precision type:",
+        "Whisper model:", "Groq Whisper model:", "Short-term turns:", "Facts recalled / turn:",
+        "Max length per fact:", "Saved memories (max):", "Developer console:", "DSP pipeline:",
+        "Harmonic layers:", "Pitch shift:", "Speed factor:", "Check every:", "Disk space alert:",
+        "IP auto-detection:", "Dimmed level:", "Bounce height:",
+    })
+
     def _on_search_changed(self, text: str):
-        query = (text or "").strip().lower()
-        if not query:
-            return
-        # Jump to the first tab whose title or inner labels match the query.
-        for idx in range(self.navigation.count()):
-            item = self.navigation.item(idx)
-            if query in item.text().lower():
-                self.navigation.setCurrentRow(idx)
-                return
+        self.apply_filter()
+
+    @staticmethod
+    def _row_text(form: QFormLayout, row: int) -> tuple[str, str]:
+        """(label, everything readable in the row) for matching a search."""
+        label_item = form.itemAt(row, QFormLayout.LabelRole)
+        label = label_item.widget().text() if label_item and isinstance(label_item.widget(), QLabel) else ""
+        texts = [label]
+        for role in (QFormLayout.FieldRole, QFormLayout.SpanningRole):
+            item = form.itemAt(row, role)
+            widget = item.widget() if item else None
+            if widget is None:
+                continue
+            for w in [widget, *widget.findChildren(QWidget)]:
+                texts.append(w.toolTip() or "")
+                if isinstance(w, (QLabel, QCheckBox, QPushButton)):
+                    texts.append(w.text() or "")
+        return label, " ".join(texts).lower()
+
+    def apply_filter(self):
+        """Show only rows matching the search (and advanced rows only when asked for).
+
+        Only rows this filter hid get shown again: rows a tab hides itself (another
+        provider's key, say) stay hidden.
+        """
+        for form, row in self._filter_hidden_rows:
+            try:
+                form.setRowVisible(row, True)
+            except RuntimeError:  # a plugin tab was rebuilt and its form deleted
+                pass
+        for card in self._filter_hidden_cards:
+            try:
+                card.setVisible(True)
+            except RuntimeError:
+                pass
+        self._filter_hidden_rows, self._filter_hidden_cards = [], []
+
+        query = (self.search_edit.text() or "").strip().lower()
+        show_advanced = self.advanced_check.isChecked() or bool(query)
+        first_match = None
         for idx in range(self.pages.count()):
             page = self.pages.widget(idx)
-            if page is None:
+            item = self.navigation.item(idx)
+            if page is None or item is None:
                 continue
-            for lbl in page.findChildren(QLabel):
-                if query in (lbl.text() or "").lower():
-                    self.navigation.setCurrentRow(idx)
-                    return
+            whole_page = bool(query) and query in item.text().lower()
+            page_matches = whole_page
+            for form in page.findChildren(QFormLayout):
+                card = form.parentWidget()
+                card_title = card.findChild(QLabel, "cardTitle") if card is not None else None
+                whole_card = whole_page or (
+                    bool(query) and card_title is not None and query in card_title.text().lower()
+                )
+                any_shown = False
+                for row in range(form.rowCount()):
+                    if not form.isRowVisible(row):
+                        continue
+                    label, text = self._row_text(form, row)
+                    hide = (not show_advanced and label in self.ADVANCED_LABELS) or (
+                        bool(query) and not whole_card and query not in text
+                    )
+                    if hide:
+                        form.setRowVisible(row, False)
+                        self._filter_hidden_rows.append((form, row))
+                    else:
+                        any_shown = True
+                page_matches |= any_shown and bool(query)
+                if (
+                    card is not None
+                    and card.objectName() == "settingsCard"
+                    and card.isVisibleTo(page)
+                    and not any_shown
+                    and form.rowCount()
+                ):
+                    card.setVisible(False)
+                    self._filter_hidden_cards.append(card)
+            self.navigation.setRowHidden(idx, bool(query) and not page_matches)
+            if page_matches and first_match is None:
+                first_match = idx
+        if query and first_match is not None and self.navigation.isRowHidden(self.navigation.currentRow()):
+            self.navigation.setCurrentRow(first_match)
 
     def fit_navigation(self, available_width: int):
         """Keep the rail proportional without crowding the form."""
@@ -487,6 +571,7 @@ class ConfigDialog(QDialog, AssistantTabMixin, EngineTabMixin, AudioTabMixin,
         outer.addWidget(content)
 
         self._update_responsive_layout()
+        self.tabs.apply_filter()  # tucks the advanced rows away
 
         if focus_gemini:
             self.tabs.setCurrentIndex(0)
@@ -743,6 +828,7 @@ class ConfigDialog(QDialog, AssistantTabMixin, EngineTabMixin, AudioTabMixin,
         for _ in range(self._plugin_gui_tab_count):
             self.tabs.removeTab(built_in_count)
         self._add_plugin_gui_tabs()
+        self.tabs.apply_filter()
         if 0 <= current_row < self.tabs.count():
             self.tabs.setCurrentIndex(current_row)
 

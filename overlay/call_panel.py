@@ -17,6 +17,7 @@ from PySide6.QtWidgets import QHBoxLayout, QLabel, QPushButton, QVBoxLayout, QWi
 import config
 from call_ears import get_call_session
 from .widgets import _TopmostWindowMixin
+from . import motion
 from .theming import _rgba, _theme
 
 _PANEL_WIDTH = 300
@@ -216,10 +217,10 @@ class CallPanelWidget(_TopmostWindowMixin, QWidget):
             self.title_label.setText(f"{app} · #{channel}" if channel else f"{app} call")
             self.caption_label.setText("Listening to the call…")
             self.reposition()
-            self.show()
+            motion.fade_in(self)
             self.raise_()
         else:
-            self.hide()
+            motion.fade_out(self)
 
     def _on_caption(self, speaker: str, text: str):
         if not text:

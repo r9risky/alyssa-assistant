@@ -116,8 +116,10 @@ def _join_listener(listener_thread, stop_event):
 
 
 def _clean_reply_for_speech(text: str) -> str:
-    """Removes punctuation a model occasionally leaves before a sentence."""
-    return re.sub(r"^[\s,;:—–-]+", "", (text or "")).strip()
+    """Removes stray leading punctuation, markdown, emoji and assistant-speak (brain.persona)."""
+    from brain.persona import tidy_reply
+
+    return tidy_reply(re.sub(r"^[\s,;:—–-]+", "", (text or ""))).strip()
 
 
 def speak(text: str, bridge=None):
@@ -211,6 +213,8 @@ def _stream_command_reply(command: str, bridge=None, text_queue=None):
             on_playback_start=on_playback_start,
             on_playback_end=(bridge.talk_end_signal.emit if bridge else None),
             stop_event=stop_event,
+            clean=_clean_reply_for_speech,
+            on_chunk_start=(bridge.spoken_signal.emit if bridge else None),
         )
         listener_thread = threading.Thread(target=listen, daemon=True)
         listener_thread.start()
@@ -269,7 +273,8 @@ def _stream_command_reply(command: str, bridge=None, text_queue=None):
             speaker.finish()
             speaker_finished = True
             visible_reply = clean_reply or streamed_text
-            phone_remote.log("alyssa", visible_reply)
+            found = sources.take() if visible_reply else []
+            phone_remote.log("alyssa", visible_reply, sources=found)
             if visible_reply:
                 print(
                     startup_logging.format_content_log(
@@ -280,7 +285,6 @@ def _stream_command_reply(command: str, bridge=None, text_queue=None):
                 )
                 if bridge is not None:
                     bridge.speak_signal.emit(visible_reply)
-                    found = sources.take()
                     if found:
                         bridge.sources_signal.emit(found)
             return reply, interrupt_result["audio"]

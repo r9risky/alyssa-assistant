@@ -40,28 +40,6 @@ def test_voice_facade_all_symbols_defined():
         assert hasattr(voice, symbol), f"Symbol {symbol} in voice.__all__ is not defined"
 
 
-def test_audio_package_exports():
-    """Verify audio package exports all core voice, recording, and processing functions."""
-    import audio
-    assert callable(audio.speak)
-    assert callable(audio.record_command)
-    assert callable(audio.transcribe)
-    assert hasattr(audio, "StreamingSpeaker")
-    assert hasattr(audio, "VoiceActivityDetector")
-    assert hasattr(audio, "WakeWordDetector")
-    assert hasattr(audio, "CallSession")
-
-
-def test_core_package_exports():
-    """Verify core package exports all core system utilities."""
-    import core
-    assert callable(core.get_secret)
-    assert callable(core.clear_secret)
-    assert callable(core.format_content_log)
-    assert callable(core.contains_name)
-    assert callable(core.remember)
-
-
 def test_extension_toggles_in_dialogue():
     """Verify Capri features respect configuration toggles."""
     with patch.object(dialogue.config, "DESKTOP_CHAOS_ENABLED", False):

@@ -317,6 +317,23 @@ TOOLS = [
 Add `check_watch() -> str | None` (plus an optional `WATCH_INTERVAL_SECONDS`)
 if you want her to speak up on her own. 🎲
 
+Two more hooks keep a plugin cheap on tokens:
+
+- `INSTANT_REPLY_TOOLS = {"roll_die"}` means the tool's return value is already
+  the whole reply, so she says it as is and skips the second model call that
+  would only reword it. If the request has several steps ("roll a die and
+  then..."), or the tool fails, she still goes back to the model.
+- `handle_intent(cleaned, text) -> str | None` answers fixed phrases before any
+  model call. `cleaned` is the request lowercased, without "hey Alyssa" or
+  "please". Return the reply, or `None` to let the model handle it.
+
+```python
+def handle_intent(cleaned, text=""):
+    if cleaned in {"roll a die", "roll the dice"}:
+        return f"You rolled a {roll_die()}."
+    return None
+```
+
 Say what your plugin needs with `PERMISSIONS = ["network", "files"]` (choices:
 `network`, `files`, `keyboard_mouse`, `screen`, `microphone`, `camera`, `shell`,
 `background`). A plugin that didn't come with Alyssa stays off until you approve

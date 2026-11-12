@@ -5,7 +5,7 @@ import time
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QColor, QMovie, QPainter, QPixmap, QRegion
 
-from .. import poses
+from .. import motion, poses
 from ..rendering import (
     ASSETS_DIR, RESIZE_GRIP, _resolve_character_path, _scale_centered, render_character,
 )
@@ -217,4 +217,5 @@ class RenderingMixin:
             effective = base * dim_pct
         else:
             effective = base
-        self.setWindowOpacity(max(0.05, min(1.0, effective)))
+        # Eases between dimmed and full instead of snapping when she starts or stops talking.
+        motion.fade(self, max(0.05, min(1.0, effective)), motion.FAST_MS, show=False)

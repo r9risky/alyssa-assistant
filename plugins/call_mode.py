@@ -9,6 +9,7 @@ Inspired by Capri Desktop's `CallMode.cs`:
 
 from __future__ import annotations
 
+import re
 import sys
 import time
 from typing import Optional
@@ -384,6 +385,46 @@ TOOLS = [
         },
     },
 ]
+
+_YES_ANSWERS = {"yes", "yeah", "yep", "sure", "ok", "okay", "do it", "go ahead", "yes please", "allow it", "fine"}
+_NO_ANSWERS = {"no", "nope", "nah", "don't", "dont", "no thanks", "deny it", "not now"}
+_JOIN_RE = re.compile(
+    r"^join\s+(?:the\s+)?(?:([a-zA-Z0-9]+)\s+)?call(?:[,]?\s*(?:tell\s+them\s+|and\s+tell\s+them\s+|say\s+)(.+))?$"
+)
+
+
+def _relay_wording(lowered: str, original: str) -> str:
+    """'tell them I'm late' -> 'Message from Roi: I'm late.' (kept in the user's own words)."""
+    start = (original or "").lower().find(lowered)
+    text = original[start:start + len(lowered)] if start >= 0 else lowered
+    name = str(getattr(config, "USER_NICKNAME", "") or "").strip() or "your friend"
+    return f"Message from {name}: {text.strip().rstrip('.!')}."
+
+
+def handle_intent(cleaned: str, text: str = "") -> Optional[str]:
+    """Join/leave, 'tell them ...' and friend-request yes/no without a model call."""
+    if re.search(
+        r"^(?:hang\s*up|leave\s+(?:the\s+)?call|end\s+(?:the\s+)?call|disconnect\s+(?:from\s+)?(?:the\s+)?call)$",
+        cleaned,
+    ):
+        return leave_call({})
+    pending = get_call_session().pending_request
+    if pending is not None and not pending.is_expired:
+        answer = cleaned.rstrip("!.")
+        if answer in _YES_ANSWERS or answer in _NO_ANSWERS:
+            return confirm_friend_request({"confirm": answer in _YES_ANSWERS})
+    m_tell = re.match(r"^(?:tell|let)\s+(?:them|everyone|everybody|the call|the guys)\s+(?:that\s+)?(.+)$", cleaned)
+    if m_tell:
+        from call_ears import is_call_mode_active
+
+        if is_call_mode_active():
+            # Spoken by the caller's normal speech path, which feeds the call. No model call.
+            return _relay_wording(m_tell.group(1), text)
+    m_join = _JOIN_RE.search(cleaned)
+    if m_join:
+        return join_call({"app": m_join.group(1) or "auto", "message": m_join.group(2) or ""})
+    return None
+
 
 FUNCTIONS = {
     "join_call": join_call,

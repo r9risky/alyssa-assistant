@@ -450,3 +450,48 @@ def test_apply_assistant_live_uses_module_credential_store():
 
     code = AssistantTabMixin._apply_assistant_live.__code__
     assert "credential_store" not in code.co_varnames + code.co_cellvars
+
+
+class SettingsSearchTests(unittest.TestCase):
+    # Same dialog fixture, without re-running SettingsGuiTests' own tests.
+    setUpClass = SettingsGuiTests.__dict__["setUpClass"]
+    setUp = SettingsGuiTests.setUp
+    tearDown = SettingsGuiTests.tearDown
+    def _visible_labels(self):
+        tabs = self.dialog.tabs
+        labels = []
+        for idx in range(tabs.pages.count()):
+            if tabs.navigation.isRowHidden(idx):
+                continue
+            for form in tabs.pages.widget(idx).findChildren(QFormLayout):
+                card = form.parentWidget()
+                if card is not None and not card.isVisibleTo(tabs.pages.widget(idx)):
+                    continue
+                for row in range(form.rowCount()):
+                    item = form.itemAt(row, QFormLayout.LabelRole)
+                    if form.isRowVisible(row) and item and isinstance(item.widget(), QLabel):
+                        labels.append(item.widget().text())
+        return labels
+
+    def test_advanced_rows_are_tucked_away_until_asked_for(self):
+        self.assertNotIn("VAD engine:", self._visible_labels())
+        self.dialog.tabs.advanced_check.setChecked(True)
+        self.assertIn("VAD engine:", self._visible_labels())
+
+    def test_search_shows_only_matching_settings(self):
+        self.dialog.tabs.search_edit.setText("wake chime")
+        labels = self._visible_labels()
+        self.assertIn("Wake chime:", labels)
+        self.assertNotIn("Assistant name:", labels)
+        self.dialog.tabs.search_edit.setText("")
+        self.assertIn("Assistant name:", self._visible_labels())
+
+    def test_search_finds_advanced_settings(self):
+        self.dialog.tabs.search_edit.setText("vad")
+        self.assertIn("VAD engine:", self._visible_labels())
+
+    def test_search_keeps_other_providers_rows_hidden(self):
+        hidden_before = "Claude model:" not in self._visible_labels()
+        self.dialog.tabs.search_edit.setText("model")
+        self.dialog.tabs.search_edit.setText("")
+        self.assertEqual(hidden_before, "Claude model:" not in self._visible_labels())

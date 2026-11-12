@@ -29,6 +29,7 @@ def test_bubble_links_sources_only_for_their_reply():
     bubble = SpeechBubble(None, {"bubble_seconds": 5})
     with patch("voice_dsp.play_typing_blip"):
         bubble.show_message("It is <sunny> today, according to BBC.")
+        bubble.finish_typing()
         bubble.show_sources([{"url": 'https://bbc.com/w?a=1&b="x"', "title": "", "site": "bbc.com"}])
         text = bubble.label.text()
         assert "&lt;sunny&gt;" in text
@@ -36,6 +37,7 @@ def test_bubble_links_sources_only_for_their_reply():
         assert ">bbc.com</a>" in text
 
         bubble.show_message("A new reply with no lookup.")
+        bubble.finish_typing()
         assert "Sources" not in bubble.label.text()
 
 

@@ -252,6 +252,7 @@ def run_with_assistant(assistant_loop_fn):
     # Bubble linger/fade follows talk_start/talk_end, not a guess at show time.
     bridge.talk_start_signal.connect(bubble.on_talk_start)
     bridge.talk_end_signal.connect(bubble.on_talk_end)
+    bridge.spoken_signal.connect(bubble.on_chunk_spoken)
     if QSystemTrayIcon.isSystemTrayAvailable():
         window.tray = _build_tray_icon(window, app)
 

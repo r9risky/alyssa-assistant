@@ -1,5 +1,8 @@
 import html
 import math
+import os
+import re
+import time
 import queue
 import random
 import sys
@@ -11,7 +14,7 @@ from PySide6.QtCore import (
 )
 from PySide6.QtGui import (
     QPainter, QColor, QGuiApplication,
-    QPainterPath, QLinearGradient, QFont,
+    QPainterPath, QLinearGradient, QFont, QFontMetrics,
 )
 from PySide6.QtWidgets import (
     QWidget, QHBoxLayout, QLineEdit, QLabel,
@@ -19,6 +22,7 @@ from PySide6.QtWidgets import (
 
 import config
 
+from . import motion
 from .rendering import BASE_W, BASE_H, MIN_W, save_overlay_settings
 from .theming import _rgba, _theme
 from .companion.rendering_mixin import RenderingMixin
@@ -36,6 +40,7 @@ class Bridge(QObject):
     reply_pending_signal = Signal()  # reply is visible; audio is still being synthesized
     talk_start_signal = Signal()  # emitted right before she starts talking
     talk_end_signal = Signal()  # emitted right after she finishes talking
+    spoken_signal = Signal(str)  # she just started saying this sentence; the bubble types it out
     thinking_signal = Signal()  # emitted right after a command is captured, before the model replies
     fondness_signal = Signal()  # fondness score changed; the hover pill re-reads it
     steps_signal = Signal(list)  # [(label, 'running'|'done'|'failed')] tool steps of the current turn
@@ -94,6 +99,15 @@ class SpeechBubble(_TopmostWindowMixin, QWidget):
         self._steps: list = []  # [(label, state)] while she works through tools
         self._sources: list[dict] = []
         self._sources_for = ""  # the reply text the sources belong to
+        # Typing: _full_text is everything known so far, _shown how much of it is visible.
+        self._shown = 0.0
+        self._spoken_words = None  # words she has started saying (None: not synced to her voice)
+        self._awaiting_voice_since = None  # reply is in, her voice isn't yet: hold the text back
+        self._last_rendered = None
+        self._type_clock = 0.0
+        self._type_timer = QTimer(self)
+        self._type_timer.setInterval(16)
+        self._type_timer.timeout.connect(self._on_type_tick)
 
         self.label = QLabel("", self)
         self.label.setWordWrap(True)
@@ -160,6 +174,15 @@ class SpeechBubble(_TopmostWindowMixin, QWidget):
 
     def _format_current_page(self) -> str:
         """The current page as label HTML, with source links under the last page."""
+        if self._thinking:
+            return self._thinking_html()
+        if not self._typing_done():
+            revealed = self._revealed()
+            if not revealed.strip():
+                return self._thinking_html()
+            # Mid-sentence there are no page turns by hand: show the page she's on.
+            page = self._paginate_text(revealed)[-1]
+            return html.escape(page).replace("\n", "<br>") + self._steps_html()
         if not self._pages:
             return html.escape(self._full_text).replace("\n", "<br>") + self._steps_html()
         page_html = html.escape(self._pages[self._page_index]).replace("\n", "<br>")
@@ -191,16 +214,8 @@ class SpeechBubble(_TopmostWindowMixin, QWidget):
     def show_steps(self, steps: list):
         """Show the tool steps of the current turn (from bridge.steps_signal); [] hides them."""
         self._steps = list(steps or [])
-        if self._thinking:
-            self.label.setText(self._thinking_html())
-        elif self._pages or self._full_text:
-            self.label.setText(self._format_current_page())
-        else:
-            return
-        self.label.adjustSize()
-        self._resize_to_content()
-        if self.isVisible():
-            self.reposition()
+        if self._thinking or self._full_text:
+            self._render(force=True)
 
     def _thinking_html(self) -> str:
         return "Thinking" + "." * self._thinking_dots + self._steps_html()
@@ -212,10 +227,7 @@ class SpeechBubble(_TopmostWindowMixin, QWidget):
         """Link the web pages behind the reply now showing (from bridge.sources_signal)."""
         self._sources = list(sources or [])
         self._sources_for = self._full_text
-        self.label.setText(self._format_current_page())
-        self.label.adjustSize()
-        self._resize_to_content()
-        self.reposition()
+        self._render(force=True)
 
     def next_page(self) -> bool:
         if len(self._pages) <= 1 or self._page_index >= len(self._pages) - 1:
@@ -231,11 +243,85 @@ class SpeechBubble(_TopmostWindowMixin, QWidget):
         self._render_current_page()
         return True
 
-    def _render_current_page(self):
-        self.label.setText(self._format_current_page())
+    def _render(self, force: bool = False):
+        """Show the current text; skips the relayout when nothing visible changed."""
+        markup = self._format_current_page()
+        if markup == self._last_rendered and not force:
+            return
+        self._last_rendered = markup
+        self.label.setText(markup)
         self.label.adjustSize()
         self._resize_to_content()
         self.reposition()
+
+    # -- typing in step with her voice -----------------------------------
+    _SPEAK_CPS = 16.0  # about how fast her voices talk, in characters per second
+    _READ_CPS = 90.0  # when she isn't talking: quick, but still visibly typing
+    _MAX_VOICE_WAIT = 4.0  # seconds to hold text back for a voice that may never start
+
+    def _revealed(self) -> str:
+        return self._full_text[: int(self._shown)]
+
+    def _typing_done(self) -> bool:
+        return int(self._shown) >= len(self._full_text)
+
+    def _char_index_after_words(self, words: int) -> int:
+        for count, match in enumerate(re.finditer(r"\S+", self._full_text), 1):
+            if count >= words:
+                return match.end()
+        return len(self._full_text)
+
+    def _reveal_limit(self) -> int:
+        if self._awaiting_voice_since is not None:
+            if time.monotonic() - self._awaiting_voice_since < self._MAX_VOICE_WAIT:
+                return 0
+            self._awaiting_voice_since = None
+        if self._spoken_words is None:
+            return len(self._full_text)
+        return self._char_index_after_words(self._spoken_words)
+
+    def _start_typing(self):
+        if not self._type_timer.isActive():
+            self._type_clock = time.monotonic()
+            self._type_timer.start()
+
+    def _on_type_tick(self):
+        now = time.monotonic()
+        elapsed, self._type_clock = now - self._type_clock, now
+        rate = self._SPEAK_CPS if (self._talking or self._spoken_words is not None) else self._READ_CPS
+        self._shown = min(max(self._shown, 0.0) + rate * elapsed, float(max(self._reveal_limit(), int(self._shown))))
+        if self._typing_done():
+            self._finish_typing()
+        else:
+            self._render()
+
+    def finish_typing(self):
+        """Show the whole reply now (she finished talking, or was cut off)."""
+        self._awaiting_voice_since = None
+        self._shown = float(len(self._full_text))
+        self._finish_typing()
+
+    def _finish_typing(self):
+        self._type_timer.stop()
+        self._pages = self._paginate_text(self._full_text)
+        self._page_index = max(0, len(self._pages) - 1)
+        self._render()
+        if not self._talking and self.isVisible() and not self._hide_on_fade_finished:
+            seconds = max(1, int(self.settings.get("bubble_seconds", 7)))
+            self._hide_timer.start(seconds * 1000)
+
+    def on_chunk_spoken(self, text: str):
+        """She just started saying `text` (a sentence of the reply): type it out as she says it."""
+        if self._spoken_words is not None:
+            # Everything before this sentence has been said by now, so it's all on screen.
+            self._shown = max(self._shown, float(self._char_index_after_words(self._spoken_words)))
+        self._awaiting_voice_since = None
+        self._spoken_words = (self._spoken_words or 0) + len((text or "").split())
+        if self._full_text:
+            self._start_typing()
+
+    def _render_current_page(self):
+        self._render(force=True)
         try:
             import voice_dsp
             voice_dsp.play_typing_blip()
@@ -294,56 +380,75 @@ class SpeechBubble(_TopmostWindowMixin, QWidget):
     def _show_thinking_impl(self):
         self._hide_timer.stop()
         self._safety_timer.stop()
-        self._show_group.stop()
+        self._type_timer.stop()
         self._thinking = True
         self._thinking_dots = 0
         self._steps = []
+        self._full_text = ""
+        self._pages = []
+        self._shown = 0.0
+        self._spoken_words = None
+        self._awaiting_voice_since = None
 
         t = _theme(self.settings)
         self.label.setStyleSheet(f"QLabel {{ background: transparent; color: {t['bubble_text']}; }}")
-        self.label.setText("Thinking")
-        self.label.adjustSize()
-        self._resize_to_content()
+        self._fit_label_width("Thinking...")
+        self._render(force=True)
+        self._appear()
+
+        # Dots tick until her words start; long safety net if upstream hangs.
+        self._thinking_timer.start(450)
+        seconds = max(1, int(self.settings.get("bubble_seconds", 7)))
+        self._safety_timer.start(max(20, seconds * 6) * 1000)
+
+    def _on_thinking_tick(self):
+        self._thinking_dots = (self._thinking_dots + 1) % 4
+        if self._thinking or (self._full_text and not self._revealed().strip()):
+            self._render()
+        elif not self._full_text or self._revealed().strip():
+            self._thinking_timer.stop()
+
+    def _appear(self):
+        """Fade and slide in, unless she's already showing (then the text just changes)."""
+        if self.isVisible() and not self._hide_on_fade_finished:
+            return
         target_pos = self._compute_position()
-
         start_offset = -14 if self._tail_on_top else 14
-        self.move(target_pos.x(), target_pos.y() + start_offset)
-        self.setWindowOpacity(0.0)
-        self.show()
-        self.raise_()
-
+        self._show_group.stop()
         self._opacity_anim.stop()
+        # _opacity_anim is also used for fade-out; drop hide-on-finished before fade-in or this completion would hide immediately.
         self._clear_fade_hide_callback()
-        self._opacity_anim.setDuration(220)
-        self._opacity_anim.setStartValue(0.0)
+        start_opacity = self.windowOpacity() if self.isVisible() else 0.0
+        if not self.isVisible():
+            self.move(target_pos.x(), target_pos.y() + start_offset)
+            self.setWindowOpacity(0.0)
+            self.show()
+        self.raise_()
+        self._opacity_anim.setDuration(motion.NORMAL_MS)
+        self._opacity_anim.setStartValue(start_opacity)
         self._opacity_anim.setEndValue(1.0)
         self._opacity_anim.setEasingCurve(QEasingCurve.OutCubic)
-
-        self._pos_anim.stop()
-        self._pos_anim.setDuration(220)
-        self._pos_anim.setStartValue(QPoint(target_pos.x(), target_pos.y() + start_offset))
+        self._pos_anim.setDuration(motion.NORMAL_MS)
+        self._pos_anim.setStartValue(self.pos())
         self._pos_anim.setEndValue(target_pos)
         self._pos_anim.setEasingCurve(QEasingCurve.OutCubic)
         self._show_group.start()
+        self._blip()
+
+    @staticmethod
+    def _blip():
         try:
             import voice_dsp
             voice_dsp.play_typing_blip()
         except Exception:
             pass
 
-        # Stay until show_message clears _thinking; long safety net if upstream hangs.
-        self._thinking_timer.start(450)
-        seconds = max(1, int(self.settings.get("bubble_seconds", 7)))
-        self._safety_timer.start(max(20, seconds * 6) * 1000)
-
-    def _on_thinking_tick(self):
-        if not self._thinking:
-            self._thinking_timer.stop()
-            return
-        self._thinking_dots = (self._thinking_dots + 1) % 4
-        self.label.setText(self._thinking_html())
-        self.label.adjustSize()
-        self._resize_to_content()
+    def _fit_label_width(self, text: str):
+        """Fix the width to the longest line of the text so far: while she types, the
+        bubble only grows downward instead of wobbling sideways with every letter."""
+        metrics = QFontMetrics(self.label.font())
+        widest = max((metrics.horizontalAdvance(line) for line in (text or " ").splitlines()), default=0)
+        self.label.setFixedWidth(max(60, min(260, widest + 4)))
 
     def show_message(self, text: str):
         try:
@@ -363,82 +468,73 @@ class SpeechBubble(_TopmostWindowMixin, QWidget):
         text = (text or "").strip()
         if not text:
             return
+        was_thinking = self._thinking
+        fresh = not self.isVisible() or self._hide_on_fade_finished
         self._thinking = False
-        self._thinking_timer.stop()
         self._hide_timer.stop()
         self._safety_timer.stop()
-        self._show_group.stop()
 
-        self._full_text = text
-        self._pages = self._paginate_text(text)
-        self._page_index = 0
+        if text != self._full_text:
+            # A streamed reply grows: keep what's typed. A different message starts over.
+            kept = len(os.path.commonprefix([self._revealed(), text]))
+            if kept == 0 and self._full_text and not was_thinking:
+                self._spoken_words = None
+            self._shown = 0.0 if fresh else float(min(int(self._shown), kept))
+            self._full_text = text
+            self._pages = []
+            self._page_index = 0
+            if fresh:
+                self._spoken_words = None
+            if was_thinking or fresh or kept == 0:
+                self._blip()
 
         t = _theme(self.settings)
         self.label.setStyleSheet(f"QLabel {{ background: transparent; color: {t['bubble_text']}; }}")
-
-        self.label.setText(self._format_current_page())
-        self.label.adjustSize()
-        self._resize_to_content()
-        target_pos = self._compute_position()
-
-        start_offset = -14 if self._tail_on_top else 14
-        self.move(target_pos.x(), target_pos.y() + start_offset)
-        self.setWindowOpacity(0.0)
-        self.show()
-        self.raise_()
-
-        self._opacity_anim.stop()
-        # _opacity_anim is also used for fade-out; drop hide-on-finished before fade-in or this completion would hide immediately.
-        self._clear_fade_hide_callback()
-        self._opacity_anim.setDuration(220)
-        self._opacity_anim.setStartValue(0.0)
-        self._opacity_anim.setEndValue(1.0)
-        self._opacity_anim.setEasingCurve(QEasingCurve.OutCubic)
-
-        self._pos_anim.stop()
-        self._pos_anim.setDuration(220)
-        self._pos_anim.setStartValue(QPoint(target_pos.x(), target_pos.y() + start_offset))
-        self._pos_anim.setEndValue(target_pos)
-        self._pos_anim.setEasingCurve(QEasingCurve.OutCubic)
-        self._show_group.start()
-        try:
-            import voice_dsp
-            voice_dsp.play_typing_blip()
-        except Exception:
-            pass
+        self._fit_label_width(text)
+        self._appear()
+        self._render(force=True)
+        if self._typing_done():
+            self._finish_typing()
+        else:
+            self._start_typing()
+            if not self._revealed().strip() and not self._thinking_timer.isActive():
+                self._thinking_timer.start(450)
 
         # Hide by ~4x linger even if talk_end never fires.
         seconds = max(1, int(self.settings.get("bubble_seconds", 7)))
         self._safety_timer.start(max(8, seconds * 4) * 1000)
 
-        # Not mid-talk (SPEAK_RESPONSES off / shown outside speak()): timed hide so it doesn't linger forever.
-        if not self._talking:
-            self._hide_timer.start(seconds * 1000)
-
     def on_talk_start(self):
-        """Keep the bubble up for the duration of speech."""
+        """Keep the bubble up for the duration of speech; her words start now."""
         self._talking = True
+        self._awaiting_voice_since = None
         self._hide_timer.stop()
         self._safety_timer.stop()
+        if self._full_text and not self._typing_done():
+            self._start_typing()
 
     def on_reply_pending(self):
-        """Keep a newly shown reply visible while TTS is being prepared."""
+        """A reply is coming and will be spoken: hold its text until her voice starts."""
         self._talking = True
+        if getattr(config, "SPEAK_RESPONSES", True):
+            self._awaiting_voice_since = time.monotonic()
         self._hide_timer.stop()
         self._safety_timer.stop()
 
     def on_talk_end(self):
-        """Start linger → fade, timed from actual talk_end (not from when text first appeared)."""
+        """Show the rest, then linger → fade, timed from actual talk_end."""
         self._talking = False
+        self.finish_typing()
         seconds = max(1, int(self.settings.get("bubble_seconds", 7)))
         self._hide_timer.start(seconds * 1000)
 
     def _fade_out(self):
         if not self.isVisible():
             return
+        self._type_timer.stop()
         self._show_group.stop()
         self._opacity_anim.stop()
-        self._opacity_anim.setDuration(320)
+        self._opacity_anim.setDuration(motion.SLOW_MS)
         self._opacity_anim.setStartValue(self.windowOpacity())
         self._opacity_anim.setEndValue(0.0)
         self._opacity_anim.setEasingCurve(QEasingCurve.InCubic)
@@ -620,9 +716,9 @@ class ChatInputBar(_TopmostWindowMixin, QWidget):
         """Show/hide per settings['chatbox_enabled']."""
         if self.settings.get("chatbox_enabled", True):
             self.reposition()
-            self.show()
+            motion.fade_in(self)
         else:
-            self.hide()
+            motion.fade_out(self)
 
     def reposition(self):
         """Re-anchor to companion: chatbox_position is bottom/left/right. Clamp to screen; do not flip sides."""
@@ -677,8 +773,10 @@ class HoverPill(_TopmostWindowMixin, QWidget):
         self.type_btn = QPushButton("TYPE", self)
         self.quiet_btn = QPushButton("QUIET", self)
         self.ride_btn = QPushButton("RIDE", self)
+        self.chat_btn = QPushButton("CHAT", self)
+        self.chat_btn.setToolTip("Chat history")
 
-        for btn in (self.type_btn, self.quiet_btn, self.ride_btn):
+        for btn in (self.type_btn, self.chat_btn, self.quiet_btn, self.ride_btn):
             btn.setCursor(Qt.PointingHandCursor)
             btn.setFixedHeight(22)
             layout.addWidget(btn)
@@ -686,8 +784,9 @@ class HoverPill(_TopmostWindowMixin, QWidget):
         self.type_btn.clicked.connect(self._on_type_clicked)
         self.quiet_btn.clicked.connect(self._on_quiet_clicked)
         self.ride_btn.clicked.connect(self._on_ride_clicked)
+        self.chat_btn.clicked.connect(self._on_chat_clicked)
 
-        self.resize(214, 30)
+        self.resize(262, 30)
         self.refresh_state()
         self.hide()
 
@@ -697,6 +796,10 @@ class HoverPill(_TopmostWindowMixin, QWidget):
             self.companion.chatbar.raise_()
             self.companion.chatbar.activateWindow()
             self.companion.chatbar.edit.setFocus()
+
+    def _on_chat_clicked(self):
+        from .chat_history import open_for
+        open_for(self.companion)
 
     def _on_quiet_clicked(self):
         config.QUIET_MODE = not bool(getattr(config, "QUIET_MODE", False))
@@ -774,10 +877,19 @@ class HoverPill(_TopmostWindowMixin, QWidget):
             )
 
     def reposition(self):
+        # Over her lower edge: the space above her belongs to the speech bubble.
         cw = self.companion
         x = cw.x() + cw.width() // 2 - self.width() // 2
-        y = cw.y() - self.height() - 4
+        y = cw.y() + cw.height() - self.height() - 10
         self.move(x, max(0, y))
+
+    def enterEvent(self, event):
+        super().enterEvent(event)
+        self.companion.keep_hover_pill()
+
+    def leaveEvent(self, event):
+        super().leaveEvent(event)
+        self.companion.release_hover_pill()
 
 
 class MiniPlayerWidget(_TopmostWindowMixin, QWidget):
@@ -879,9 +991,9 @@ class MiniPlayerWidget(_TopmostWindowMixin, QWidget):
     def apply_enabled(self):
         if self.settings.get("mini_player_enabled", False):
             self.reposition()
-            self.show()
+            motion.fade_in(self)
         else:
-            self.hide()
+            motion.fade_out(self)
 
     def reposition(self):
         cw = self.companion
@@ -1117,6 +1229,38 @@ class CompanionWindow(
             self.call_panel.reposition()
         if self.game_hud and self.game_hud.isVisible():
             self.game_hud.reposition()
+
+    # -- hover pill: quick actions + her fondness heart while the mouse is on her --
+    def enterEvent(self, event):
+        super().enterEvent(event)
+        self.keep_hover_pill()
+
+    def leaveEvent(self, event):
+        super().leaveEvent(event)
+        self.release_hover_pill()
+
+    def keep_hover_pill(self):
+        pill = self.hover_pill
+        if pill is None or not self.settings.get("hover_pill_enabled", True) or self._dragging:
+            return
+        timer = getattr(self, "_pill_hide_timer", None)
+        if timer is not None:
+            timer.stop()
+        if not pill.isVisible() or getattr(pill, "_motion_hides", False):
+            pill.refresh_state()
+            pill.reposition()
+        motion.fade_in(pill, motion.FAST_MS)
+
+    def release_hover_pill(self):
+        """Hide the pill shortly after the mouse leaves (long enough to reach the pill itself)."""
+        if self.hover_pill is None:
+            return
+        timer = getattr(self, "_pill_hide_timer", None)
+        if timer is None:
+            timer = self._pill_hide_timer = QTimer(self)
+            timer.setSingleShot(True)
+            timer.timeout.connect(lambda: motion.fade_out(self.hover_pill, motion.FAST_MS))
+        timer.start(600)
 
     def start_cursor_ride(self) -> str:
         """Attach the companion to ride alongside the mouse cursor."""

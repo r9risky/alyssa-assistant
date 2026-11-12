@@ -291,13 +291,6 @@ class AudioTabMixin:
         self.call_auto_join_check.toggled.connect(self._queue_assistant_apply)
         self._add_row(call_form, "Auto-join calls:", self.call_auto_join_check)
 
-        self.call_barge_in_spin = QDoubleSpinBox()
-        self.call_barge_in_spin.setRange(0.2, 5.0)
-        self.call_barge_in_spin.setSingleStep(0.1)
-        self.call_barge_in_spin.setSuffix(" s")
-        self.call_barge_in_spin.setValue(float(getattr(config, "CALL_BARGE_IN_TOLERANCE_SECONDS", 1.0)))
-        self.call_barge_in_spin.valueChanged.connect(self._queue_assistant_apply)
-        self._add_row(call_form, "Barge-in tolerance:", self.call_barge_in_spin)
         outer.addWidget(call_card)
 
         hotkey_card, hotkey_form = self._create_card(

@@ -196,6 +196,9 @@ TOOLS = [
     },
 ]
 
+# Their result is already the whole reply: no second model call to rephrase it.
+INSTANT_REPLY_TOOLS = {"start_timer", "cancel_timer", "start_stopwatch", "stop_stopwatch"}
+
 FUNCTIONS = {
     "start_timer": start_timer,
     "list_timers": list_timers,
