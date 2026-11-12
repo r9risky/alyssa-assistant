@@ -391,7 +391,7 @@ class AssistantTabMixin:
             "☀️",
         )
         self.briefing_enabled_check = QCheckBox("Give me a briefing every day")
-        self.briefing_enabled_check.setChecked(bool(getattr(config, "BRIEFING_ENABLED", True)))
+        self.briefing_enabled_check.setChecked(bool(getattr(config, "BRIEFING_ENABLED", False)))
         self.briefing_enabled_check.toggled.connect(self._queue_assistant_apply)
         self._add_row(brief_form, "Daily briefing:", self.briefing_enabled_check)
 

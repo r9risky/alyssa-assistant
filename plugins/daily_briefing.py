@@ -108,7 +108,7 @@ def _save_briefing_date(day: datetime.date) -> None:
 
 def check_watch(now: datetime.datetime | None = None):
     """The day's briefing once, between BRIEFING_TIME and LATE_WINDOW_HOURS after it."""
-    if not getattr(config, "BRIEFING_ENABLED", True):
+    if not getattr(config, "BRIEFING_ENABLED", False):
         return None
     now = now or datetime.datetime.now()
     due = datetime.datetime.combine(now.date(), _briefing_time())
