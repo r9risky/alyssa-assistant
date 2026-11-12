@@ -1,7 +1,7 @@
 import os
 import threading
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QTime
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -13,6 +13,7 @@ from PySide6.QtWidgets import (
     QPushButton,
     QSlider,
     QSpinBox,
+    QTimeEdit,
     QVBoxLayout,
     QWidget,
     QSizePolicy,
@@ -383,6 +384,30 @@ class AssistantTabMixin:
         self.system_watch_interval_spin.valueChanged.connect(self._queue_assistant_apply)
         self._add_row(watch_form, "Check every:", self.system_watch_interval_spin)
         outer.addWidget(watch_card)
+
+        brief_card, brief_form = self._create_card(
+            "Daily Briefing",
+            "Once a day she sums up the weather, your calendar, due reminders and news.",
+            "☀️",
+        )
+        self.briefing_enabled_check = QCheckBox("Give me a briefing every day")
+        self.briefing_enabled_check.setChecked(bool(getattr(config, "BRIEFING_ENABLED", True)))
+        self.briefing_enabled_check.toggled.connect(self._queue_assistant_apply)
+        self._add_row(brief_form, "Daily briefing:", self.briefing_enabled_check)
+
+        self.briefing_time_edit = QTimeEdit()
+        self.briefing_time_edit.setDisplayFormat("h:mm AP")
+        self.briefing_time_edit.setTime(
+            QTime.fromString(str(getattr(config, "BRIEFING_TIME", "08:00")), "HH:mm")
+        )
+        self.briefing_time_edit.timeChanged.connect(self._queue_assistant_apply)
+        self._add_row(brief_form, "At:", self.briefing_time_edit)
+
+        self.briefing_topics_edit = QLineEdit(str(getattr(config, "BRIEFING_NEWS_TOPICS", "") or ""))
+        self.briefing_topics_edit.setPlaceholderText("e.g. world news, AI, Lakers")
+        self.briefing_topics_edit.editingFinished.connect(self._queue_assistant_apply)
+        self._add_row(brief_form, "News topics:", self.briefing_topics_edit)
+        outer.addWidget(brief_card)
         outer.addStretch(1)
 
         self._update_provider_rows_visibility()
@@ -801,6 +826,9 @@ class AssistantTabMixin:
             "HIDE_CONSOLE_WINDOW": not self.show_console_check.isChecked(),
             "SYSTEM_WATCH_ENABLED": self.system_watch_enabled_check.isChecked(),
             "SYSTEM_WATCH_INTERVAL_SECONDS": self.system_watch_interval_spin.value(),
+            "BRIEFING_ENABLED": self.briefing_enabled_check.isChecked(),
+            "BRIEFING_TIME": self.briefing_time_edit.time().toString("HH:mm"),
+            "BRIEFING_NEWS_TOPICS": self.briefing_topics_edit.text().strip(),
             "WHISPER_MODEL_SIZE": self.whisper_model_combo.currentText().strip() or config.WHISPER_MODEL_SIZE,
             "WHISPER_DEVICE": self._whisper_device_display_to_value.get(self.whisper_device_combo.currentText(), "auto"),
             "WHISPER_COMPUTE_TYPE": self.whisper_compute_combo.currentText().strip() or "auto",
