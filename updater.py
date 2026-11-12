@@ -51,6 +51,7 @@ PRESERVED_FILES = {
     "phone_remote.json",
     "plugin_approvals.json",
     "reminders.json",
+    "routines.json",
     "settings.json",
     "token.json",
 }
