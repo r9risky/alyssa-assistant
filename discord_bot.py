@@ -20,6 +20,8 @@ name (see call_ears.handle_friend_line), so listening costs no tokens.
 from __future__ import annotations
 
 import asyncio
+import logging
+import sys
 import threading
 import time
 
@@ -91,17 +93,17 @@ if discord is not None:
 
         def __init__(self):
             self._underruns = 0
+            self.frames = 0  # frames with her voice, for the log line when playback ends
+            self.peak = 0
 
         def read(self) -> bytes:
             with _audio_lock:
-                if len(_audio) >= FRAME_BYTES:
-                    frame = bytes(_audio[:FRAME_BYTES])
+                if _audio:
+                    frame = bytes(_audio[:FRAME_BYTES]).ljust(FRAME_BYTES, b"\0")
                     del _audio[:FRAME_BYTES]
                     self._underruns = 0
-                    return frame
-                if _audio:
-                    frame = bytes(_audio).ljust(FRAME_BYTES, b"\0")
-                    _audio.clear()
+                    self.frames += 1
+                    self.peak = max(self.peak, int(np.abs(np.frombuffer(frame, np.int16)).max()))
                     return frame
             self._underruns += 1
             return b"\0" * FRAME_BYTES if self._underruns <= _MAX_UNDERRUN_FRAMES else b""
@@ -145,7 +147,27 @@ async def _ensure_playing():
     if vc is None:
         raise RuntimeError("not in a voice channel")
     if not vc.is_playing():
-        vc.play(_QueueSource())
+        source = _QueueSource()
+
+        def after(error):
+            # One line per stretch of speech, so the log shows whether audio really went out.
+            print(f"[discord] Sent {source.frames * 20} ms of voice to the channel "
+                  f"(peak {source.peak}/32767, voice encryption: {_dave_state(vc)})"
+                  + (f"; playback error: {type(error).__name__}: {error}" if error else ""))
+
+        vc.play(source, after=after)
+
+
+def _dave_state(vc) -> str:
+    conn = getattr(vc, "_connection", None)
+    version = getattr(conn, "dave_protocol_version", "?")
+    try:
+        from discord import voice_state
+        lib = "davey loaded" if voice_state.has_dave else "davey MISSING"
+    except Exception:
+        lib = "davey unknown"
+    ready = "ready" if getattr(conn, "can_encrypt", False) else "not ready"
+    return f"DAVE v{version}, {ready}, {lib}"
 
 
 def busy() -> bool:
@@ -207,6 +229,7 @@ def start() -> str | None:
     with _lock:
         if _thread is not None and _thread.is_alive():
             return None
+        _log_discord_warnings()
         intents = discord.Intents.none()
         intents.guilds = True
         intents.voice_states = True  # to find the voice channel you're in
@@ -239,6 +262,16 @@ def start() -> str | None:
         _thread = threading.Thread(target=run, daemon=True, name="discord-bot")
         _thread.start()
     return None
+
+
+def _log_discord_warnings() -> None:
+    """Send discord.py's own warnings and errors (voice handshake, encryption) to Alyssa's log."""
+    log = logging.getLogger("discord")
+    if not log.handlers:
+        handler = logging.StreamHandler(sys.stdout)
+        handler.setFormatter(logging.Formatter("[discord] %(levelname)s %(name)s: %(message)s"))
+        log.addHandler(handler)
+        log.setLevel(logging.WARNING)
 
 
 def stop() -> None:
@@ -304,6 +337,7 @@ async def _join(server: str, channel: str) -> str:
         cls = voice_recv.VoiceRecvClient if voice_recv is not None else discord.VoiceClient
         vc = await target.connect(cls=cls)  # never self-deafen: friends think she can't hear them
     _cant_speak = ""
+    print(f"[discord] Joined #{target.name} (voice encryption: {_dave_state(vc)}).")
     _start_listening(vc)
     return f"I'm in #{target.name} on {target.guild.name}."
 
