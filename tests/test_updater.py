@@ -201,7 +201,9 @@ class UpdaterTests(unittest.TestCase):
 
     def test_apply_release_rolls_back_an_earlier_change_on_failure(self):
         with tempfile.TemporaryDirectory() as temporary:
-            root = Path(temporary)
+            # resolve(): Windows temp dirs can be 8.3 short names (RUNNER~1), but
+            # the updater resolves install_root, so staged paths use the long name.
+            root = Path(temporary).resolve()
             install = root / "install"
             release = root / "release"
             install.mkdir()

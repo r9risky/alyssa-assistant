@@ -16,6 +16,8 @@ jobs:
     timeout-minutes: 30
     env:
       QT_QPA_PLATFORM: offscreen
+      # CI runners have no sound card; SDL's dummy driver lets pygame decode audio.
+      SDL_AUDIODRIVER: dummy
 
     steps:
       - name: Check out repository

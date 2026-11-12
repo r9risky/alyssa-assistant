@@ -33,6 +33,7 @@ jobs:
       - name: Run tests
         env:
           QT_QPA_PLATFORM: offscreen
+          SDL_AUDIODRIVER: dummy
         run: python -m pytest -q
 
       - name: Run build script
