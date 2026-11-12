@@ -133,8 +133,10 @@ def reinit_mixer():
 
 
 def _smooth_speech_text(text: str) -> str:
-    """Normalizes whitespace for TTS input."""
-    return " ".join((text or "").split())
+    """Normalizes whitespace for TTS input. Ellipses become a plain period:
+    neural voices hold a long trailing pause on "..." (e.g. "Opening chrome...")."""
+    text = re.sub(r"\.{3,}|\u2026", ".", text or "")
+    return " ".join(text.split())
 
 
 # Words that commonly precede a period without ending a sentence.
@@ -174,6 +176,24 @@ def _split_sentences(text: str) -> list:
     return sentences
 
 
+def _group_sentences(sentences: list, max_chars: int = 220) -> list:
+    """First sentence alone (fast first audio), the rest merged into longer chunks:
+    every chunk seam restarts the voice and adds an audible gap."""
+    if len(sentences) <= 2:
+        return sentences
+    groups = [sentences[0]]
+    current = ""
+    for sentence in sentences[1:]:
+        if current and len(current) + 1 + len(sentence) > max_chars:
+            groups.append(current)
+            current = sentence
+        else:
+            current = f"{current} {sentence}" if current else sentence
+    if current:
+        groups.append(current)
+    return groups
+
+
 def _volume_str_to_gain(volume_str: str) -> float:
     """config.EDGE_TTS_VOLUME ('+0%', '-20%', ...) → pygame mixer gain 0.0–1.0.
 
@@ -192,6 +212,7 @@ class StreamingSpeaker:
     """Turns LLM deltas into clause-sized TTS work while generation continues."""
 
     _BOUNDARY_RE = re.compile(r"(?<=[.!?])\s+|(?<=[,;:])\s+")
+    _SENTENCE_RE = re.compile(r"(?<=[.!?])\s+")
 
     def __init__(
         self,
@@ -209,6 +230,12 @@ class StreamingSpeaker:
         self._audio_done = threading.Event()
         self._audio_error = None
         self._playback_started = False
+        self._chunks_emitted = 0
+        self._realtime = (
+            getattr(config, "TTS_STREAMING_ENABLED", True)
+            and getattr(config, "TTS_PROVIDER", "edge") == "elevenlabs"
+            and websocket_connect is not None
+        )
         self._worker = threading.Thread(target=self._run, daemon=True)
         self._worker.start()
 
@@ -223,7 +250,15 @@ class StreamingSpeaker:
         self._pending += delta
         minimum = max(1, int(getattr(config, "TTS_CLAUSE_MIN_CHARACTERS", 28)))
         while True:
-            match = self._BOUNDARY_RE.search(self._pending)
+            # File-based TTS (Edge) restarts the voice at every chunk, so only the
+            # first chunk may end at a comma (fast first audio); later ones end at
+            # sentences. The realtime socket keeps prosody across chunks itself.
+            boundary_re = (
+                self._BOUNDARY_RE
+                if self._realtime or self._chunks_emitted == 0
+                else self._SENTENCE_RE
+            )
+            match = boundary_re.search(self._pending)
             if match is None:
                 break
             end = match.end()
@@ -231,7 +266,7 @@ class StreamingSpeaker:
             # Sentence punctuation flushes immediately. Soft clause punctuation
             # waits for TTS_CLAUSE_MIN_CHARACTERS; a later .!? still ends the chunk.
             while not hard_boundary and end < minimum:
-                next_match = self._BOUNDARY_RE.search(self._pending, end)
+                next_match = boundary_re.search(self._pending, end)
                 if next_match is None:
                     end = None
                     break
@@ -242,6 +277,7 @@ class StreamingSpeaker:
             chunk, self._pending = self._pending[:end], self._pending[end:]
             chunk = _smooth_speech_text(chunk)
             if chunk:
+                self._chunks_emitted += 1
                 self._chunks.put(chunk)
 
     def finish(self):
@@ -264,13 +300,8 @@ class StreamingSpeaker:
             self.on_playback_start()
 
     def _run(self):
-        realtime = (
-            getattr(config, "TTS_STREAMING_ENABLED", True)
-            and getattr(config, "TTS_PROVIDER", "edge") == "elevenlabs"
-            and websocket_connect is not None
-        )
         try:
-            if realtime:
+            if self._realtime:
                 self._run_eleven_realtime()
             else:
                 self._run_file_pipeline()
@@ -279,18 +310,62 @@ class StreamingSpeaker:
                 self.on_playback_end()
 
     def _run_file_pipeline(self):
-        while not self.interrupted:
-            chunk = self._chunks.get()
-            if chunk is None:
-                return
-            interrupted = _speak_one(
-                chunk,
-                self._start_playback,
-                stop_event=self.stop_event,
-            )
-            if interrupted:
-                self.stop_event.set()
-                return
+        """Synthesize the next chunk while the current one plays (no network
+        round trip between chunks), merging any text that queued up meanwhile."""
+        ready = queue.Queue(maxsize=1)  # one synthesized chunk of lookahead
+        synth_thread = threading.Thread(target=self._synthesize_ahead, args=(ready,), daemon=True)
+        synth_thread.start()
+        try:
+            while not self.interrupted:
+                try:
+                    path = ready.get(timeout=0.05)
+                except queue.Empty:
+                    continue
+                if path is None:
+                    return
+                try:
+                    self._start_playback()
+                    if not _play(path, self.stop_event):
+                        self.stop_event.set()
+                except Exception as e:
+                    print(f"(voice playback failed, continuing silently: {e})")
+                finally:
+                    _remove_quietly(path)
+        finally:
+            # On interrupt, return now; a daemon drains the in-flight synthesis and its temp files.
+            threading.Thread(target=self._drain_ready, args=(ready, synth_thread), daemon=True).start()
+
+    def _synthesize_ahead(self, ready):
+        try:
+            done = False
+            while not done and not self.interrupted:
+                chunk = self._chunks.get()
+                if chunk is None:
+                    return
+                parts = [chunk]
+                while True:
+                    try:
+                        extra = self._chunks.get_nowait()
+                    except queue.Empty:
+                        break
+                    if extra is None:
+                        done = True
+                        break
+                    parts.append(extra)
+                try:
+                    ready.put(_synthesize_to_temp_file(" ".join(parts)))
+                except Exception as e:
+                    print(f"(voice synthesis failed for one chunk, skipping: {e})")
+        finally:
+            ready.put(None)
+
+    @staticmethod
+    def _drain_ready(ready, synth_thread):
+        while synth_thread.is_alive() or not ready.empty():
+            try:
+                _remove_quietly(ready.get(timeout=0.1))
+            except queue.Empty:
+                pass
 
     def _run_eleven_realtime(self):
         playback = threading.Thread(target=self._play_pcm, daemon=True)
@@ -431,6 +506,14 @@ class StreamingSpeaker:
                 finally:
                     vmic_stream.close()
             self._audio_done.set()
+
+
+def _remove_quietly(path):
+    if path:
+        try:
+            os.remove(path)
+        except OSError:
+            pass
 
 
 def warm_up():
@@ -792,7 +875,7 @@ def speak(text: str, on_playback_start=None, on_playback_end=None, stop_event=No
             on_playback_start()
 
     if getattr(config, "TTS_PIPELINE_SENTENCES", True):
-        sentences = _split_sentences(text)
+        sentences = _group_sentences(_split_sentences(text))
     else:
         sentences = [text]
 

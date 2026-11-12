@@ -1123,6 +1123,16 @@ def handle_command(
     already_delivered_partial = False
     retried_lazy_turn = False
     untrusted_web_content_seen = False
+    announce_once = None
+    if on_partial_reply is not None:
+        # One "Opening X..." per command: a multi-tool request otherwise
+        # speaks a choppy string of progress lines before the actual result.
+        announced = []
+
+        def announce_once(text):
+            if not announced:
+                announced.append(text)
+                on_partial_reply(text)
 
     for _ in range(6):  # safety cap so a confused model cannot loop forever
         has_tool_result = any(message.get("role") == "tool" for message in messages)
@@ -1188,7 +1198,7 @@ def handle_command(
                 name,
                 arguments,
                 untrusted_web_content_seen=untrusted_web_content_seen,
-                on_partial_reply=on_partial_reply,
+                on_partial_reply=announce_once,
             )
             opened_app_this_round |= opened_app
             used_web_content_this_round |= used_web_content
