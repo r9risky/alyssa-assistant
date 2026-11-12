@@ -82,7 +82,6 @@ CALL_APP = 'Auto'  # "Auto", "Discord", "Zoom", "Teams", "WhatsApp", "Steam", "B
 CALL_VIRTUAL_MIC_DEVICE = 'CABLE Input'  # Output device sending Alyssa's voice into Discord/Zoom
 CALL_VIRTUAL_MIC_VOLUME = 1.0  # 0.0 to 1.0 loudness of Alyssa in the call
 CALL_FRIENDS_CAN_ASK = True  # Friends can request games/songs, requiring your confirmation
-CALL_BARGE_IN_TOLERANCE_SECONDS = 1.0  # Yields only if someone speaks over her for >1.0s
 CALL_AUTO_JOIN_ENABLED = True  # Automatically click Join Voice / Join Meeting
 # Discord bot: she joins voice channels as her own bot account (token lives in the OS keyring)
 DISCORD_BOT_ENABLED = False
@@ -364,7 +363,6 @@ class AudioSettings(_SettingsView):
     CALL_VIRTUAL_MIC_DEVICE: str
     CALL_VIRTUAL_MIC_VOLUME: float
     CALL_FRIENDS_CAN_ASK: bool
-    CALL_BARGE_IN_TOLERANCE_SECONDS: float
     CALL_AUTO_JOIN_ENABLED: bool
     DISCORD_BOT_ENABLED: bool
     DISCORD_OWNER_ID: str

@@ -962,7 +962,6 @@ class AssistantTabMixin:
             "CALL_VIRTUAL_MIC_VOLUME": round(self.call_virtual_mic_volume_slider.value() / 100.0, 2) if hasattr(self, "call_virtual_mic_volume_slider") else 0.85,
             "CALL_FRIENDS_CAN_ASK": getattr(self, "call_friends_can_ask_check", None) is not None and self.call_friends_can_ask_check.isChecked(),
             "CALL_AUTO_JOIN_ENABLED": getattr(self, "call_auto_join_check", None) is not None and self.call_auto_join_check.isChecked(),
-            "CALL_BARGE_IN_TOLERANCE_SECONDS": round(float(self.call_barge_in_spin.value()), 2) if hasattr(self, "call_barge_in_spin") else 1.0,
             "VAD_ENGINE": self.vad_engine_combo.currentData() or "auto",
             "SILERO_VAD_THRESHOLD": round(self.vad_threshold_slider.value() / 100.0, 2),
             "PRE_ROLL_BUFFER_MS": int(self.pre_roll_spin.value()),
