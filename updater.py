@@ -42,6 +42,7 @@ PRESERVED_FILES = {
     "fondness.json",
     "memory.json",
     "overlay_config.json",
+    "phone_remote.json",
     "plugin_approvals.json",
     "reminders.json",
     "token.json",

@@ -192,6 +192,8 @@ SCREEN_MEMORY_RETENTION_HOURS = 3.0
 
 # Capri-inspired Proactive Screen Watching, Visual Lookout & Quiet Mode
 QUIET_MODE = False
+PHONE_REMOTE_ENABLED = False  # chat with her from your phone on the same Wi-Fi
+PHONE_REMOTE_PORT = 47900
 SCREEN_WATCH_ENABLED = False
 SCREEN_WATCH_INTERVAL_SECONDS = 120
 SCREEN_WATCH_KEEP_CAUGHT_UP = True
@@ -420,6 +422,8 @@ class UISettings(_SettingsView):
     SECURITY_PRESET: str
     SECURITY_PERMISSIONS: dict
     QUIET_MODE: bool
+    PHONE_REMOTE_ENABLED: bool
+    PHONE_REMOTE_PORT: int
     HOTKEYS_ENABLED: bool
     HOTKEY_TALK: str
     HOTKEY_MUTE: str

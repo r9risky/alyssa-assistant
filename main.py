@@ -82,6 +82,7 @@ import nameutil
 import telemetry
 import sources
 import fondness
+import phone_remote
 
 # Serializes speak() between the listen loop and the watcher thread so
 # alerts never overlap a reply. Watcher alerts wait; nothing is dropped.
@@ -111,6 +112,7 @@ def speak(text: str, bridge=None):
                 full_text=f"{config.ASSISTANT_NAME}: {text}",
             )
         )
+        phone_remote.log("alyssa", text)
         if bridge is not None:
             if config.SPEAK_RESPONSES:
                 bridge.reply_pending_signal.emit()
@@ -177,6 +179,7 @@ def _stream_command_reply(command: str, bridge=None, text_queue=None):
         listener_thread.start()
         speaker_finished = False
         sources.clear()
+        phone_remote.log("you", command)
         steps = []
 
         def on_step(label, state):
@@ -229,6 +232,7 @@ def _stream_command_reply(command: str, bridge=None, text_queue=None):
             speaker.finish()
             speaker_finished = True
             visible_reply = clean_reply or streamed_text
+            phone_remote.log("alyssa", visible_reply)
             if visible_reply:
                 print(
                     startup_logging.format_content_log(
@@ -530,6 +534,9 @@ def run_assistant_loop(bridge=None):
 
     if getattr(config, "ENABLE_BACKGROUND_WATCHER", True):
         threading.Thread(target=run_watcher_loop, args=(bridge,), daemon=True).start()
+    remote_error = phone_remote.start(bridge)
+    if remote_error:
+        print(f"[phone remote] {remote_error}")
 
     wake_mode = str(getattr(config, "WAKE_WORD_MODE", "wake_word") or "wake_word").lower()
     print(f"{config.ASSISTANT_NAME} is running (listening mode: {wake_mode}). Press Ctrl+C to quit.")
