@@ -23,18 +23,22 @@ def main() -> int:
     env = {k: v for k, v in os.environ.items() if k not in KEY_VARS}
     env.update(ALYSSA_LOG_DIR=str(log_dir), QT_QPA_PLATFORM="offscreen", PYTHONUNBUFFERED="1")
 
-    proc = subprocess.Popen(
-        [sys.executable, str(ROOT / "main.py")],
-        cwd=ROOT, env=env, stdin=subprocess.DEVNULL,
-        stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, errors="replace",
-    )
-    deadline = time.monotonic() + seconds
-    while time.monotonic() < deadline and proc.poll() is None:
-        time.sleep(1)
-    exited = proc.poll()
-    if exited is None:
-        proc.kill()
-    output = proc.communicate()[0]
+    # Output goes to a file, not a pipe: nothing reads a pipe until the end, and once
+    # Windows' small pipe buffer filled up, her next print() blocked startup for good.
+    out_path = log_dir / "stdout.txt"
+    with open(out_path, "w", encoding="utf-8") as out:
+        proc = subprocess.Popen(
+            [sys.executable, str(ROOT / "main.py")],
+            cwd=ROOT, env=env, stdin=subprocess.DEVNULL, stdout=out, stderr=subprocess.STDOUT,
+        )
+        deadline = time.monotonic() + seconds
+        while time.monotonic() < deadline and proc.poll() is None:
+            time.sleep(1)
+        exited = proc.poll()
+        if exited is None:
+            proc.kill()
+        proc.wait()
+    output = out_path.read_text(encoding="utf-8", errors="replace")
     log_file = log_dir / "alyssa.log"
     log = log_file.read_text(encoding="utf-8", errors="replace") if log_file.exists() else ""
 
