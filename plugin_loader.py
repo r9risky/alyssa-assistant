@@ -6,6 +6,7 @@ import types
 
 from config import PLUGIN_SETTINGS as config
 import plugin_permissions
+import plugin_sandbox
 
 if getattr(sys, "frozen", False):
     _base_dir = os.path.dirname(sys.executable)
@@ -48,6 +49,8 @@ _pending_approvals = []
 # Opt in with GUI_PANEL_TITLE + build_gui_panel() at module level.
 # Qt is not imported here; overlay builds the widget later (headless-safe).
 _gui_panels = []
+# Add-ons that didn't ship with Alyssa run in their own process (plugin_sandbox).
+_sandboxes = []
 # handle_intent(cleaned, text) hooks: answer fixed phrases before any model call (no tokens).
 _intent_handlers = []
 
@@ -73,11 +76,54 @@ def get_pending_approvals():
     return _pending_approvals
 
 
+def _load_sandboxed(filename, path, functions, tools):
+    """Register an add-on that runs in its own process, held to the permissions you approved."""
+    try:
+        sandbox = plugin_sandbox.SandboxedPlugin(path, plugin_permissions.declared(path))
+    except Exception as e:
+        print(f"[plugins] Skipping '{filename}' - failed to load: {e}")
+        _load_errors.append(f"'{filename}' failed to load: {e}")
+        return
+    _sandboxes.append(sandbox)
+    manifest = sandbox.manifest
+    loaded = []
+    for name in manifest["functions"]:
+        if name in functions:
+            _load_errors.append(f"'{filename}': '{name}' duplicates another plugin's tool name")
+            continue
+
+        def proxy(_name=name, **kwargs):
+            return sandbox.call(_name, **kwargs)
+
+        proxy.__name__ = name
+        proxy._alyssa_untrusted_output = name in manifest["untrusted"]
+        proxy._alyssa_instant_reply = name in manifest["instant"]
+        functions[name] = proxy
+        loaded.append(name)
+    tools.extend(t for t in manifest["tools"] if t.get("function", {}).get("name") in loaded)
+    if manifest["intent"]:
+        _intent_handlers.append(lambda cleaned, text="": sandbox.call("__intent__", cleaned, text, timeout=3))
+    if manifest["watch"]:
+        try:
+            interval = max(10, int(manifest["interval"]))
+        except (TypeError, ValueError):
+            interval = 120
+        _watchers.append({"name": filename, "func": lambda: sandbox.call("__watch__", timeout=15),
+                          "interval": interval, "always": manifest["always"]})
+    if manifest["panel"]:
+        _load_errors.append(f"'{filename}': Settings tabs only work for built-in add-ons")
+    print(f"[plugins] Loaded from {filename} (sandboxed: {', '.join(sandbox.permissions) or 'no permissions'}): "
+          f"{', '.join(loaded)}")
+
+
 def load_plugins():
     """(functions, tools) merged from every .py in plugins/.
     functions: {name: callable}; tools: tool-schema dicts.
     Skip files starting with '_' (including __init__.py) — rename to disable."""
-    global _load_errors, _watchers, _gui_panels, _pending_approvals, _intent_handlers
+    global _load_errors, _watchers, _gui_panels, _pending_approvals, _intent_handlers, _sandboxes
+    for sandbox in _sandboxes:  # a reload starts each add-on fresh
+        sandbox.close()
+    _sandboxes = []
     _intent_handlers = []
     _load_errors = []
     _watchers = []
@@ -105,6 +151,12 @@ def load_plugins():
             _pending_approvals.append({"name": filename, "permissions": pending})
             print(f"[plugins] '{filename}' is waiting for approval ({', '.join(pending)}).")
             _load_errors.append(f"'{filename}' is waiting for your approval in Settings > Plugins")
+            continue
+
+        # An add-on that lists its PERMISSIONS runs in its own process, held to them. One that
+        # doesn't was approved as "could do anything", so it runs in here (Settings tabs and all).
+        if not plugin_permissions.is_builtin(filename) and plugin_permissions.declared(path) is not None:
+            _load_sandboxed(filename, path, functions, tools)
             continue
 
         try:

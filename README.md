@@ -340,8 +340,17 @@ Say what your plugin needs with `PERMISSIONS = ["network", "files"]` (choices:
 `network`, `files`, `keyboard_mouse`, `screen`, `microphone`, `camera`, `shell`,
 `background`). A plugin that didn't come with Alyssa stays off until you approve
 it in **Settings → Plugins** (🟡 in the list), and asks again if an update wants
-more. Plugins you create or save in that editor count as approved. This is
-informed consent, not a sandbox: only approve code you trust.
+more. Plugins you create or save in that editor count as approved.
+
+A plugin that lists its `PERMISSIONS` runs in its own process and is held to
+them: no internet without `network`, no programs without `shell`, no native code
+without a device permission, and no files outside `plugins/data/<name>/` without
+`files`. It never sees Alyssa's memory, settings or API keys, and a hung or
+crashing plugin can't freeze her. A plugin with no `PERMISSIONS` list asks to do
+anything and, once approved, runs inside Alyssa like the built-in ones (that's
+also the only way to get a Settings tab). The limits stop mistakes and casual
+misuse; they aren't a guarantee against a determined attacker, so still only
+approve code you trust.
 
 **Plugin gallery:** Settings → Plugins → 🧩 Browse Gallery lists extra plugins
 (`gallery/` in this repo), shows what each needs, and installs it in one click.

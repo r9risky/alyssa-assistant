@@ -9,9 +9,9 @@ with Alyssa load as before. Any other plugin (dropped in by hand, or from the
 gallery) waits until the user approves it in Settings > Plugins, and asks again
 if a later version declares more permissions.
 
-shortcut: this is informed consent, not a sandbox - Python plugins can still do
-anything once approved. A real sandbox (separate process with OS limits) is the
-upgrade if plugins from strangers become common.
+A plugin that declares PERMISSIONS runs in its own process and is held to them
+(plugin_sandbox.py). One that declares nothing is approved as "could do anything"
+and runs inside Alyssa, as before.
 """
 import ast
 import json
