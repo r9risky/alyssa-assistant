@@ -37,6 +37,9 @@
   ```bash
   git push origin vX.Y.Z
   ```
+- If the tag push is refused (cloud sessions can't push tags), merge the version bump to `main` and give the owner a prefilled link instead, so they can publish the release in one click:
+  `https://github.com/r9risky/alyssa-assistant/releases/new?tag=vX.Y.Z&target=main&title=vX.Y.Z`
+  Publishing it from that page creates the tag, which starts the same build below.
 
 ### 5. Build Standalone Windows Executable & Publish Release
 - Pushing the tag `vX.Y.Z` automatically triggers the GitHub Actions workflow `.github/workflows/build_exe.yml` on `windows-latest`.
