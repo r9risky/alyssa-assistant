@@ -88,6 +88,7 @@ TOOL_CAPABILITY_MAP: dict[str, str] = {
     "type_text": "typing_keys",
     "press_keys": "typing_keys",
     "click_screen_element": "screen_clicking",
+    "play_game": "typing_keys",  # sends keys/clicks, but only into the game window
     "delete_file": "file_deletion",
     "clean_temp_files": "file_deletion",
     "run_command": "shell_commands",

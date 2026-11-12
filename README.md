@@ -53,6 +53,7 @@ Nanami voice. 🌸
 | 👀 **Sees your screen** | "What am I looking at?", click things by description, or `watch_for` something and get pinged when it shows up. |
 | 📞 **Joins your calls** | Discord *and Vesktop*, Zoom, Teams, WhatsApp, Steam. She asks which server and voice channel, then hops in. [More below ⬇️](#-call-mode) |
 | 🎮 **Game co‑pilot** | Spots what you're playing, remembers your keybinds, shows a floating HUD, and **"clip that!"** saves the last 30 seconds to `Videos/Alyssa/`. |
+| 🕹️ **She plays for you** | Say *"play this for me"* and she watches the game window and presses the keys herself, about one move every couple of seconds. Great for turn‑based, puzzle, card and strategy games; slow at shooters. Press **F8** or say *"stop playing"* to take back control. She refuses games with anti‑cheat (Valorant, Fortnite, CS2, Roblox, ...) so your account stays safe. |
 | 🍿 **Watch‑along** | "Watch this with me" and she'll react to videos and streams (sparingly, she has manners). |
 | ✏️ **Screen ink & mini‑games** | She can draw arrows and circles right on your screen, or play tic‑tac‑toe, Connect Four, rock paper scissors, or chess. |
 | 📝 **Remembers stuff** | Facts across sessions, reminders, timers, and sticky notes. |
@@ -225,6 +226,7 @@ Everything in `plugins/` loads at startup. Here's the gang:
 | --- | --- |
 | 📞 `call_mode` | Join and talk in Discord, Vesktop, Zoom, Teams, and more |
 | 🎮 `game_copilot` | Game detection, keybind memory, HUD, "clip that" |
+| 🕹️ `game_autoplay` | Alyssa plays the game herself (see, decide, press keys) |
 | 🍿 `watch_along` | React to videos and streams with you |
 | ✏️ `mini_games_and_ink` | Screen drawing and mini‑games |
 | 👀 `screen_lookout` | `watch_for` alerts and gentle check‑ins |

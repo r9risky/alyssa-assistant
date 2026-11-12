@@ -8,6 +8,7 @@ from collections.abc import Callable
 _describe_screen: Callable[[str], str] | None = None
 _locate_screen_element: Callable[[str], tuple[float, float] | None] | None = None
 _clear_conversation: Callable[[], None] | None = None
+_ask_vision: Callable[[bytes, str], str] | None = None
 
 
 def configure_brain_services(
@@ -15,9 +16,11 @@ def configure_brain_services(
     describe_screen: Callable[[str], str],
     locate_screen_element: Callable[[str], tuple[float, float] | None],
     clear_conversation: Callable[[], None],
+    ask_vision: Callable[[bytes, str], str] | None = None,
 ) -> None:
     """Bind brain-owned services once the application has been composed."""
-    global _describe_screen, _locate_screen_element, _clear_conversation
+    global _describe_screen, _locate_screen_element, _clear_conversation, _ask_vision
+    _ask_vision = ask_vision
     _describe_screen = describe_screen
     _locate_screen_element = locate_screen_element
     _clear_conversation = clear_conversation
@@ -27,6 +30,13 @@ def describe_screen(question: str = "") -> str:
     if _describe_screen is None:
         return "Couldn't look at the screen because the vision service is not initialized."
     return _describe_screen(question)
+
+
+def ask_vision(image_bytes: bytes, prompt: str) -> str:
+    """Ask the configured vision model about a JPEG the caller captured."""
+    if _ask_vision is None:
+        return "Couldn't look at the screen because the vision service is not initialized."
+    return _ask_vision(image_bytes, prompt)
 
 
 def locate_screen_element(description: str) -> tuple[float, float] | None:
