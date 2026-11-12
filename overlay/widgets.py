@@ -3,6 +3,7 @@ import math
 import queue
 import random
 import sys
+import threading
 
 from PySide6.QtCore import (
     Qt, QTimer, QPoint, QSize, Signal, QObject, QRect, QCoreApplication, QThread,
@@ -893,11 +894,23 @@ _ACTIVE_COMPANION_WINDOW = None
 
 
 def get_active_companion():
-    """Return the active CompanionWindow instance if one exists."""
-    return _ACTIVE_COMPANION_WINDOW
+    """Return the active CompanionWindow, or None.
+
+    Off the GUI thread (tools run on the assistant worker) this returns a
+    GuiThreadProxy, so `companion.set_mood(...)` or `companion.bubble.show_message(...)`
+    is safe even if the caller forgets run_on_gui_thread."""
+    window = _ACTIVE_COMPANION_WINDOW
+    if window is None or _on_gui_thread():
+        return window
+    return GuiThreadProxy(window)
 
 
 get_active_companion_window = get_active_companion
+
+
+def _on_gui_thread() -> bool:
+    app = QCoreApplication.instance()
+    return app is None or QThread.currentThread() is app.thread()
 
 
 def run_on_gui_thread(fn) -> bool:
@@ -911,6 +924,70 @@ def run_on_gui_thread(fn) -> bool:
     else:
         QTimer.singleShot(0, app, fn)
     return True
+
+
+GUI_CALL_TIMEOUT_SECONDS = 5.0
+
+
+def call_on_gui_thread(fn, *args, timeout: float = GUI_CALL_TIMEOUT_SECONDS, **kwargs):
+    """Run fn(*args, **kwargs) on the GUI thread and return its result.
+
+    Waits at most `timeout` seconds (returns None after that) so a busy GUI can't
+    hang the assistant forever. Exceptions from fn are re-raised in the caller."""
+    if _on_gui_thread():
+        return fn(*args, **kwargs)
+    done = threading.Event()
+    outcome = {}
+
+    def _run():
+        try:
+            outcome["value"] = fn(*args, **kwargs)
+        except BaseException as e:  # handed back to the waiting thread
+            outcome["error"] = e
+        finally:
+            done.set()
+
+    run_on_gui_thread(_run)
+    if not done.wait(timeout):
+        print(f"[gui] {getattr(fn, '__name__', fn)!r} didn't finish on the GUI thread within {timeout}s")
+        return None
+    if "error" in outcome:
+        raise outcome["error"]
+    return outcome["value"]
+
+
+class GuiThreadProxy:
+    """Wraps a QObject so method calls from any thread run on the GUI thread.
+
+    Sub-widgets reached through it (companion.bubble, window.game_hud) are wrapped
+    too. Plain Python attribute reads and writes pass straight through."""
+
+    __slots__ = ("_target",)
+
+    def __init__(self, target):
+        object.__setattr__(self, "_target", target)
+
+    def __getattr__(self, name):
+        value = getattr(self._target, name)
+        if _on_gui_thread():
+            return value
+        if isinstance(value, QObject):
+            return GuiThreadProxy(value)
+        if callable(value):
+            return lambda *args, **kwargs: _proxied(call_on_gui_thread(value, *args, **kwargs))
+        return value
+
+    def __setattr__(self, name, value):
+        setattr(self._target, name, value)
+
+    def __repr__(self):
+        return f"GuiThreadProxy({self._target!r})"
+
+
+def _proxied(value):
+    if isinstance(value, QObject) and not _on_gui_thread():
+        return GuiThreadProxy(value)
+    return value
 
 
 _WANDER_INTERVALS = {
