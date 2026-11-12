@@ -158,6 +158,24 @@ def join_call(
         channel = channel or _pending_join.get("channel", "")
         errand = _pending_join.get("errand", errand) if errand == "open_app" else errand
 
+    import discord_bot
+
+    if discord_bot.ready() and str(app or "auto").strip().lower() in ("", "auto", "discord", "vesktop"):
+        # She joins as her own bot account: no clicking around in your Discord.
+        _pending_join.clear()
+        result = discord_bot.join(server, channel)
+        if not discord_bot.connected():
+            return result
+        session = get_call_session()
+        session.start_call(app_name="Discord", channel_name=channel)
+        if errand in ("open_app", "play_music", "game", "song"):
+            session.set_errand(action="open_app" if errand in ("open_app", "game") else "play_music", ask=message, ttl_seconds=180.0)
+        name = getattr(config, "USER_NICKNAME", "") or "my person"
+        hello = f"Hey everyone! {name} sent me in." + (f" They said: {message}." if message else "")
+        if not discord_bot.can_listen():
+            result += " I can talk here, but I can't hear the call (listening isn't installed)."
+        return f"{result} Say exactly this next, word for word: {hello}"
+
     app_choice, pids = resolve_call_app(app)
     auto_join = getattr(config, "CALL_AUTO_JOIN_ENABLED", True)
     is_discord = app_choice in ("Discord", "Vesktop")
@@ -237,6 +255,10 @@ def leave_call(args: Optional[dict] = None, **kwargs) -> str:
 
     app_name = session.app_name
     duration = int(session.call_duration)
+    import discord_bot
+
+    if discord_bot.connected():
+        discord_bot.leave()
     mins = duration // 60
     secs = duration % 60
     session.end_call()

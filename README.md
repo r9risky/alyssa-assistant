@@ -67,15 +67,35 @@ Nanami voice. 🌸
 
 <img src="docs/images/call_panel.png" alt="Alyssa's call panel in dark and light themes, showing a Vesktop #general call" width="640">
 
-- Works with **Discord and Vesktop**, plus Zoom, Teams, WhatsApp, Steam, and
-  browser calls.
-- Say *"Alyssa, join my Discord call"* and she'll ask **which server and
-  voice channel**, then jump there with Discord's quick switcher (**Ctrl+K**).
-- Relay messages to your friends: *"tell them I'm joining in ten minutes."*
-- Friends on the call can ask her for songs or games too, but you get the
-  final yes.
-- Her voice reaches the call through a virtual mic (`CABLE Input` by
-  default; set `CALL_VIRTUAL_MIC_DEVICE` if yours is different).
+### 🎧 Her own Discord bot (best)
+
+She joins your voice channel as **her own bot account** and talks there. You don't need a virtual mic,
+and she doesn't touch your Discord window.
+
+1. Go to [discord.com/developers/applications](https://discord.com/developers/applications) and make
+   a **New Application**. Then open **Bot** and press **Reset Token**, and copy the token.
+2. In Settings, turn on **Discord Bot**, paste the token, and add **your Discord user ID**. To copy
+   your ID, turn on Discord > Settings > Advanced > Developer Mode, then right-click your name and
+   pick **Copy User ID**.
+3. Settings now shows an **"Add her to a server"** link. Open it and pick your server. It only asks
+   for *Connect* and *Speak*.
+4. Get in a voice channel and say *"Alyssa, join my Discord call."* She finds the channel you're in
+   and hops in.
+
+- *"tell them I'm joining in ten minutes"* passes your message on word for word.
+- Friends can talk to her too. She **only replies when they say her name**, so the call doesn't eat
+  your AI quota.
+- If a friend asks her to open a game or play a song, she **asks you first**. Say *"yes"* or *"no"*.
+- *"leave the call"* makes her disconnect.
+
+### Without the bot
+
+- Works with **Discord and Vesktop**, plus Zoom, Teams, WhatsApp, Steam, and browser calls.
+- Say *"Alyssa, join my Discord call"* and she'll ask **which server and voice channel**. Then she
+  jumps there with Discord's quick switcher (**Ctrl+K**).
+- Her voice reaches the call through a virtual mic (`CABLE Input` by default; set
+  `CALL_VIRTUAL_MIC_DEVICE` if yours is different). In Discord, set your input device to
+  **CABLE Output**.
 
 ---
 

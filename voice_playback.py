@@ -416,6 +416,8 @@ class StreamingSpeaker:
         self._audio.put(None)
 
     def _play_pcm(self):
+        if _discord_bot_connected():
+            return self._play_pcm_to_discord()
         buffer_bytes = max(
             1,
             int(24000 * 2 * getattr(config, "TTS_AUDIO_BUFFER_MS", 100) / 1000),
@@ -509,6 +511,37 @@ class StreamingSpeaker:
                 finally:
                     vmic_stream.close()
             self._audio_done.set()
+
+    def _play_pcm_to_discord(self):
+        """Streamed (ElevenLabs realtime) audio, sent to the Discord voice channel."""
+        import discord_bot
+
+        started = False
+        try:
+            while not self.interrupted:
+                chunk = self._audio.get()
+                if chunk is None:
+                    break
+                if not started:
+                    self._start_playback()
+                    started = True
+                discord_bot.play_pcm(discord_bot.to_discord_pcm(chunk, 24000, 1))
+            while discord_bot.busy() and not self.interrupted:
+                time.sleep(0.02)
+            if self.interrupted:
+                discord_bot.stop_audio()
+        except Exception as exc:
+            self._audio_error = exc
+        finally:
+            self._audio_done.set()
+
+
+def _discord_bot_connected() -> bool:
+    try:
+        import discord_bot
+        return discord_bot.connected()
+    except Exception:
+        return False
 
 
 def _remove_quietly(path):
@@ -696,6 +729,10 @@ def _play_locked(path: str, stop_event=None) -> bool:
 
     vmic_thread = None
     try:
+        if _discord_bot_connected():
+            # She's in a Discord voice channel as the bot: speak there instead of the speakers.
+            import discord_bot
+            return discord_bot.play_file(play_path, stop_event)
         music.load(play_path)
         volume = getattr(config, "EDGE_TTS_VOLUME", "+0%")
         music.set_volume(_volume_str_to_gain(volume))

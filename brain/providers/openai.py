@@ -75,6 +75,8 @@ def _call_openai_compatible(
         "tool_choice": "auto",
         "stream": True,
     }
+    if not body["tools"]:  # chat-only call: the API rejects an empty tools list
+        del body["tools"], body["tool_choice"]
     if provider_label != "OpenAI":
         body["temperature"] = 0.2
     token_field = "max_completion_tokens" if provider_label == "OpenAI" else "max_tokens"

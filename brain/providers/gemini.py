@@ -104,6 +104,8 @@ def _call_gemini(messages, force_tools: bool = False, on_text_delta=None, cancel
         },
     }
 
+    if not body["tools"][0]["functionDeclarations"]:  # chat-only call
+        del body["tools"]
     # Default AUTO so small talk needs no tool. Caller sets force_tools only on
     # retry after a lazy/degenerate no-tool reply — do not force on first turn.
     if force_tools:

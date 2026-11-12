@@ -247,3 +247,69 @@ def parse_call_friend_intent(text: str) -> Optional[FriendRequest]:
         )
 
     return None
+
+
+# ---------------------------------------------------------------------------
+# Friends talking in the Discord call (see discord_bot.FriendListener)
+# ---------------------------------------------------------------------------
+
+_recent_call_lines: list[str] = []
+_MAX_CALL_LINES = 8
+_last_reply_at = 0.0
+REPLY_COOLDOWN_SECONDS = 3.0
+
+
+def recent_call_lines() -> list[str]:
+    return list(_recent_call_lines)
+
+
+def handle_friend_line(speaker: str, text: str, *, reply_fn=None, speak_fn=None, now=None) -> Optional[str]:
+    """React to one transcribed line from a friend in the call. Returns what she said, if anything.
+
+    Token budget: lines that don't say her name only go into a short local memory of the
+    conversation (no AI call). Game/song requests are parsed locally and wait for the user's
+    yes. Only a line that names her, and isn't a request, costs one small chat-only AI call.
+    """
+    global _last_reply_at
+    import nameutil
+
+    text = sanitize_call_transcript(text).removeprefix(CALL_SPEAKER_TAG).strip()
+    if not text:
+        return None
+    session = get_call_session()
+    session.post_caption(speaker, text)
+    context = recent_call_lines()
+    _recent_call_lines.append(f"{speaker}: {text}")
+    del _recent_call_lines[:-_MAX_CALL_LINES]
+
+    span = nameutil.find_name_span(text)
+    if span is None:
+        return None
+    asked = nameutil.strip_name_at_span(text, span) or text
+    now = time.time() if now is None else now
+    if now - _last_reply_at < REPLY_COOLDOWN_SECONDS:
+        return None
+    _last_reply_at = now
+
+    import config as root_config
+
+    owner = str(getattr(root_config, "USER_NICKNAME", "") or "").strip() or "my person"
+    request = parse_call_friend_intent(asked) if getattr(root_config, "CALL_FRIENDS_CAN_ASK", True) else None
+    if request is not None:
+        request.who = speaker
+        session.pending_request = request
+        what = request.arguments.get("app_name") or request.arguments.get("query") or "that"
+        verb = "open" if request.action == "open_app" else "play"
+        reply = f"{speaker} wants me to {verb} {what}. {owner}, should I? Say yes or no."
+    else:
+        if reply_fn is None:
+            from brain.dialogue import reply_to_call as reply_fn
+        reply = reply_fn(speaker, asked, context)
+    if reply:
+        session.post_caption(getattr(root_config, "ASSISTANT_NAME", "Alyssa"), reply)
+        if speak_fn is None:
+            import voice_playback
+
+            speak_fn = voice_playback.speak
+        speak_fn(reply)
+    return reply

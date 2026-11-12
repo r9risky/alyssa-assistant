@@ -108,6 +108,8 @@ def _call_anthropic(messages, on_text_delta=None, cancel_event=None, tools=None)
     }
     if system_text:
         body["system"] = system_text
+    if not body["tools"]:  # chat-only call
+        del body["tools"]
 
     headers = {
         "x-api-key": config.ANTHROPIC_API_KEY,
