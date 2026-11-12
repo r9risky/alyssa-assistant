@@ -1,4 +1,5 @@
 import os
+import os
 import json
 import runpy
 import sys
@@ -336,6 +337,7 @@ class FinalAuditFixTests(unittest.TestCase):
 
     def test_relaunch_alyssa_reuses_the_current_python_command(self):
         with (
+            patch.object(apps_and_files.sys, "platform", "linux"),
             patch.object(apps_and_files.sys, "executable", r"C:\Python\python.exe"),
             patch.object(apps_and_files.sys, "argv", ["main.py", "--demo"]),
             patch.object(apps_and_files.os, "execv") as execv,
@@ -346,6 +348,28 @@ class FinalAuditFixTests(unittest.TestCase):
             r"C:\Python\python.exe",
             [r"C:\Python\python.exe", "main.py", "--demo"],
         )
+
+    def test_windows_restart_starts_her_again_only_after_this_process_exits(self):
+        import updater
+
+        with (
+            patch.object(apps_and_files.sys, "platform", "win32"),
+            patch.object(apps_and_files.sys, "frozen", True, create=True),
+            patch.object(apps_and_files.sys, "executable", r"C:\A B\Alyssa.exe"),
+            patch.object(apps_and_files.sys, "argv", [r"C:\A B\Alyssa.exe"]),
+            patch.object(updater, "launch_pending_update", return_value=False),
+            patch.object(updater.subprocess, "Popen") as popen,
+            patch.object(apps_and_files.os, "_exit") as hard_exit,
+            patch.object(apps_and_files.os, "execv") as execv,
+        ):
+            actions.relaunch_alyssa()
+
+        hard_exit.assert_called_once_with(0)
+        command = popen.call_args.args[0]
+        self.assertEqual(command[0], "powershell.exe")
+        self.assertIn(f"Wait-Process -Id {os.getpid()}", command[-1])
+        self.assertIn("Start-Process -FilePath 'C:\\A B\\Alyssa.exe'", command[-1])
+        self.assertEqual(popen.call_args.kwargs["env"]["PYINSTALLER_RESET_ENVIRONMENT"], "1")
 
     def test_restart_alyssa_voice_command_does_not_restart_pc(self):
         with patch.object(providers, "_call_model") as call_model:

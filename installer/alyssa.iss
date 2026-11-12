@@ -44,3 +44,22 @@ Name: "{userstartup}\Alyssa"; Filename: "{app}\Alyssa.exe"; WorkingDir: "{app}";
 
 [Run]
 Filename: "{app}\Alyssa.exe"; Description: "Launch Alyssa"; WorkingDir: "{app}"; Flags: nowait postinstall skipifsilent
+
+[UninstallRun]
+; Clears her saved API keys and downloaded speech models, which live outside {app}.
+Filename: "{app}\Alyssa.exe"; Parameters: "--uninstall-cleanup"; Flags: runhidden waituntilterminated; RunOnceId: "AlyssaCleanup"
+
+[UninstallDelete]
+; Everything she created after install too: memories, settings, logs, voice models.
+Type: filesandordirs; Name: "{app}"
+Type: files; Name: "{userstartup}\Alyssa.lnk"
+
+[Code]
+function InitializeUninstall(): Boolean;
+var
+  ResultCode: Integer;
+begin
+  { A running Alyssa (or one stuck closing) keeps her files locked. }
+  Exec(ExpandConstant('{sys}\taskkill.exe'), '/f /t /im Alyssa.exe', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+  Result := True;
+end;

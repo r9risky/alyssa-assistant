@@ -25,6 +25,16 @@ print(
     f"cwd={os.getcwd()!r}, frozen={bool(getattr(sys, 'frozen', False))}"
 )
 
+import updater
+if "--uninstall-cleanup" in sys.argv:  # run by Alyssa-Setup's uninstaller
+    updater.uninstall_cleanup()
+    sys.stdout.flush()
+    os._exit(0)
+# An update downloaded last session finishes now if Alyssa was quit instead of restarted.
+if updater.launch_pending_update(_config_dir, sys.executable if getattr(sys, "frozen", False) else ""):
+    sys.stdout.flush()
+    os._exit(0)
+
 if sys.stdin is None:
     sys.stdin = open(os.devnull, "r")
 

@@ -18,6 +18,7 @@ import stat
 import subprocess
 import sys
 import tempfile
+import time
 import zipfile
 from urllib.parse import unquote, urlsplit
 
@@ -28,9 +29,13 @@ RELEASE_REPOSITORY = "alyssa-assistant"
 LATEST_RELEASE_URL = (
     f"https://api.github.com/repos/{RELEASE_OWNER}/{RELEASE_REPOSITORY}/releases/latest"
 )
-CURRENT_VERSION = "v1.12.0"
+CURRENT_VERSION = "v1.12.1"
 TRANSACTION_DIR = ".alyssa-update-transaction"
 COMMITTED_TRANSACTION_DIR = ".alyssa-update-committed"
+RESTART_HELPER = "apply_update.bat"
+HELPER_APPLIED_MARKER = "applied"
+HELPER_FAILED_MARKER = "helper-failed"
+MAX_HELPER_ATTEMPTS = 2
 MAX_CHECKSUM_BYTES = 1024 * 1024
 # Zip-bomb guards with room to grow: v1.9.0 unpacked to 560 MB and broke the old 500 MB cap.
 MAX_DOWNLOAD_BYTES = 1024 * 1024 * 1024
@@ -831,15 +836,38 @@ def _journal_destination(install_root: Path, relative_name: object) -> tuple[Pat
     return native_relative, destination
 
 
+def _same_contents(first: Path, second: Path) -> bool:
+    return (
+        first.is_file()
+        and second.is_file()
+        and first.stat().st_size == second.stat().st_size
+        and _file_hash(first) == _file_hash(second)
+    )
+
+
+def _remove_committed_leftovers(install_root: Path) -> None:
+    for leftover in install_root.glob(COMMITTED_TRANSACTION_DIR + "*"):
+        shutil.rmtree(leftover, ignore_errors=True)
+
+
 def _finish_transaction(install_root: Path, transaction_root: Path) -> None:
-    committed_root = install_root / COMMITTED_TRANSACTION_DIR
-    if committed_root.exists():
-        shutil.rmtree(committed_root)
-    os.replace(transaction_root, committed_root)
-    shutil.rmtree(committed_root)
+    """Drop a settled journal. Best effort: a leftover is settled again next time."""
+    # Rename first so a half-deleted journal can never block or replay an update.
+    graveyard = install_root / f"{COMMITTED_TRANSACTION_DIR}-{os.getpid()}-{time.time_ns()}"
+    try:
+        os.replace(transaction_root, graveyard)
+    except OSError:
+        graveyard = transaction_root
+    shutil.rmtree(graveyard, ignore_errors=True)
+    try:
+        (install_root / RESTART_HELPER).unlink(missing_ok=True)
+    except OSError:
+        pass
 
 
-def _rollback_transaction(install_root: Path, transaction_root: Path) -> None:
+def _rollback_transaction(
+    install_root: Path, transaction_root: Path, *, finish: bool = True
+) -> None:
     state = _load_transaction_state(transaction_root)
     backup_root = transaction_root / "backup"
     for change in reversed(state["changes"]):
@@ -850,7 +878,10 @@ def _rollback_transaction(install_root: Path, transaction_root: Path) -> None:
             backup = backup_root / relative
             if not backup.is_file():
                 raise RuntimeError("The interrupted update backup is incomplete.")
-            _atomic_copy(backup, destination)
+            # Untouched files (often the locked, running exe) need no copy, so they
+            # can't make the rollback fail.
+            if not _same_contents(backup, destination):
+                _atomic_copy(backup, destination)
         else:
             destination.unlink(missing_ok=True)
             parent = destination.parent
@@ -860,51 +891,44 @@ def _rollback_transaction(install_root: Path, transaction_root: Path) -> None:
                 except OSError:
                     break
                 parent = parent.parent
-    _finish_transaction(install_root, transaction_root)
+    if finish:
+        _finish_transaction(install_root, transaction_root)
 
 
-def _recover_incomplete_update(install_root: Path) -> bool:
+def _recover_incomplete_update(install_root: Path, *, discard_pending: bool = False) -> bool:
+    """Settle a leftover update journal so it can never block the next update.
+
+    A journal waiting for the restart helper is kept unless discard_pending, in
+    which case it is rolled back. Returns True when something was cleaned up.
+    """
     install_root = install_root.resolve()
-    committed_root = install_root / COMMITTED_TRANSACTION_DIR
-    if committed_root.exists():
-        shutil.rmtree(committed_root)
+    _remove_committed_leftovers(install_root)
     transaction_root = install_root / TRANSACTION_DIR
     if not transaction_root.exists():
         return False
-    state_path = transaction_root / "state.json"
-    if not state_path.is_file():
-        shutil.rmtree(transaction_root)
-        return True
-    state = _load_transaction_state(transaction_root)
-    if state.get("phase") == "committed":
+    if (transaction_root / HELPER_APPLIED_MARKER).exists():
         _finish_transaction(install_root, transaction_root)
         return True
-    if state.get("phase") == "pending_restart":
-        staged_root = transaction_root / "new"
-        try:
-            for change in state.get("changes", []):
-                if not isinstance(change, dict):
-                    continue
-                relative, destination = _journal_destination(install_root, change.get("path"))
-                if change.get("delete") is True:
-                    destination.unlink(missing_ok=True)
-                else:
-                    staged = staged_root / relative
-                    if staged.is_file():
-                        _atomic_copy(staged, destination)
-            _finish_transaction(install_root, transaction_root)
-            bat = install_root / "apply_update.bat"
-            bat.unlink(missing_ok=True)
-            return True
-        except (PermissionError, OSError):
-            return False
+    if not (transaction_root / "state.json").is_file():
+        # Interrupted while staging: nothing in the install was touched yet.
+        _finish_transaction(install_root, transaction_root)
+        return True
+    helper_failed = (transaction_root / HELPER_FAILED_MARKER).exists()
     try:
+        state = _load_transaction_state(transaction_root)
+        if state.get("phase") == "committed":
+            _finish_transaction(install_root, transaction_root)
+            return True
+        if state.get("phase") == "pending_restart" and not (discard_pending or helper_failed):
+            return False
         _rollback_transaction(install_root, transaction_root)
     except Exception as error:
         raise RuntimeError(
-            "An interrupted Alyssa update could not be rolled back. "
-            "Restore the installation manually before trying again."
+            f"An unfinished Alyssa update couldn't be undone ({error}). Close Alyssa and "
+            "reinstall it with the latest Alyssa-Setup.exe from GitHub."
         ) from error
+    if helper_failed:
+        print("updater: the last update couldn't be applied after restart, so it was undone.")
     return True
 
 
@@ -925,7 +949,13 @@ def _prepare_update_transaction(
         )
     }
     transaction_root = install_root / TRANSACTION_DIR
-    transaction_root.mkdir()
+    try:
+        transaction_root.mkdir()
+    except FileExistsError as error:
+        raise RuntimeError(
+            f"Old update files are still in {transaction_root}. Close Alyssa, delete "
+            "that folder, and try the update again."
+        ) from error
     staged_root = transaction_root / "new"
     backup_root = transaction_root / "backup"
     staged_root.mkdir()
@@ -995,48 +1025,157 @@ def _prepare_update_transaction(
     return transaction_root
 
 
-def _prepare_restart_updater(
-    install_root: Path, transaction_root: Path, staged_root: Path
-) -> Path:
-    bat_path = install_root / "apply_update.bat"
-    bat_content = (
+def _bat_path(relative_name: str) -> str:
+    # %-escaped so cmd doesn't expand it; paths come from the release journal.
+    return "%INSTALL_ROOT%\\" + relative_name.replace("/", "\\").replace("%", "%%")
+
+
+def _write_restart_helper(install_root: Path, state: dict[str, object]) -> Path:
+    """Batch file that applies the staged update once Alyssa has exited.
+
+    It retries locked files, undoes everything if a copy still fails, and leaves
+    a marker either way so the next launch knows what happened.
+    """
+    deletes, created = [], []
+    for change in state["changes"]:
+        if not isinstance(change, dict):
+            raise RuntimeError("The update journal is invalid.")
+        _journal_destination(install_root, change.get("path"))
+        line = f"del /f /q \"{_bat_path(change['path'])}\" >nul 2>&1\r\n"
+        if change.get("delete") is True:
+            deletes.append(line)
+        elif change.get("existed") is not True:
+            created.append(line)
+    robocopy = "/E /R:30 /W:1 /NP /NFL /NDL /NJH /LOG+:\"%HELPER_LOG%\" >nul"
+    content = (
         "@echo off\r\n"
+        "chcp 65001 >nul\r\n"
         "setlocal\r\n"
         "set \"PID=%~1\"\r\n"
         "set \"INSTALL_ROOT=%~2\"\r\n"
-        "set \"STAGED_ROOT=%~3\"\r\n"
-        "set \"TARGET_EXE=%~4\"\r\n"
-        "\r\n"
-        # cmd can't goto a label inside a ( ) block, so the wait loop is flat.
-        "if \"%PID%\"==\"\" goto apply\r\n"
+        "set \"TARGET_EXE=%~3\"\r\n"
+        f"set \"TXN=%INSTALL_ROOT%\\{TRANSACTION_DIR}\"\r\n"
+        "if not exist \"%INSTALL_ROOT%\\logs\" mkdir \"%INSTALL_ROOT%\\logs\" >nul 2>&1\r\n"
+        "set \"HELPER_LOG=%INSTALL_ROOT%\\logs\\update.log\"\r\n"
+        f"echo [%DATE% %TIME%] Applying Alyssa {state.get('version', '')}>>\"%HELPER_LOG%\"\r\n"
+        "set /a WAITED=0\r\n"
+        # Flat loop: cmd can't goto a label inside ( ). ping sleeps where timeout
+        # can't (no console in a detached process). Force-close it after ~60 s.
         ":wait_loop\r\n"
-        "timeout /t 1 /nobreak >nul 2>&1\r\n"
+        "if \"%PID%\"==\"\" goto apply\r\n"
         "tasklist /fi \"PID eq %PID%\" 2>nul | find \"%PID%\" >nul\r\n"
-        "if not errorlevel 1 goto wait_loop\r\n"
+        "if errorlevel 1 goto apply\r\n"
+        "if %WAITED% GEQ 60 goto kill\r\n"
+        "set /a WAITED+=1\r\n"
+        "ping -n 2 127.0.0.1 >nul\r\n"
+        "goto wait_loop\r\n"
+        ":kill\r\n"
+        "taskkill /f /pid %PID% >nul 2>&1\r\n"
         ":apply\r\n"
-        "\r\n"
-        "timeout /t 1 /nobreak >nul 2>&1\r\n"
-        "\r\n"
-        "rem Copy all staged files into install directory\r\n"
-        "xcopy \"%STAGED_ROOT%\\*\" \"%INSTALL_ROOT%\\\" /E /Y /Q /H /R >nul 2>&1\r\n"
-        "\r\n"
-        "rem Remove transaction directory\r\n"
-        f"rd /s /q \"{transaction_root}\" >nul 2>&1\r\n"
-        "\r\n"
-        "rem Re-launch Alyssa\r\n"
-        "if exist \"%TARGET_EXE%\" (\r\n"
+        f"robocopy \"%TXN%\\new\" \"%INSTALL_ROOT%\" {robocopy}\r\n"
+        "if errorlevel 8 goto failed\r\n"
+        + "".join(deletes)
+        + f"echo applied>\"%TXN%\\{HELPER_APPLIED_MARKER}\"\r\n"
+        "echo [%DATE% %TIME%] Update applied.>>\"%HELPER_LOG%\"\r\n"
+        "rd /s /q \"%TXN%\" >nul 2>&1\r\n"
+        "goto launch\r\n"
+        ":failed\r\n"
+        "echo [%DATE% %TIME%] Update failed; restoring the previous version.>>\"%HELPER_LOG%\"\r\n"
+        f"robocopy \"%TXN%\\backup\" \"%INSTALL_ROOT%\" {robocopy}\r\n"
+        + "".join(created)
+        + f"echo failed>\"%TXN%\\{HELPER_FAILED_MARKER}\"\r\n"
+        ":launch\r\n"
+        "if not \"%TARGET_EXE%\"==\"\" if exist \"%TARGET_EXE%\" (\r\n"
         "    start \"\" \"%TARGET_EXE%\"\r\n"
-        ") else if exist \"%INSTALL_ROOT%\\Alyssa.exe\" (\r\n"
+        "    goto done\r\n"
+        ")\r\n"
+        "if exist \"%INSTALL_ROOT%\\Alyssa.exe\" (\r\n"
         "    start \"\" \"%INSTALL_ROOT%\\Alyssa.exe\"\r\n"
         ") else if exist \"%INSTALL_ROOT%\\scripts\\start_alyssa.bat\" (\r\n"
         "    start \"\" \"%INSTALL_ROOT%\\scripts\\start_alyssa.bat\"\r\n"
         ")\r\n"
-        "\r\n"
+        ":done\r\n"
         "(goto) 2>nul & del \"%~f0\"\r\n"
-        "exit\r\n"
     )
-    bat_path.write_text(bat_content, encoding="utf-8")
+    bat_path = install_root / RESTART_HELPER
+    bat_path.write_text(content, encoding="utf-8")
     return bat_path
+
+
+_DETACHED = 0x08000000 | 0x00000008  # CREATE_NO_WINDOW | DETACHED_PROCESS
+
+
+def _detached_env() -> dict[str, str]:
+    # A frozen Alyssa started from here must not inherit PyInstaller's runtime
+    # state from this process, or the new one can fail to start.
+    return {**os.environ, "PYINSTALLER_RESET_ENVIRONMENT": "1"}
+
+
+def _ps_quote(value: str) -> str:
+    return "'" + value.replace("'", "''") + "'"
+
+
+def relaunch_after_exit(command: list[str], working_dir: str | os.PathLike[str]) -> None:
+    """Windows: start command once this process has exited (force-closed after
+    15 s if it hangs on the way out), so two Alyssas never overlap."""
+    pid = os.getpid()
+    script = (
+        f"Wait-Process -Id {pid} -Timeout 15 -ErrorAction SilentlyContinue; "
+        f"Stop-Process -Id {pid} -Force -ErrorAction SilentlyContinue; "
+        f"Start-Process -FilePath {_ps_quote(command[0])} "
+        f"-WorkingDirectory {_ps_quote(str(working_dir))}"
+    )
+    if len(command) > 1:
+        # Start-Process doesn't quote arguments itself.
+        script += " -ArgumentList " + ",".join(_ps_quote(f'"{arg}"') for arg in command[1:])
+    subprocess.Popen(
+        ["powershell.exe", "-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-Command", script],
+        creationflags=_DETACHED,
+        close_fds=True,
+        env=_detached_env(),
+    )
+
+
+def launch_pending_update(
+    install_root: str | os.PathLike[str], relaunch_target: str = ""
+) -> bool:
+    """Windows: hand a downloaded update to the restart helper.
+
+    Call on Restart and at startup (so quitting instead of restarting still
+    finishes the update). True means the helper is waiting: exit right away.
+    """
+    if sys.platform != "win32":
+        return False
+    install_root = Path(install_root).resolve()
+    transaction_root = install_root / TRANSACTION_DIR
+    try:
+        _recover_incomplete_update(install_root)
+        if not (transaction_root / "state.json").is_file():
+            return False
+        state = _load_transaction_state(transaction_root)
+        if state.get("phase") != "pending_restart":
+            return False
+        attempts = state.get("helper_attempts")
+        attempts = attempts if isinstance(attempts, int) else 0
+        if attempts >= MAX_HELPER_ATTEMPTS:
+            # The helper never got to run (blocked or killed): stop looping and undo it.
+            print("updater: the downloaded update never finished applying, so it was undone.")
+            _recover_incomplete_update(install_root, discard_pending=True)
+            return False
+        state["helper_attempts"] = attempts + 1
+        _write_transaction_state(transaction_root, state)
+        bat_path = _write_restart_helper(install_root, state)
+        subprocess.Popen(
+            ["cmd.exe", "/c", str(bat_path), str(os.getpid()), str(install_root), relaunch_target],
+            creationflags=_DETACHED,
+            close_fds=True,
+            env=_detached_env(),
+        )
+    except Exception as error:
+        print(f"updater: couldn't finish the downloaded update: {error}")
+        return False
+    print(f"updater: applying {state.get('version')} after Alyssa closes; she will reopen.")
+    return True
 
 
 def _is_locked_file_error(error: Exception) -> bool:
@@ -1050,55 +1189,48 @@ def _is_locked_file_error(error: Exception) -> bool:
     return False
 
 
-def _commit_update_transaction(install_root: Path, transaction_root: Path) -> None:
+def _apply_after_exit() -> bool:
+    # The running exe and its DLLs are locked, and swapping the rest under a live
+    # process mixes versions, so the packaged Windows app always updates on restart.
+    return sys.platform == "win32" and bool(getattr(sys, "frozen", False))
+
+
+def _commit_update_transaction(install_root: Path, transaction_root: Path) -> bool:
+    """Apply a prepared journal. False means it waits for the restart helper."""
     state = _load_transaction_state(transaction_root)
+    if _apply_after_exit():
+        state["phase"] = "pending_restart"
+        _write_transaction_state(transaction_root, state)
+        return False
     state["phase"] = "committing"
     _write_transaction_state(transaction_root, state)
     staged_root = transaction_root / "new"
-    locked_changes = []
     try:
         for change in state["changes"]:
             if not isinstance(change, dict):
                 raise RuntimeError("The update journal is invalid.")
             relative, destination = _journal_destination(install_root, change.get("path"))
             if change.get("delete") is True:
-                try:
-                    destination.unlink(missing_ok=True)
-                except Exception as err:
-                    if _is_locked_file_error(err):
-                        locked_changes.append(change)
-                    else:
-                        raise
-            else:
-                staged = staged_root / relative
-                if not staged.is_file():
-                    raise RuntimeError("The staged update is incomplete.")
-                try:
-                    _atomic_copy(staged, destination)
-                except Exception as err:
-                    if _is_locked_file_error(err):
-                        locked_changes.append(change)
-                    else:
-                        raise
-
-        if locked_changes:
-            _prepare_restart_updater(install_root, transaction_root, staged_root)
+                destination.unlink(missing_ok=True)
+                continue
+            staged = staged_root / relative
+            if not staged.is_file():
+                raise RuntimeError("The staged update is incomplete.")
+            _atomic_copy(staged, destination)
+    except Exception as error:
+        if _is_locked_file_error(error):
+            # Undo what was swapped and let the helper apply everything after exit,
+            # so Alyssa never runs on a half-old, half-new install.
+            _rollback_transaction(install_root, transaction_root, finish=False)
             state["phase"] = "pending_restart"
             _write_transaction_state(transaction_root, state)
-            return
-
-        state["phase"] = "committed"
-        _write_transaction_state(transaction_root, state)
-    except Exception:
-        # Any real failure rolls back, even after some files were deferred as locked;
-        # swallowing it here used to finish a half-applied update with no journal left.
+            return False
         _rollback_transaction(install_root, transaction_root)
         raise
-    try:
-        _finish_transaction(install_root, transaction_root)
-    except OSError:
-        # The committed journal is safe to clean up on the next launch/check.
-        pass
+    state["phase"] = "committed"
+    _write_transaction_state(transaction_root, state)
+    _finish_transaction(install_root, transaction_root)
+    return True
 
 
 def _apply_release(
@@ -1109,7 +1241,7 @@ def _apply_release(
 ) -> None:
     """Stage and commit files, manifest, and version through a rollback journal."""
     install_root = install_root.resolve()
-    _recover_incomplete_update(install_root)
+    _recover_incomplete_update(install_root, discard_pending=True)
     version = version if version is not None else current_version(install_root)
     managed = managed if managed is not None else _managed_paths(source_root, install_root)
     transaction_root = _prepare_update_transaction(
@@ -1168,7 +1300,6 @@ def install_release(
 ) -> str:
     """Download, verify SHA-256, and journal-install a release from check_latest."""
     install_root = Path(install_root).resolve()
-    _recover_incomplete_update(install_root)
     try:
         tag = str(release["latest_version"]).strip()
         archive_name = str(release["archive_name"]).strip()
@@ -1184,6 +1315,12 @@ def install_release(
         raise RuntimeError(f"The release version is invalid: {tag}.")
     if not archive_name or PurePosixPath(archive_name).name != archive_name:
         raise RuntimeError("The release archive name is invalid.")
+    _recover_incomplete_update(install_root)
+    transaction_root = install_root / TRANSACTION_DIR
+    if (transaction_root / "state.json").is_file():
+        if _load_transaction_state(transaction_root).get("version") == tag:
+            return tag  # Already downloaded; it finishes when Alyssa restarts.
+        _recover_incomplete_update(install_root, discard_pending=True)
 
     expected_sha256 = release.get("sha256")
     if expected_sha256 is not None:
@@ -1276,41 +1413,59 @@ def _whisper_cache_dirs() -> list[Path]:
     return sorted(hub.glob("models--Systran--faster-whisper-*")) if hub.is_dir() else []
 
 
-def _uninstall_script(pid: int, install_root: Path, extra_dirs: list[Path]) -> str:
-    root = str(install_root)
+def _uninstall_script(pid: int, install_root: Path) -> str:
+    root = str(install_root).replace("%", "%%")
     uninstaller = next(iter(sorted(install_root.glob("unins*.exe"))), None)
     startup = Path(os.environ.get("APPDATA", "")) / "Microsoft/Windows/Start Menu/Programs/Startup/Alyssa.lnk"
     lines = [
         "@echo off",
+        "chcp 65001 >nul",
+        "set waited=0",
+        # ping sleeps; timeout fails at once in a windowless script and spun the loop.
         ":wait",
-        f'tasklist /FI "PID eq {pid}" 2>nul | find "{pid}" >nul && (timeout /t 1 /nobreak >nul & goto wait)',
+        f'tasklist /FI "PID eq {pid}" 2>nul | find "{pid}" >nul || goto closed',
+        "if %waited% geq 15 goto closed",
+        "set /a waited+=1",
+        "ping -n 2 127.0.0.1 >nul",
+        "goto wait",
+        ":closed",
+        # Anything of hers still running (a hung exit, a helper) would keep files locked.
+        "taskkill /f /t /im Alyssa.exe >nul 2>&1",
     ]
     if uninstaller is not None:
-        # Removes shortcuts and the Add/Remove Programs entry.
-        lines.append(f'"{uninstaller}" /VERYSILENT /SUPPRESSMSGBOXES /NORESTART')
+        name = str(uninstaller).replace("%", "%%")
+        lines += [
+            # The normal uninstall window, so it also clears shortcuts and the
+            # Apps list entry. It hands off to a temp copy and returns at once,
+            # so wait until it has deleted itself before removing leftovers.
+            f'start "" "{name}"',
+            "set waited=0",
+            ":uninstalling",
+            f'if not exist "{name}" goto remove_rest',
+            # Still there after 10 minutes: the uninstall was cancelled, keep everything.
+            "if %waited% geq 600 goto done",
+            "set /a waited+=1",
+            "ping -n 2 127.0.0.1 >nul",
+            "goto uninstalling",
+        ]
     lines += [
+        ":remove_rest",
         f'del /f /q "{startup}" 2>nul',
-        *(f'rmdir /s /q "{d}" 2>nul' for d in extra_dirs),
         "set tries=0",
         ":remove",
         f'rmdir /s /q "{root}" 2>nul',
-        # The uninstaller may still hold files for a moment; retry up to ~30 s.
-        f'if exist "{root}" if %tries% lss 30 (set /a tries+=1 & timeout /t 1 /nobreak >nul & goto remove)',
+        f'if not exist "{root}" goto done',
+        "if %tries% geq 30 goto done",
+        "set /a tries+=1",
+        "ping -n 2 127.0.0.1 >nul",
+        "goto remove",
+        ":done",
         'del "%~f0"',
     ]
     return "\r\n".join(lines) + "\r\n"
 
 
-def uninstall(install_root: str | os.PathLike[str]) -> None:
-    """Remove Alyssa completely: saved API keys, downloaded speech models and her
-    whole install folder, memories and settings included. The folder is deleted by
-    a script that waits for this process to exit, so call os._exit() right after."""
-    root = Path(install_root).resolve()
-    if sys.platform != "win32" or not getattr(sys, "frozen", False):
-        raise RuntimeError(
-            "Uninstall works for the installed Windows app. "
-            "For a source checkout, delete its folder yourself."
-        )
+def _check_install_root(root: Path) -> None:
     # Never point rmdir at a drive, home folder or anything that isn't her install.
     if (
         root == Path(root.anchor)
@@ -1320,17 +1475,44 @@ def uninstall(install_root: str | os.PathLike[str]) -> None:
     ):
         raise RuntimeError(f"{root} doesn't look like Alyssa's install folder; nothing was removed.")
 
+
+def uninstall_cleanup() -> None:
+    """Remove what lives outside her folder: saved API keys and speech models.
+
+    Run by Alyssa-Setup's uninstaller (Alyssa.exe --uninstall-cleanup) and by
+    the in-app Uninstall button."""
     import credential_store
 
     for name in (*credential_store.SECRET_ENV_VARS, *_EXTRA_SECRETS):
-        credential_store.clear_secret(name)
+        try:
+            credential_store.clear_secret(name)
+        except Exception as error:
+            print(f"uninstall: couldn't clear {name}: {error}")
+    for directory in _whisper_cache_dirs():
+        shutil.rmtree(directory, ignore_errors=True)
+
+
+def uninstall(install_root: str | os.PathLike[str]) -> None:
+    """Remove Alyssa completely: saved API keys, downloaded speech models and her
+    whole install folder, memories and settings included. Opens the uninstaller
+    when she was installed with Alyssa-Setup. A script waits for this process to
+    exit first, so call os._exit() right after."""
+    root = Path(install_root).resolve()
+    if sys.platform != "win32" or not getattr(sys, "frozen", False):
+        raise RuntimeError(
+            "Uninstall works for the installed Windows app. "
+            "For a source checkout, delete its folder yourself."
+        )
+    _check_install_root(root)
+    uninstall_cleanup()
 
     fd, script = tempfile.mkstemp(prefix="alyssa-uninstall-", suffix=".bat")
     with os.fdopen(fd, "w", encoding="utf-8") as handle:
-        handle.write(_uninstall_script(os.getpid(), root, _whisper_cache_dirs()))
+        handle.write(_uninstall_script(os.getpid(), root))
     subprocess.Popen(
         ["cmd.exe", "/c", script],
         cwd=tempfile.gettempdir(),  # cmd can't delete the folder it's sitting in
-        creationflags=0x08000000 | 0x00000008,  # CREATE_NO_WINDOW | DETACHED_PROCESS
+        creationflags=_DETACHED,
         close_fds=True,
+        env=_detached_env(),
     )
