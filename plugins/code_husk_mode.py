@@ -1,7 +1,7 @@
-"""Code / Husk Mode Plugin for Alyssa Assistant.
+"""Coding buddy mode plugin for Alyssa Assistant.
 
 Inspired by Capri Desktop's `Husk.cs`:
-Allows Alyssa to act as a live desktop companion ("Husk") for coding agents like
+Allows Alyssa to act as a live desktop companion for coding agents like
 Claude Code, Codex, and OpenCode:
 - Receives hook events (`PreToolUse`, `PostToolUse`, `Notification`, `PermissionRequest`, `Stop`)
   via a local loopback HTTP endpoint (`127.0.0.1:HUSK_PORT/hook`) or direct API calls.
@@ -18,7 +18,7 @@ import threading
 
 import config
 
-TAB_TITLE = "Code / Husk Mode"
+TAB_TITLE = "Coding buddy mode"
 WATCH_INTERVAL_SECONDS = 10
 
 _lock = threading.RLock()
@@ -77,7 +77,7 @@ def record_husk_event(
 
 
 def get_recent_husk_events(limit: int = 15) -> list[dict]:
-    """Return recent Husk coding agent events."""
+    """Return recent coding agent events."""
     with _lock:
         return [dict(e) for e in _recent_events[-max(1, limit):]]
 
@@ -146,7 +146,7 @@ class _HuskRequestHandler(BaseHTTPRequestHandler):
 
 
 def start_husk_server(port: int | None = None) -> bool:
-    """Start the local 127.0.0.1 Husk webhook listener if not already running."""
+    """Start the local 127.0.0.1 coding buddy webhook listener if not already running."""
     global _http_server, _http_thread
     with _lock:
         if _http_server is not None:
@@ -163,7 +163,7 @@ def start_husk_server(port: int | None = None) -> bool:
 
 
 def stop_husk_server() -> None:
-    """Stop the local Husk webhook listener if running."""
+    """Stop the local coding buddy webhook listener if running."""
     global _http_server, _http_thread
     with _lock:
         server = _http_server
@@ -178,33 +178,33 @@ def stop_husk_server() -> None:
 
 
 def husk_code_companion(action: str = "status", message: str = "") -> str:
-    """Inspect or control Code / Husk Mode for Claude Code, Codex, and OpenCode."""
+    """Inspect or control Coding buddy mode for Claude Code, Codex, and OpenCode."""
     act = (action or "status").strip().lower()
     if act == "enable":
         config.HUSK_MODE_ENABLED = True
         started = start_husk_server()
         port = getattr(config, "HUSK_PORT", 47831)
         if started:
-            return f"Code / Husk Mode enabled and listening on 127.0.0.1:{port}."
-        return "Code / Husk Mode enabled."
+            return f"Coding buddy mode enabled and listening on 127.0.0.1:{port}."
+        return "Coding buddy mode enabled."
 
     if act == "disable":
         config.HUSK_MODE_ENABLED = False
         stop_husk_server()
-        return "Code / Husk Mode disabled."
+        return "Coding buddy mode disabled."
 
     if act in ("snippet", "install_hooks_snippet", "hooks"):
         return "Add this to `.claude/settings.json`:\n" + get_claude_code_hook_snippet()
 
     if act == "log" and message.strip():
         record_husk_event("Note", summary=message.strip())
-        return f"Logged Husk status: {message.strip()}"
+        return f"Logged coding status: {message.strip()}"
 
     events = get_recent_husk_events(limit=6)
     enabled_str = "enabled" if getattr(config, "HUSK_MODE_ENABLED", False) else "disabled"
     if not events:
-        return f"Code / Husk Mode is {enabled_str}. No coding agent events recorded yet."
-    lines = [f"Code / Husk Mode is {enabled_str}. Recent coding agent activity:"]
+        return f"Coding buddy mode is {enabled_str}. No coding agent events recorded yet."
+    lines = [f"Coding buddy mode is {enabled_str}. Recent coding agent activity:"]
     for ev in events:
         lines.append(f"- [{ev['time']}] {ev['caption']}")
     return "\n".join(lines)
@@ -221,7 +221,7 @@ def check_proactive() -> str | None:
 
 
 def build_gui(parent=None):
-    """Build the Settings tab for Code / Husk Mode."""
+    """Build the Settings tab for Coding buddy mode."""
     from PySide6.QtGui import QGuiApplication
     from PySide6.QtWidgets import (
         QCheckBox,
@@ -240,7 +240,7 @@ def build_gui(parent=None):
     layout.setContentsMargins(12, 12, 12, 12)
     layout.setSpacing(10)
 
-    enable_check = QCheckBox("Enable Code / Husk Mode (live companion for Claude Code / Codex)")
+    enable_check = QCheckBox("Turn on coding buddy mode (live companion for Claude Code / Codex)")
     enable_check.setChecked(bool(getattr(config, "HUSK_MODE_ENABLED", False)))
 
     def _on_toggle(checked: bool):
@@ -308,7 +308,7 @@ TOOLS = [
         "function": {
             "name": "husk_code_companion",
             "description": (
-                "Check or control Code / Husk Mode (where Alyssa acts as a live desktop companion "
+                "Check or control Coding buddy mode (where Alyssa acts as a live desktop companion "
                 "for Claude Code, Codex, or OpenCode sessions), view recent coding agent activity, "
                 "or generate the `.claude/settings.json` hook configuration."
             ),

@@ -13,7 +13,7 @@ _tool_confirmation = threading.local()
 
 
 SECURITY_PRESETS: dict[str, dict[str, bool]] = {
-    "lockdown": {
+    "ask_always": {
         "open_apps_urls": False,
         "window_management": False,
         "media_volume": False,
@@ -25,7 +25,7 @@ SECURITY_PRESETS: dict[str, dict[str, bool]] = {
         "power_actions": False,
         "plugins": False,
     },
-    "guarded": {
+    "careful": {
         "open_apps_urls": False,
         "window_management": False,
         "media_volume": True,
@@ -37,7 +37,7 @@ SECURITY_PRESETS: dict[str, dict[str, bool]] = {
         "power_actions": False,
         "plugins": True,
     },
-    "trusted": {
+    "balanced": {
         "open_apps_urls": True,
         "window_management": True,
         "media_volume": True,
@@ -49,7 +49,7 @@ SECURITY_PRESETS: dict[str, dict[str, bool]] = {
         "power_actions": False,
         "plugins": True,
     },
-    "blackwall": {
+    "autopilot": {
         "open_apps_urls": True,
         "window_management": True,
         "media_volume": True,
@@ -97,21 +97,30 @@ TOOL_CAPABILITY_MAP: dict[str, str] = {
 }
 
 
+# Names used before v1.8.0, still found in older config files.
+_OLD_PRESET_NAMES = {"lockdown": "ask_always", "guarded": "careful", "trusted": "balanced", "blackwall": "autopilot"}
+DEFAULT_PRESET = "balanced"
+
+
+def normalize_preset(preset: str | None) -> str:
+    """A known preset key for `preset`, mapping old names and falling back to the default."""
+    key = str(preset or DEFAULT_PRESET).strip().lower()
+    key = _OLD_PRESET_NAMES.get(key, key)
+    return key if key in SECURITY_PRESETS else DEFAULT_PRESET
+
+
 def get_preset_permissions(preset: str) -> dict[str, bool]:
     """Return a copy of the capability permissions for a named security preset."""
-    key = (preset or "trusted").strip().lower()
-    return dict(SECURITY_PRESETS.get(key, SECURITY_PRESETS["trusted"]))
+    return dict(SECURITY_PRESETS[normalize_preset(preset)])
 
 
 def apply_security_preset(preset: str) -> dict[str, bool]:
     """Set config.SECURITY_PRESET and sync config.SECURITY_PERMISSIONS & CONFIRM_BEFORE_ACTIONS."""
-    key = (preset or "trusted").strip().lower()
-    if key not in SECURITY_PRESETS:
-        key = "trusted"
+    key = normalize_preset(preset)
     perms = get_preset_permissions(key)
     config.SECURITY_PRESET = key
     config.SECURITY_PERMISSIONS = perms
-    config.CONFIRM_BEFORE_ACTIONS = key == "lockdown"
+    config.CONFIRM_BEFORE_ACTIONS = key == "ask_always"
     return perms
 
 
@@ -149,10 +158,10 @@ def requires_confirmation(
     """Determine whether an action requires user confirmation under current security settings."""
     if getattr(config, "CONFIRM_BEFORE_ACTIONS", False):
         return True
-    preset = str(getattr(config, "SECURITY_PRESET", "trusted") or "trusted").strip().lower()
-    if preset == "lockdown":
+    preset = normalize_preset(getattr(config, "SECURITY_PRESET", DEFAULT_PRESET))
+    if preset == "ask_always":
         return True
-    if preset == "blackwall":
+    if preset == "autopilot":
         # Fail closed only when a forced critical check has no confirmation callback wired at all.
         if force and _critical_confirmation_callback is None:
             return True
@@ -161,7 +170,7 @@ def requires_confirmation(
     if not isinstance(perms, dict):
         perms = get_preset_permissions(preset)
     capability = infer_capability(tool_name, description)
-    allowed = perms.get(capability, SECURITY_PRESETS.get(preset, SECURITY_PRESETS["trusted"]).get(capability, True))
+    allowed = perms.get(capability, SECURITY_PRESETS[preset].get(capability, True))
     if force:
         # Critical tools (force=True) require confirmation unless the user explicitly enabled that high-risk capability.
         if capability in ("file_deletion", "shell_commands", "screen_clicking", "power_actions"):

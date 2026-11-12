@@ -57,7 +57,7 @@ _BLOCKED_GAMES = re.compile(
     re.IGNORECASE,
 )
 # Genres where a ~2 s reaction time means she'll be bad at it.
-_FAST_GENRES = {"Tactical shooter", "Fast shooter", "Racing & Sports", "Platformer", "Action & Soulslike"}
+_FAST_GENRES = {"Tactical shooter", "Arena & battle royale shooter", "Racing & Sports", "Platformer", "Action & Soulslike"}
 
 _DECIDE_PROMPT = """You are Alyssa playing "{game}" on the user's PC; image = game window now. Goal: {goal}
 {genre_line}{controls_line}{notes_line}Recent steps:

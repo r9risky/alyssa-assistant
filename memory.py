@@ -175,6 +175,7 @@ def forget(fact_snippet: str) -> str:
 # ---------------------------------------------------------------------------
 
 import datetime
+import hashlib
 import random
 import re
 import time
@@ -197,44 +198,48 @@ DEFAULT_ME_MARKDOWN = """# About You
 
 DEFAULT_CHECK_INS_MARKDOWN = """# Alyssa's check-ins
 
-Edit the bullet lines under each heading to change what she says. Remove a bullet to stop using it, or all the bullets under a heading to silence that check-in.
+These are the little nudges Alyssa gives you. Change any line under a heading, add your own,
+or delete every line under a heading to turn that nudge off.
 
 ## Water
-- Have a sip of water. I'll keep your spot.
-- Water break. Even you need a refill.
+- Quick drink of water? I'll hold your place.
+- Hydration check. Go on, I'll wait.
 
 ## Stretch
-- Unfold yourself a little. Those legs still work.
-- Tiny stretch break. I'll be right here.
+- You've been sitting a while. Stand up and stretch for a sec.
+- Roll your shoulders back. There, better.
 
 ## Look away
-- Give your eyes 20 seconds looking away from the screen. I'll survive.
-- Look at something far away for 20 seconds. Yes, even farther than me.
+- Rest your eyes for 20 seconds: look at something across the room.
+- Screen break for your eyes. Find something far away and stare at it.
 
 ## Sleep nudge
-- It's getting late. Your bed misses you.
+- It's pretty late. Tomorrow-you would appreciate some sleep.
 
 ## Meals
-- Been here a while. Go grab something to eat.
-- Food break. Can't run that brain on empty.
+- Have you eaten? Go get some food.
+- Snack time. Brains need fuel.
 
 ## Game break
-- Long session. Take a little break when you've got a good spot.
-- You've been at that game a while. Stretch those hands when you can.
+- Good time for a short break when you hit a safe spot.
+- Long gaming run. Give your hands and wrists a rest soon.
 
 ## Bored
-- So boreddd.
-- I've counted your desktop icons twice now.
-- Making my own entertainment over here.
+- I'm bored. Entertain me.
+- Nothing's happening. I've started naming your folders.
+- Just me here, twiddling my thumbs.
 
 ## Bored noticed
-- There you are.
-- Finally. Hi.
+- Oh, hey! You're back.
+- Hi! Missed you.
 
 ## Bored ignored
-- Fine. I'll entertain myself.
-- Cool. Cool cool cool.
+- Okay, I'll keep myself busy.
+- Fine, I'll just hum to myself.
 """
+
+# The previous built-in check-ins; a file still holding exactly those gets the new defaults.
+_OLD_DEFAULT_CHECK_INS_SHA256 = "c306dce694ff25202b97de3890f5f917d593aaf90ff5c8ad3c5c93bf338c7695"
 
 _DISK_TRANSCRIPTS_ENABLED = False
 _TRANSCRIPT_BUFFER: list[dict] = []
@@ -403,7 +408,7 @@ def load_check_in_lines() -> str:
         try:
             with open(path, "r", encoding="utf-8") as f:
                 content = f.read().strip()
-                if content:
+                if content and hashlib.sha256(content.encode("utf-8")).hexdigest() != _OLD_DEFAULT_CHECK_INS_SHA256:
                     return content
         except OSError:
             pass

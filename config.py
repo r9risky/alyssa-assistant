@@ -10,7 +10,6 @@ ASSISTANT_NAME_ALIASES = [
     "alicia", "elisa", "elissa", "melissa", "larissa",
     "eliza", "elysia", "elyssa", "allissa", "allisa", "alissia",
     "alisha", "alysha", "ahlyssa", "uhlyssa", "lisa",
-    "capri", "capri-desktop",
 ]
 
 
@@ -165,8 +164,8 @@ APP_LAUNCH_SETTLE_SECONDS = 1.5
 DEBUG_PRINT_TRANSCRIPTS = True
 CONFIRM_BEFORE_ACTIONS = False
 
-# Capri-inspired Security Presets: "lockdown", "guarded", "trusted", "blackwall"
-SECURITY_PRESET = 'trusted'
+# Security presets: "ask_always", "careful", "balanced", "autopilot"
+SECURITY_PRESET = 'balanced'
 SECURITY_PERMISSIONS = {
     "open_apps_urls": True,
     "window_management": True,
@@ -220,7 +219,7 @@ HOTKEY_HIDE = 'ctrl+alt+h'
 HOTKEY_QUIET = 'ctrl+alt+p'
 HOTKEY_HOP_OFF = 'ctrl+alt+c'
 
-# Capri-inspired Code / Husk Mode
+# Coding buddy mode (live status for coding agents)
 HUSK_MODE_ENABLED = False
 HUSK_PORT = 47831
 HUSK_WATCH_CLAUDE_CODE = True

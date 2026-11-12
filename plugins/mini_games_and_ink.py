@@ -1,7 +1,7 @@
 """Mini-Games (Tic-Tac-Toe, Connect Four, Rock Paper Scissors, Chess) & Screen Ink Overlay.
 
 Inspired by Capri Desktop's `Minis.cs` and `Ink.cs`:
-- `draw_on_screen`: Draw neon pink/cyan annotations (`line`, `arrow`, `circle`, `box`, `path`, `text`)
+- `draw_on_screen`: Draw neon pink/cyan annotations (`line`, `arrow`, `circle`, `box`, `path`, `label`)
   directly onto a transparent desktop overlay (`action="replace" | "add" | "clear"`).
 - `play_mini_game`: Play Tic-Tac-Toe, Connect Four, Rock Paper Scissors, or Chess against Alyssa
   by voice/chat or in an interactive GUI window!
@@ -23,54 +23,49 @@ _active_game_dialog = None
 
 
 # ===========================================================================
-# 1. Screen Ink Parser & Overlay (inspired by Capri's Ink.cs)
+# 1. Screen ink: parser and overlay
 # ===========================================================================
 
 def parse_ink_shapes(shapes_text: str) -> list[dict]:
-    """Parse semicolon- or newline-separated ink shape commands.
+    """Parse ink commands, one per line or separated by semicolons (screen pixels).
 
-    Supported shapes:
-    - `line x1 y1 x2 y2`
-    - `arrow x1 y1 x2 y2`
-    - `circle left top right bottom`
-    - `box left top right bottom`
-    - `path x1 y1 x2 y2 x3 y3 ...`
-    - `text x y label words`
+    - `circle CX CY RADIUS`          ring around a centre point
+    - `box X Y WIDTH HEIGHT`         rectangle from its top-left corner
+    - `line X1 Y1 X2 Y2` / `arrow X1 Y1 X2 Y2` (arrowhead at the second point)
+    - `path X1 Y1 X2 Y2 ...`         freehand stroke through 2+ points
+    - `label X Y some words`         text at a point
+
+    Every shape becomes {"kind", "points", "text"}; circles and boxes are stored as their
+    two bounding corners so the overlay draws them the same way.
     """
+    number = r"[+-]?\d+(?:\.\d+)?"
     parsed: list[dict] = []
     for raw_row in re.split(r"[;\r\n]+", shapes_text or ""):
-        row = raw_row.strip()
-        if not row:
+        words = raw_row.strip().split(None, 1)
+        if not words:
             continue
-        m = re.match(r"^(line|arrow|circle|box|path|text)\b\s*(.*)$", row, flags=re.IGNORECASE)
-        if not m:
+        kind, body = words[0].lower(), (words[1] if len(words) > 1 else "")
+        if kind == "label":
+            m = re.match(rf"^({number})[,\s]+({number})\s+(.+)$", body.strip())
+            if m and m.group(3).strip("\"' "):
+                parsed.append({
+                    "kind": "text",
+                    "points": [(float(m.group(1)), float(m.group(2)))],
+                    "text": m.group(3).strip().strip("\"'"),
+                })
             continue
-        kind = m.group(1).lower()
-        body = m.group(2).strip()
-        if kind == "text":
-            tm = re.match(
-                r"^([+-]?\d+(?:\.\d+)?)\s*[,\s]\s*([+-]?\d+(?:\.\d+)?)\s+(.+)$",
-                body,
-            )
-            if not tm:
-                continue
-            x, y = float(tm.group(1)), float(tm.group(2))
-            label = tm.group(3).strip().strip("\"'")
-            if label:
-                parsed.append({"kind": "text", "points": [(x, y)], "text": label})
-            continue
-
-        nums = [float(x) for x in re.findall(r"[+-]?\d+(?:\.\d+)?", body)]
-        if len(nums) % 2 != 0:
-            continue
-        if kind == "path" and len(nums) < 4:
-            continue
-        if kind in ("line", "arrow", "circle", "box") and len(nums) != 4:
-            continue
-        pts = [(nums[i], nums[i + 1]) for i in range(0, len(nums), 2)]
-        if kind in ("circle", "box") and (pts[0][0] == pts[1][0] or pts[0][1] == pts[1][1]):
-            continue
-        parsed.append({"kind": kind, "points": pts, "text": None})
+        nums = [float(n) for n in re.findall(number, body)]
+        if kind == "circle" and len(nums) == 3 and nums[2] > 0:
+            cx, cy, r = nums
+            parsed.append({"kind": "circle", "points": [(cx - r, cy - r), (cx + r, cy + r)], "text": None})
+        elif kind == "box" and len(nums) == 4 and nums[2] > 0 and nums[3] > 0:
+            x, y, w, h = nums
+            parsed.append({"kind": "box", "points": [(x, y), (x + w, y + h)], "text": None})
+        elif kind in ("line", "arrow") and len(nums) == 4:
+            parsed.append({"kind": kind, "points": [(nums[0], nums[1]), (nums[2], nums[3])], "text": None})
+        elif kind == "path" and len(nums) >= 4 and len(nums) % 2 == 0:
+            pts = [(nums[i], nums[i + 1]) for i in range(0, len(nums), 2)]
+            parsed.append({"kind": "path", "points": pts, "text": None})
     return parsed
 
 
@@ -197,7 +192,7 @@ def draw_on_screen(
                 {"kind": "text", "points": [(600.0, 400.0)], "text": label},
             ]
         if not parsed:
-            return "Give me shapes (e.g. 'circle 400 300 600 500; text 420 260 Here') or action='clear'."
+            return "Give me shapes (e.g. 'circle 500 400 100; label 420 260 Here') or action='clear'."
 
         if act == "add":
             _ink_shapes.extend(parsed)
@@ -721,9 +716,9 @@ def build_gui(parent=None, initial_game: str = "tic_tac_toe", as_window: bool = 
     # 5. Screen Ink Tab
     ink_tab = QWidget()
     ink_layout = QVBoxLayout(ink_tab)
-    ink_layout.addWidget(QLabel("Draw pink ink shapes on screen (e.g. `circle 300 200 500 400; text 320 170 Look here`):"))
+    ink_layout.addWidget(QLabel("Draw on screen (e.g. `circle 400 300 100; label 320 170 Look here`):"))
     ink_edit = QLineEdit()
-    ink_edit.setPlaceholderText("circle 400 250 650 450; arrow 300 200 400 250")
+    ink_edit.setPlaceholderText("circle 520 350 120; arrow 300 200 400 250")
     ink_btn_row = QHBoxLayout()
     draw_btn = QPushButton("Draw on Screen")
     clear_ink_btn = QPushButton("Clear Screen Ink")
@@ -747,25 +742,27 @@ TOOLS = [
         "function": {
             "name": "draw_on_screen",
             "description": (
-                "Draw or erase pink ink annotations directly on the user's screen without moving their mouse. "
-                "Shapes syntax: semicolon-separated commands like 'circle 300 200 500 400; arrow 200 150 300 200; "
-                "box 100 100 300 250; line 100 260 300 260; text 120 80 Click here'. Use action='clear' to erase."
+                "Sketch on top of the user's screen (it doesn't touch the mouse), e.g. to point something out. "
+                "Coordinates are screen pixels. Commands, separated by ';': 'circle CX CY RADIUS', "
+                "'box X Y WIDTH HEIGHT', 'line X1 Y1 X2 Y2', 'arrow X1 Y1 X2 Y2', 'path X1 Y1 X2 Y2 ...', "
+                "'label X Y words'. Example: 'circle 640 360 80; arrow 400 200 580 320; label 380 180 This one'. "
+                "action='clear' wipes the sketch."
             ),
             "parameters": {
                 "type": "object",
                 "properties": {
                     "shapes": {
                         "type": "string",
-                        "description": "Semicolon-separated shape commands (line, arrow, circle, box, path, text).",
+                        "description": "Drawing commands separated by ';' (circle, box, line, arrow, path, label).",
                     },
                     "action": {
                         "type": "string",
-                        "description": "'replace' (default), 'add' (keep existing ink), or 'clear' (erase all ink).",
+                        "description": "'replace' draws fresh (default), 'add' keeps what's there, 'clear' removes everything.",
                         "enum": ["replace", "add", "clear"],
                     },
                     "description": {
                         "type": "string",
-                        "description": "Optional free-form label or diagram topic if shapes are not provided.",
+                        "description": "If you have no coordinates, a short caption to show in a box mid-screen.",
                     },
                 },
                 "required": [],

@@ -65,7 +65,7 @@ def test_core_package_exports():
 def test_extension_toggles_in_dialogue():
     """Verify Capri features respect configuration toggles."""
     with patch.object(dialogue.config, "DESKTOP_CHAOS_ENABLED", False):
-        res = dialogue._handle_pre_model_intent("choom overflow")
+        res = dialogue._handle_pre_model_intent("fake crash")
         assert "disabled" in res.lower()
 
     with patch.object(dialogue.config, "WATCH_ALONG_ENABLED", False):

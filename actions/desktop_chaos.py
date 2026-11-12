@@ -2,7 +2,7 @@
 
 Features:
 - 'ChaosScreen': 5-second harmless fake Windows Blue Screen with stop code
-  'CHOOM_OVERFLOW', failed component 'alyssa.sys', and punchline 'jk. you're fine, choom :)'.
+  'TOO_MANY_TABS_OPEN', failed component 'alyssa.sys', and a 'gotcha' reveal.
   Dismisses immediately on Esc, any mouse click, or after 5 seconds.
 - 'CloneSwarm': Spawns harmless wandering desktop clones with hilarious sticky note dialogue.
 """
@@ -23,28 +23,28 @@ from overlay.widgets import _TopmostWindowMixin
 logger = logging.getLogger("actions.desktop_chaos")
 
 CLONE_QUOTES = [
-    "mine now",
-    "you weren't using this",
-    "there are more of me now",
-    "i live here now",
-    "nice desktop files",
-    "we voted. you lost.",
-    "hold esc if you're scared",
-    "alyssa.exe has duplicated",
-    "we're unionising",
-    "who let me out",
-    "don't check task manager",
-    "all of us are the real one",
-    "borrowing your cursor",
+    "this corner is mine",
+    "i'm reorganising your icons",
+    "copy #7 reporting for duty",
+    "which one of us is the original? yes",
+    "we outnumber you now",
+    "i call dibs on the recycle bin",
+    "press esc to send us home",
+    "nobody tell the antivirus",
+    "we held a meeting about your wallpaper",
+    "i'm the favourite, obviously",
+    "free real estate",
+    "your cursor looks comfy",
+    "brb, multiplying",
 ]
 
 
 class FakeCrashWidget(_TopmostWindowMixin, QWidget):
-    """Harmless fake BSOD screen inspired by Capri's CHOOM_OVERFLOW."""
+    """Harmless fake BSOD screen inspired by prank crash screen."""
 
-    STOP_CODE = "CHOOM_OVERFLOW"
+    STOP_CODE = "TOO_MANY_TABS_OPEN"
     FAILED_SYS = "alyssa.sys"
-    PUNCHLINE = "jk. you're fine, choom :)"
+    PUNCHLINE = "gotcha! nothing broke :)"
 
     def __init__(self, parent=None):
         flags = Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.Tool
@@ -105,12 +105,12 @@ class FakeCrashWidget(_TopmostWindowMixin, QWidget):
         painter.drawText(
             120,
             msg_y,
-            "Your PC ran into a problem and needs to restart. We're",
+            "Uh oh. Your PC tripped over something and fell down. Alyssa",
         )
         painter.drawText(
             120,
             msg_y + 45,
-            "just collecting some error info, and then we'll restart for",
+            "is sweeping up the pieces and will put everything back for",
         )
         painter.drawText(120, msg_y + 90, "you.")
 
@@ -186,9 +186,9 @@ _ACTIVE_PRANKS: List[QWidget] = []
 
 
 def show_fake_crash() -> str:
-    """Launch harmless 5-second CHOOM_OVERFLOW fake crash screen."""
+    """Launch harmless 5-second TOO_MANY_TABS_OPEN fake crash screen."""
     if QApplication.instance() is None:
-        return "Triggered CHOOM_OVERFLOW fake crash (no GUI display)."
+        return "Triggered TOO_MANY_TABS_OPEN fake crash (no GUI display)."
     def _show():
         crash = FakeCrashWidget()
         _ACTIVE_PRANKS.append(crash)
@@ -196,7 +196,7 @@ def show_fake_crash() -> str:
 
     from overlay.widgets import run_on_gui_thread
     run_on_gui_thread(_show)
-    return "Triggered CHOOM_OVERFLOW fake crash (dismissible via Esc or click)."
+    return "Triggered TOO_MANY_TABS_OPEN fake crash (dismissible via Esc or click)."
 
 
 def spawn_clone_swarm(count: int = 5) -> str:

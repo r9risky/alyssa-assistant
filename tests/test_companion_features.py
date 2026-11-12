@@ -265,7 +265,7 @@ class TestMidJobAsidesAndChaos:
 
     def test_desktop_chaos_fake_crash(self):
         msg = show_fake_crash()
-        assert "CHOOM_OVERFLOW" in msg
+        assert "TOO_MANY_TABS_OPEN" in msg
         dismiss_res = dismiss_all_pranks()
         assert "Dismissed" in dismiss_res
 
@@ -286,8 +286,8 @@ class TestMidJobAsidesAndChaos:
         res_clip = _handle_pre_model_intent("Hey Alyssa, clip that!")
         assert "clip" in res_clip.lower()
 
-        res_crash = _handle_pre_model_intent("Hey Alyssa, choom overflow")
-        assert "CHOOM_OVERFLOW" in res_crash
+        res_crash = _handle_pre_model_intent("Hey Alyssa, fake crash")
+        assert "TOO_MANY_TABS_OPEN" in res_crash
         dismiss_all_pranks()
 
     def test_game_sense_odd_dimensions_safe(self):
@@ -310,14 +310,6 @@ class TestMidJobAsidesAndChaos:
         assert hud._minimized is True
         hud.toggle_minimized()
         assert hud._minimized is False
-
-    def test_capri_alias_recognition(self):
-        import nameutil
-        assert nameutil.contains_name("Hey Capri, join the Discord call")
-        assert nameutil.contains_name("Capri what is the weather")
-        span = nameutil.find_name_span("Hey Capri, what's up")
-        assert span is not None
-        assert nameutil.strip_name_at_span("Hey Capri, what's up", span) == "what's up"
 
     def test_pre_model_stop_and_call_triggers(self):
         import brain.dialogue as dialogue

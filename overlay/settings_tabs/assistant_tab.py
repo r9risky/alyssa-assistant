@@ -323,11 +323,12 @@ class AssistantTabMixin:
             "🛡️",
         )
         self.security_preset_combo = QComboBox()
-        self.security_preset_combo.addItem("Lockdown (Ask for every tool)", "lockdown")
-        self.security_preset_combo.addItem("Guarded (Allow read-only, ask for changes)", "guarded")
-        self.security_preset_combo.addItem("Trusted (Allow standard tools, ask for shell/files)", "trusted")
-        self.security_preset_combo.addItem("Blackwall (Autonomous — no prompts)", "blackwall")
-        current_preset = str(getattr(config, "SECURITY_PRESET", "trusted") or "trusted").strip().lower()
+        self.security_preset_combo.addItem("Ask always (asks before every tool)", "ask_always")
+        self.security_preset_combo.addItem("Careful (looking is fine, asks before changes)", "careful")
+        self.security_preset_combo.addItem("Balanced (everyday tools, asks for shell/files)", "balanced")
+        self.security_preset_combo.addItem("Autopilot (never asks)", "autopilot")
+        from actions.confirmation import normalize_preset
+        current_preset = normalize_preset(getattr(config, "SECURITY_PRESET", None))
         preset_idx = self.security_preset_combo.findData(current_preset)
         self.security_preset_combo.setCurrentIndex(preset_idx if preset_idx >= 0 else 2)
         self.security_preset_combo.currentIndexChanged.connect(self._queue_assistant_apply)
@@ -877,7 +878,7 @@ class AssistantTabMixin:
             "SPEAK_RESPONSES": self.speak_check.isChecked(),
             "CAVEMAN_MODE": self.caveman_combo.currentData(),
             "CONFIRM_BEFORE_ACTIONS": self.confirm_check.isChecked(),
-            "SECURITY_PRESET": self.security_preset_combo.currentData() or "trusted",
+            "SECURITY_PRESET": self.security_preset_combo.currentData() or "balanced",
             "QUIET_MODE": self.quiet_mode_check.isChecked(),
             "HIDE_CONSOLE_WINDOW": not self.show_console_check.isChecked(),
             "SYSTEM_WATCH_ENABLED": self.system_watch_enabled_check.isChecked(),
@@ -1013,7 +1014,7 @@ class AssistantTabMixin:
                 )
 
         old_hide = config.HIDE_CONSOLE_WINDOW
-        old_preset = getattr(config, "SECURITY_PRESET", "trusted")
+        old_preset = getattr(config, "SECURITY_PRESET", "balanced")
         old_whisper = (config.WHISPER_MODEL_SIZE, config.WHISPER_DEVICE, config.WHISPER_COMPUTE_TYPE)
         old_system_watch = (
             config.SYSTEM_WATCH_ENABLED, config.SYSTEM_WATCH_INTERVAL_SECONDS
@@ -1027,7 +1028,7 @@ class AssistantTabMixin:
         if remote_error:
             QMessageBox.warning(self, "Phone remote", remote_error)
 
-        if old_preset != getattr(config, "SECURITY_PRESET", "trusted"):
+        if old_preset != getattr(config, "SECURITY_PRESET", "balanced"):
             try:
                 import actions
                 actions.apply_security_preset(config.SECURITY_PRESET)

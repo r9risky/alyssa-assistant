@@ -1,7 +1,7 @@
 """Desktop Chaos & Pranks plugin for Alyssa.
 
 Inspired by Capri Desktop:
-- 'trigger_fake_crash': Harmless 5-second CHOOM_OVERFLOW blue screen with quick Esc exit.
+- 'trigger_fake_crash': Harmless 5-second TOO_MANY_TABS_OPEN blue screen with quick Esc exit.
 - 'spawn_clones': Spawns harmless cheeky Alyssa clone cards on screen.
 - 'clear_chaos_pranks': Instantly closes all prank widgets.
 """
@@ -14,7 +14,7 @@ from actions.desktop_chaos import dismiss_all_pranks, show_fake_crash, spawn_clo
 
 
 def trigger_fake_crash(args: Optional[Dict[str, Any]] = None, **kwargs) -> str:
-    """Show the harmless 5-second CHOOM_OVERFLOW fake BSOD."""
+    """Show the harmless 5-second TOO_MANY_TABS_OPEN fake BSOD."""
     return show_fake_crash()
 
 
@@ -35,7 +35,7 @@ TOOLS = [
         "type": "function",
         "function": {
             "name": "trigger_fake_crash",
-            "description": "Trigger the harmless 5-second CHOOM_OVERFLOW fake blue screen prank (press Esc or click to dismiss).",
+            "description": "Trigger the harmless 5-second TOO_MANY_TABS_OPEN fake blue screen prank (press Esc or click to dismiss).",
             "parameters": {
                 "type": "object",
                 "properties": {},

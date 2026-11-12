@@ -537,6 +537,14 @@ def _remember_turn(user_text: str, assistant_text: str):
         del _conversation_history[:2]
 
 
+_WATCH_ALONG_PHRASES = {
+    f"{verb} {thing}{tail}"
+    for verb in ("watch", "let's watch", "lets watch", "come watch", "react to")
+    for thing in ("this", "that", "this video", "this stream", "this movie", "this show")
+    for tail in ("", " with me", " together")
+    if tail or verb != "watch"  # plain "watch this" is too vague on its own
+}
+
 _CREATOR_QUESTION_RE = re.compile(
     r"who\s+(?:made|make|created|create|built|build|developed|develop|"
     r"programmed|program|coded|code|designed|design)\s+(?:you|"
@@ -867,7 +875,7 @@ def _handle_pre_model_intent(user_text: str):
         _remember_turn(user_text, reply)
         return reply
 
-    # Capri-inspired mid-job asides (fast status & instant stop)
+    # Mid-job asides: instant status and stop without a model call
     try:
         from actions.asides import ACTIVE_JOB, AsideKind, classify_aside, format_status_reply
         if ACTIVE_JOB.is_active:
@@ -887,7 +895,7 @@ def _handle_pre_model_intent(user_text: str):
     # Fast watch-along & gaming co-pilot deterministic triggers
     try:
         cleaned_text = _strip_leading_filler(user_text or "").strip().lower()
-        if re.search(r"^(?:watch (?:this|that)(?: (?:video|stream|film|movie|show))? with me|let'?s watch (?:this|that)(?: together)?|react to (?:this|that))$", cleaned_text):
+        if cleaned_text.rstrip("!.?") in _WATCH_ALONG_PHRASES:
             if not getattr(config, "WATCH_ALONG_ENABLED", True):
                 return "Watch-along mode is currently disabled in Settings."
             from plugins.watch_along import start_watch_along
@@ -910,7 +918,7 @@ def _handle_pre_model_intent(user_text: str):
             reply = res.get("message", "Clip recorded!")
             _remember_turn(user_text, reply)
             return reply
-        if re.search(r"^(?:fake crash|crash your pc|choom overflow|fake bsod)$", cleaned_text):
+        if re.search(r"^(?:fake crash|crash your pc|fake bsod|fake blue screen|prank crash)$", cleaned_text):
             if not getattr(config, "DESKTOP_CHAOS_ENABLED", True):
                 return "Desktop chaos pranks are currently disabled in Settings."
             from actions.desktop_chaos import show_fake_crash

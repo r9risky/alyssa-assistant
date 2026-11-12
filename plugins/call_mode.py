@@ -2,7 +2,7 @@
 
 Inspired by Capri Desktop's `CallMode.cs`:
 - Joins Discord/Vesktop voice channels, Zoom, Microsoft Teams, WhatsApp, Steam, or Browser calls.
-- Relays messages to friends on the call (e.g. "tell them I'll be on in 15, and launch whatever they're playing").
+- Relays messages to friends on the call (e.g. "tell them I'm joining in ten minutes, and open the game they're on").
 - Arms delegated errands to launch games or music that friends in the call choose.
 - Strict Security Gate: Friends' requests are quarantined and held for the user's explicit confirmation.
 """
@@ -325,7 +325,7 @@ TOOLS = [
                     },
                     "message": {
                         "type": "string",
-                        "description": "Message to pass on to your friends (e.g. 'I will be on in 15').",
+                        "description": "Message to pass on to your friends (e.g. 'I'm joining in ten minutes').",
                         "default": "",
                     },
                     "errand": {

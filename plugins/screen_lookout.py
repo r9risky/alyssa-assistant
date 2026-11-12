@@ -96,7 +96,7 @@ def watch_for(
 
         norm_text = _normalize_watch_text(raw)
         if not norm_text:
-            return "Tell me what to watch for on your screen."
+            return "What should I keep an eye out for?"
 
         for existing in _active_watches:
             if existing["text"].lower() == norm_text.lower():
