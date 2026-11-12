@@ -109,9 +109,34 @@ def _focus_process_window(pids: list[int]) -> bool:
     return bool(user32.SetForegroundWindow(hwnd))
 
 
+def _discord_quick_switch(query: str) -> None:
+    """Open Discord's quick switcher (Ctrl+K), type *query*, and pick the top match.
+    Prefixes: '*' searches servers, '!' searches voice channels (picking one joins it)."""
+    import pyautogui
+
+    pyautogui.hotkey("ctrl", "k")
+    time.sleep(0.4)
+    if query.isascii():
+        pyautogui.write(query, interval=0.02)
+    else:
+        import pyperclip  # pyautogui can't type non-ASCII names; paste them instead
+
+        pyperclip.copy(query)
+        pyautogui.hotkey("ctrl", "v")
+    time.sleep(0.7)
+    pyautogui.press("enter")
+    time.sleep(0.9)
+
+
+# The message/errand from a "join the call, tell them ..." that had to stop and ask
+# which server/channel, so the follow-up answer doesn't lose it.
+_pending_join: dict = {}
+
+
 def join_call(
     args: Optional[dict] = None,
     app: str = "auto",
+    server: str = "",
     channel: str = "",
     message: str = "",
     errand: str = "open_app",
@@ -120,11 +145,34 @@ def join_call(
     """Join a Discord/Vesktop voice channel, Zoom, Teams, WhatsApp, or Browser call and relay a message."""
     if isinstance(args, dict):
         app = args.get("app") or app
+        server = args.get("server") or server
         channel = args.get("channel") or channel
         message = args.get("message") or message
         errand = args.get("errand") or errand
 
+    server = (server or "").strip().lstrip("*")
+    channel = (channel or "").strip().lstrip("#!")
+    if _pending_join:
+        message = message or _pending_join.get("message", "")
+        server = server or _pending_join.get("server", "")
+        channel = channel or _pending_join.get("channel", "")
+        errand = _pending_join.get("errand", errand) if errand == "open_app" else errand
+
     app_choice, pids = resolve_call_app(app)
+    auto_join = getattr(config, "CALL_AUTO_JOIN_ENABLED", True)
+    is_discord = app_choice in ("Discord", "Vesktop")
+
+    # Discord users are in many servers: ask instead of guessing which call is meant.
+    if is_discord and pids and auto_join and not (server and channel):
+        _pending_join.clear()
+        _pending_join.update(message=message, errand=errand, server=server, channel=channel)
+        missing = " and ".join(
+            part for part, value in (("server", server), ("voice channel", channel)) if not value
+        )
+        known = f" on {server}" if server else (f" for #{channel}" if channel else "")
+        return f"Which {missing} should I join{known}?"
+    _pending_join.clear()
+
     session = get_call_session()
 
     # 1. Start call session (shows the HUD via a queued Qt signal)
@@ -138,15 +186,21 @@ def join_call(
     # 3. Focus the call app and click the voice channel / Join button if auto-join is on.
     # The user's own "join the call" plus the auto-join setting is the approval for the click.
     join_note = ""
-    if getattr(config, "CALL_AUTO_JOIN_ENABLED", True) and pids:
+    if auto_join and pids:
         try:
             if _focus_process_window(pids):
                 time.sleep(0.4)
-                import actions
-                target_desc = f"{channel} voice channel" if channel else "Join Voice button"
-                result = actions.click_screen_element(target_desc, confirmed=True)
-                if not str(result).startswith("Clicked"):
-                    join_note = f" (Couldn't click into the channel myself: {result})"
+                if is_discord:
+                    _discord_quick_switch(f"*{server}")
+                    _discord_quick_switch(f"!{channel}")
+                else:
+                    import actions
+                    target_desc = f"{channel} voice channel" if channel else "Join Voice button"
+                    result = actions.click_screen_element(target_desc, confirmed=True)
+                    if not str(result).startswith("Clicked"):
+                        join_note = f" (Couldn't click into the channel myself: {result})"
+            else:
+                join_note = f" (Couldn't bring {app_choice} to the front to join.)"
         except Exception as e:
             join_note = f" (Couldn't click into the channel myself: {e})"
     elif not pids:
@@ -170,6 +224,8 @@ def join_call(
     session.post_caption(getattr(config, "ASSISTANT_NAME", "Alyssa"), spoken_text)
 
     channel_info = f" in #{channel}" if channel else ""
+    if server:
+        channel_info += f" on {server}"
     return f"Joined {app_choice}{channel_info} with Call Mode on.{join_note} {spoken_text}"
 
 
@@ -257,9 +313,14 @@ TOOLS = [
                         "description": "App name: 'auto' (detect the running call app), 'Discord', 'Vesktop', 'Zoom', 'Teams', 'WhatsApp', 'Steam', or 'Browser'.",
                         "default": "auto",
                     },
+                    "server": {
+                        "type": "string",
+                        "description": "Discord server name. If the user didn't say, call without it and she will ask.",
+                        "default": "",
+                    },
                     "channel": {
                         "type": "string",
-                        "description": "Voice channel name in Discord (optional).",
+                        "description": "Voice channel name in that server. If the user didn't say, call without it and she will ask.",
                         "default": "",
                     },
                     "message": {
