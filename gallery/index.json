@@ -1,0 +1,33 @@
+{
+  "version": 1,
+  "plugins": [
+    {
+      "name": "crypto_prices",
+      "title": "Crypto Prices",
+      "description": "Live crypto prices from CoinGecko's free API - 'what's bitcoin at?'.",
+      "permissions": [
+        "network"
+      ],
+      "file": "plugins/crypto_prices.py",
+      "sha256": "6782bfcc5cfb01d668ee741073c9e9686f278a5c30294b6a0af54b8ae3672fec"
+    },
+    {
+      "name": "dice_and_coins",
+      "title": "Dice And Coins",
+      "description": "Dice rolls and coin flips - 'roll 2d20', 'flip a coin'.",
+      "permissions": [],
+      "file": "plugins/dice_and_coins.py",
+      "sha256": "610154224ba15493d7e525c75e9576d0883363dc47f8d03f40e8f09ae68e9310"
+    },
+    {
+      "name": "wiki_lookup",
+      "title": "Wiki Lookup",
+      "description": "Short Wikipedia summaries - 'who was Ada Lovelace?'.",
+      "permissions": [
+        "network"
+      ],
+      "file": "plugins/wiki_lookup.py",
+      "sha256": "bd27b8052e6c6bff0ee40a085b911f05ee1324cd32f8d70fa220ced0f1ff169e"
+    }
+  ]
+}
