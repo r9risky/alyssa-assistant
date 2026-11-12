@@ -8,9 +8,10 @@ import os
 import threading
 
 import requests
-from PySide6.QtCore import QTimer
+from PySide6.QtCore import Qt, QTimer
+from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import (
-    QButtonGroup, QComboBox, QLabel, QLineEdit, QProgressBar, QPushButton,
+    QButtonGroup, QComboBox, QFrame, QLabel, QLineEdit, QProgressBar, QPushButton,
     QRadioButton, QVBoxLayout, QWizard, QWizardPage,
 )
 
@@ -18,7 +19,7 @@ import config
 import credential_store
 
 from .credential_checks import _atomic_write_text, _patch_config_line, _verify_gemini_key
-from .rendering import _BASE_DIR
+from .rendering import _BASE_DIR, BUNDLED_IDLE_IMAGE
 from .theming import _theme
 
 try:
@@ -74,10 +75,21 @@ def _ollama_running() -> bool:
 
 def _heading(layout, title: str, subtitle: str):
     """Title + subtitle inside the page; QWizard's own header ignores the dark theme."""
-    head = QLabel(f"<b style='font-size:17px'>{title}</b><br><span style='opacity:0.75'>{subtitle}</span>")
-    head.setWordWrap(True)
+    head = QLabel(title)
+    head.setObjectName("pageTitle")
+    sub = QLabel(subtitle)
+    sub.setObjectName("pageSubtitle")
+    sub.setWordWrap(True)
     layout.addWidget(head)
-    layout.addSpacing(6)
+    layout.addWidget(sub)
+    layout.addSpacing(10)
+
+
+def _option(title: str, detail: str) -> QRadioButton:
+    button = QRadioButton(f"{title}\n{detail}")
+    button.setObjectName("optionCard")
+    button.setCursor(Qt.PointingHandCursor)
+    return button
 
 
 def _note(text: str) -> QLabel:
@@ -93,8 +105,8 @@ class _BrainPage(QWizardPage):
         layout = QVBoxLayout(self)
         _heading(layout, "Give her a brain", "She needs a language model to think. Both of these are free.")
 
-        self.gemini = QRadioButton("Gemini (free key from Google, works on any PC)")
-        self.ollama = QRadioButton("Ollama (runs on your PC, no key; needs a decent GPU)")
+        self.gemini = _option("Gemini", "Free key from Google. Works on any PC.")
+        self.ollama = _option("Ollama", "Runs on your PC, no key. Needs a decent GPU.")
         self.group = QButtonGroup(self)
         for button in (self.gemini, self.ollama):
             self.group.addButton(button)
@@ -111,6 +123,7 @@ class _BrainPage(QWizardPage):
         self.key.textChanged.connect(self._key_edited)
         layout.addWidget(self.key)
         self.check = QPushButton("Check key")
+        self.check.setObjectName("secondaryButton")
         self.check.clicked.connect(self._check_key)
         layout.addWidget(self.check)
         self.status = _note("")
@@ -158,6 +171,9 @@ class _BrainPage(QWizardPage):
             return  # edited while checking
         self.key_ok = ok
         self.status.setText("Key works. ✓" if ok else f"That didn't work: {message}")
+        self.status.setProperty("tone", "ok" if ok else "bad")
+        self.status.style().unpolish(self.status)
+        self.status.style().polish(self.status)
         self.completeChanged.emit()
 
     def isComplete(self) -> bool:
@@ -240,8 +256,8 @@ class _VoicePage(QWizardPage):
         super().__init__()
         layout = QVBoxLayout(self)
         _heading(layout, "Pick her voice", "You can change this any time in Settings.")
-        self.edge = QRadioButton("Nanami (Microsoft Edge voice; free, needs internet)")
-        self.kokoro = QRadioButton("Kokoro (free and offline; downloads ~120 MB once)")
+        self.edge = _option("Nanami", "Microsoft Edge voice. Free, needs internet.")
+        self.kokoro = _option("Kokoro", "Free and offline. Downloads about 120 MB once.")
         group = QButtonGroup(self)
         for button in (self.edge, self.kokoro):
             group.addButton(button)
@@ -250,29 +266,118 @@ class _VoicePage(QWizardPage):
         layout.addStretch(1)
 
 
+def _wizard_style(t: dict) -> str:
+    return f"""
+    QWizard, QWizardPage {{ background: {t['bg']}; }}
+    QWidget {{ font-family: 'Segoe UI Variable Text', 'Segoe UI', sans-serif; }}
+    QLabel {{ color: {t['text']}; font-size: 13px; }}
+    QLabel#pageTitle {{ font-size: 21px; font-weight: 700; }}
+    QLabel#pageSubtitle {{ color: {t['subtext']}; font-size: 13px; }}
+    QFrame#sidePanel {{
+        background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+            stop:0 {t['header_grad_start']}, stop:1 {t['header_grad_end']});
+        border-right: 1px solid {t['border']};
+    }}
+    QLabel[tone="ok"] {{ color: {t['success']}; font-weight: 600; }}
+    QLabel[tone="bad"] {{ color: {t['danger']}; }}
+    QLabel#sideHello {{ color: {t['text']}; font-size: 13px; font-weight: 600; }}
+    QLabel#step {{
+        color: {t['subtext']}; font-size: 13px; padding: 8px 12px; border-radius: 8px;
+    }}
+    QLabel#step[state="current"] {{ color: #FFFFFF; background: {t['accent']}; font-weight: 600; }}
+    QLabel#step[state="done"] {{ color: {t['text']}; }}
+    QRadioButton#optionCard {{
+        color: {t['text']}; font-size: 13px; background: {t['card']};
+        border: 1px solid {t['border']}; border-radius: 10px; padding: 12px 14px; spacing: 12px;
+    }}
+    QRadioButton#optionCard:hover {{ border-color: {t['accent_hover']}; }}
+    QRadioButton#optionCard:checked {{ border: 2px solid {t['accent']}; background: {t['panel']}; }}
+    QRadioButton::indicator {{
+        width: 14px; height: 14px; border-radius: 9px;
+        border: 2px solid {t['subtext']}; background: transparent;
+    }}
+    QRadioButton::indicator:checked {{ border-color: {t['accent']}; background: {t['accent']}; }}
+    QLineEdit, QComboBox {{
+        color: {t['text']}; background: {t['card']}; border: 1px solid {t['border']};
+        border-radius: 8px; padding: 8px 10px; font-size: 13px;
+        selection-background-color: {t['accent']};
+    }}
+    QLineEdit:focus, QComboBox:focus {{ border-color: {t['accent']}; }}
+    QComboBox QAbstractItemView {{
+        color: {t['text']}; background: {t['card']}; selection-background-color: {t['accent']};
+    }}
+    QProgressBar {{ background: {t['card']}; border: 1px solid {t['border']}; border-radius: 6px; height: 12px; }}
+    QProgressBar::chunk {{ background: {t['success']}; border-radius: 5px; }}
+    QPushButton {{
+        color: {t['text']}; background: {t['card']}; border: 1px solid {t['border']};
+        border-radius: 8px; padding: 8px 18px; font-size: 13px; font-weight: 600; min-width: 64px;
+    }}
+    QPushButton:hover {{ border-color: {t['accent_hover']}; }}
+    QPushButton:disabled {{ color: {t['subtext']}; }}
+    QPushButton#primaryButton {{ color: #FFFFFF; background: {t['accent']}; border: none; }}
+    QPushButton#primaryButton:hover {{ background: {t['accent_hover']}; }}
+    QPushButton#primaryButton:pressed {{ background: {t['accent_press']}; }}
+    QPushButton#primaryButton:disabled {{ background: {t['border']}; color: {t['subtext']}; }}
+    """
+
+
 class SetupWizard(QWizard):
     def __init__(self, parent, settings: dict):
         super().__init__(parent)
         self.setWindowTitle(f"Set up {config.ASSISTANT_NAME}")
         self.setWizardStyle(QWizard.ClassicStyle)
+        self.setOption(QWizard.NoBackButtonOnStartPage, True)
         self.setButtonText(QWizard.CancelButton, "Later")
+        self.setButtonText(QWizard.NextButton, "Next")
+        self.setButtonText(QWizard.BackButton, "Back")
         self.setButtonText(QWizard.FinishButton, "Start")
-        t = _theme(settings)
-        self.setStyleSheet(
-            f"QWizard, QWizardPage {{ background: {t['bg']}; }}"
-            f"QLabel, QRadioButton {{ color: {t['text']}; font-size: 13px; }}"
-            f"QRadioButton::indicator {{ width: 12px; height: 12px; border-radius: 8px;"
-            f"  border: 2px solid {t['text']}; background: transparent; }}"
-            f"QRadioButton::indicator:checked {{ background: {t['accent']}; border-color: {t['accent']}; }}"
-            f"QProgressBar::chunk {{ background: {t['accent']}; }}"
-        )
-        self.setMinimumSize(520, 380)
+        for which in (QWizard.NextButton, QWizard.FinishButton):
+            self.button(which).setObjectName("primaryButton")
+        self.setStyleSheet(_wizard_style(_theme(settings)))
+        self.setMinimumSize(720, 460)
+        self._side_panel = self._build_side_panel()  # keep a Python ref: PySide may not take ownership
+        self.setSideWidget(self._side_panel)
+        self.currentIdChanged.connect(self._highlight_step)
         self.brain = _BrainPage()
         self.mic = _MicPage()
         self.voice = _VoicePage()
         for page in (self.brain, self.mic, self.voice):
             self.addPage(page)
         self.problems: list[str] = []
+        self._highlight_step(0)
+
+    def _build_side_panel(self) -> QFrame:
+        panel = QFrame()
+        panel.setObjectName("sidePanel")
+        panel.setFixedWidth(220)
+        col = QVBoxLayout(panel)
+        col.setContentsMargins(20, 24, 20, 20)
+        col.setSpacing(6)
+        portrait = QLabel()
+        portrait.setAlignment(Qt.AlignCenter)
+        picture = QPixmap(BUNDLED_IDLE_IMAGE)
+        if not picture.isNull():
+            portrait.setPixmap(picture.scaled(150, 150, Qt.KeepAspectRatio, Qt.SmoothTransformation))
+        col.addWidget(portrait)
+        hello = QLabel(f"Hi! I'm {config.ASSISTANT_NAME}.\nLet's get me set up.")
+        hello.setObjectName("sideHello")
+        hello.setAlignment(Qt.AlignCenter)
+        col.addWidget(hello)
+        col.addSpacing(18)
+        self._step_labels = []
+        for number, name in enumerate(("Brain", "Microphone", "Voice"), start=1):
+            step = QLabel(f"{number}   {name}")
+            step.setObjectName("step")
+            col.addWidget(step)
+            self._step_labels.append(step)
+        col.addStretch(1)
+        return panel
+
+    def _highlight_step(self, page_id: int):
+        for index, label in enumerate(self._step_labels):
+            label.setProperty("state", "current" if index == page_id else ("done" if index < page_id else ""))
+            label.style().unpolish(label)
+            label.style().polish(label)
 
     def choices(self) -> dict:
         return {
