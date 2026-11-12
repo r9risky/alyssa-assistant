@@ -259,6 +259,7 @@ class StreamingSpeaker:
     _BOUNDARY_RE = re.compile(r"(?<=[.!?])\s+|(?<=[,;:])\s+")
     _SENTENCE_RE = re.compile(r"(?<=[.!?])\s+")
     clean = staticmethod(lambda text: text)
+    on_chunk_start = None
 
     def __init__(
         self,
@@ -266,7 +267,9 @@ class StreamingSpeaker:
         on_playback_end=None,
         stop_event=None,
         clean=None,
+        on_chunk_start=None,
     ):
+        self.on_chunk_start = on_chunk_start  # called with each sentence as she starts saying it
         if clean is not None:
             self.clean = clean  # e.g. main._clean_reply_for_speech, run per spoken chunk
         self.on_playback_start = on_playback_start
@@ -341,6 +344,13 @@ class StreamingSpeaker:
             _eleven_realtime_tts.cancel(self)
         return self.interrupted
 
+    def _announce_chunk(self, text):
+        if self.on_chunk_start is not None and text:
+            try:
+                self.on_chunk_start(text)
+            except Exception as e:
+                print(f"(on_chunk_start failed: {e})")
+
     def _start_playback(self):
         if self._playback_started:
             return
@@ -367,13 +377,15 @@ class StreamingSpeaker:
         try:
             while not self.interrupted:
                 try:
-                    path = ready.get(timeout=0.05)
+                    item = ready.get(timeout=0.05)
                 except queue.Empty:
                     continue
-                if path is None:
+                if item is None:
                     return
+                path, text = item
                 try:
                     self._start_playback()
+                    self._announce_chunk(text)
                     if not _play(path, self.stop_event):
                         self.stop_event.set()
                 except Exception as e:
@@ -402,7 +414,8 @@ class StreamingSpeaker:
                         break
                     parts.append(extra)
                 try:
-                    ready.put(_synthesize_to_temp_file(" ".join(parts)))
+                    text = " ".join(parts)
+                    ready.put((_synthesize_to_temp_file(text), text))
                 except Exception as e:
                     print(f"(voice synthesis failed for one chunk, skipping: {e})")
         finally:
@@ -412,9 +425,11 @@ class StreamingSpeaker:
     def _drain_ready(ready, synth_thread):
         while synth_thread.is_alive() or not ready.empty():
             try:
-                _remove_quietly(ready.get(timeout=0.1))
+                item = ready.get(timeout=0.1)
             except queue.Empty:
-                pass
+                continue
+            if item is not None:
+                _remove_quietly(item[0])
 
     def _run_eleven_realtime(self):
         playback = threading.Thread(target=self._play_pcm, daemon=True)
@@ -427,6 +442,7 @@ class StreamingSpeaker:
                     _eleven_realtime_tts.send(" ", flush=True)
                     break
                 _eleven_realtime_tts.send(chunk + " ")
+                self._announce_chunk(chunk)  # the socket streams it out within a moment
             while not self.interrupted and not self._audio_done.wait(0.02):
                 pass
             if self.interrupted:

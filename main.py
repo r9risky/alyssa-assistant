@@ -214,6 +214,7 @@ def _stream_command_reply(command: str, bridge=None, text_queue=None):
             on_playback_end=(bridge.talk_end_signal.emit if bridge else None),
             stop_event=stop_event,
             clean=_clean_reply_for_speech,
+            on_chunk_start=(bridge.spoken_signal.emit if bridge else None),
         )
         listener_thread = threading.Thread(target=listen, daemon=True)
         listener_thread.start()
