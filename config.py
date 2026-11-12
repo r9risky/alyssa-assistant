@@ -79,6 +79,10 @@ CALL_VIRTUAL_MIC_VOLUME = 1.0  # 0.0 to 1.0 loudness of Alyssa in the call
 CALL_FRIENDS_CAN_ASK = True  # Friends can request games/songs, requiring your confirmation
 CALL_BARGE_IN_TOLERANCE_SECONDS = 1.0  # Yields only if someone speaks over her for >1.0s
 CALL_AUTO_JOIN_ENABLED = True  # Automatically click Join Voice / Join Meeting
+# Discord bot: she joins voice channels as her own bot account (token lives in the OS keyring)
+DISCORD_BOT_ENABLED = False
+DISCORD_OWNER_ID = ''  # your Discord user ID, so she can find the voice channel you're in
+DISCORD_LISTEN = True  # hear friends (transcribed on this PC; AI only when they say her name)
 
 SAMPLE_RATE = 16000
 SILENCE_SECONDS = 0.95
@@ -357,6 +361,9 @@ class AudioSettings(_SettingsView):
     CALL_FRIENDS_CAN_ASK: bool
     CALL_BARGE_IN_TOLERANCE_SECONDS: float
     CALL_AUTO_JOIN_ENABLED: bool
+    DISCORD_BOT_ENABLED: bool
+    DISCORD_OWNER_ID: str
+    DISCORD_LISTEN: bool
 
 
 class MemorySettings(_SettingsView):

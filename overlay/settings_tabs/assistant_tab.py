@@ -1,7 +1,7 @@
 import os
 import threading
 
-from PySide6.QtCore import Qt, QTime
+from PySide6.QtCore import Qt, QTime, QTimer
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -435,6 +435,39 @@ class AssistantTabMixin:
         self._add_row(remote_form, "", self.phone_remote_new_btn)
         outer.addWidget(remote_card)
         self._refresh_phone_remote_link()
+
+        discord_card, discord_form = self._create_card(
+            "Discord Bot",
+            "She joins your Discord voice channel as her own bot and talks there. Friends' "
+            "speech is turned into text on this PC; the AI only runs when someone says her name. "
+            "Create the bot at discord.com/developers/applications (Bot > Reset Token).",
+            "🎧",
+        )
+        self.discord_enabled_check = QCheckBox("Use her Discord bot for calls")
+        self.discord_enabled_check.setChecked(bool(getattr(config, "DISCORD_BOT_ENABLED", False)))
+        self.discord_enabled_check.toggled.connect(self._queue_assistant_apply)
+        self._add_row(discord_form, "Discord bot:", self.discord_enabled_check)
+        import credential_store
+        self.discord_token_edit = QLineEdit()
+        self.discord_token_edit.setEchoMode(QLineEdit.Password)
+        has_token = bool(credential_store.get_secret("DISCORD_BOT_TOKEN"))
+        self.discord_token_edit.setPlaceholderText("Saved - paste a new one to replace it" if has_token else "Paste the bot token")
+        self.discord_token_edit.editingFinished.connect(self._queue_assistant_apply)
+        self._add_row(discord_form, "Bot token:", self.discord_token_edit)
+        self.discord_owner_edit = QLineEdit(str(getattr(config, "DISCORD_OWNER_ID", "") or ""))
+        self.discord_owner_edit.setPlaceholderText("Your user ID (Developer Mode > right-click you > Copy User ID)")
+        self.discord_owner_edit.editingFinished.connect(self._queue_assistant_apply)
+        self._add_row(discord_form, "Your Discord ID:", self.discord_owner_edit)
+        self.discord_listen_check = QCheckBox("Let her hear my friends")
+        self.discord_listen_check.setChecked(bool(getattr(config, "DISCORD_LISTEN", True)))
+        self.discord_listen_check.toggled.connect(self._queue_assistant_apply)
+        self._add_row(discord_form, "Listening:", self.discord_listen_check)
+        self.discord_status_label = QLabel()
+        self.discord_status_label.setWordWrap(True)
+        self.discord_status_label.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        self._add_row(discord_form, "Status:", self.discord_status_label)
+        outer.addWidget(discord_card)
+        self._refresh_discord_status()
         outer.addStretch(1)
 
         self._update_provider_rows_visibility()
@@ -626,6 +659,18 @@ class AssistantTabMixin:
         return w
 
     # -- Credential & Verification Helpers ---------------------------------
+
+    def _refresh_discord_status(self):
+        import discord_bot
+
+        text = f"Bot: {discord_bot.status()}."
+        if not discord_bot.can_listen():
+            text += (" Bot listening isn't installed, so she hears the call through this PC's "
+                     "audio (stay in the call yourself).")
+        link = discord_bot.invite_url()
+        if link:
+            text += f"\nAdd her to a server: {link}"
+        self.discord_status_label.setText(text)
 
     def _refresh_phone_remote_link(self, *args, regenerate: bool = False):
         """Show the phone link and its QR code while the remote is switched on."""
@@ -887,6 +932,9 @@ class AssistantTabMixin:
             "BRIEFING_TIME": self.briefing_time_edit.time().toString("HH:mm"),
             "BRIEFING_NEWS_TOPICS": self.briefing_topics_edit.text().strip(),
             "PHONE_REMOTE_ENABLED": self.phone_remote_check.isChecked(),
+            "DISCORD_BOT_ENABLED": self.discord_enabled_check.isChecked(),
+            "DISCORD_OWNER_ID": self.discord_owner_edit.text().strip(),
+            "DISCORD_LISTEN": self.discord_listen_check.isChecked(),
             "WHISPER_MODEL_SIZE": self.whisper_model_combo.currentText().strip() or config.WHISPER_MODEL_SIZE,
             "WHISPER_DEVICE": self._whisper_device_display_to_value.get(self.whisper_device_combo.currentText(), "auto"),
             "WHISPER_COMPUTE_TYPE": self.whisper_compute_combo.currentText().strip() or "auto",
@@ -1027,6 +1075,18 @@ class AssistantTabMixin:
         remote_error = phone_remote.start()
         if remote_error:
             QMessageBox.warning(self, "Phone remote", remote_error)
+        import credential_store
+        import discord_bot
+        new_token = self.discord_token_edit.text().strip()
+        if new_token:
+            if credential_store.set_secret("DISCORD_BOT_TOKEN", new_token):
+                self.discord_token_edit.clear()
+                self.discord_token_edit.setPlaceholderText("Saved - paste a new one to replace it")
+            discord_bot.stop()  # log in again with the new token
+        discord_error = discord_bot.start()
+        if discord_error and self.discord_enabled_check.isChecked():
+            QMessageBox.warning(self, "Discord bot", discord_error)
+        QTimer.singleShot(4000, self._refresh_discord_status)
 
         if old_preset != getattr(config, "SECURITY_PRESET", "balanced"):
             try:

@@ -81,10 +81,11 @@ hiddenimports = [
 ]
 
 # Kokoro offline voice: its config.json and espeak-ng's DLL + phoneme data.
+# Discord bot: discord.py's bundled libopus DLL, davey (voice encryption) and PyNaCl.
 from PyInstaller.utils.hooks import collect_all
 
 binaries = []
-for _package in ("kokoro_onnx", "espeakng_loader", "phonemizer"):
+for _package in ("kokoro_onnx", "espeakng_loader", "phonemizer", "discord", "davey", "nacl"):
     try:
         _datas, _binaries, _hidden = collect_all(_package)
     except Exception:

@@ -537,6 +537,11 @@ def run_assistant_loop(bridge=None):
     remote_error = phone_remote.start(bridge)
     if remote_error:
         print(f"[phone remote] {remote_error}")
+    import discord_bot
+
+    discord_error = discord_bot.start()
+    if discord_error:
+        print(f"[discord] {discord_error}")
 
     wake_mode = str(getattr(config, "WAKE_WORD_MODE", "wake_word") or "wake_word").lower()
     print(f"{config.ASSISTANT_NAME} is running (listening mode: {wake_mode}). Press Ctrl+C to quit.")
