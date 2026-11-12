@@ -240,6 +240,7 @@ class AudioTabMixin:
         call_apps = [
             ("Auto (Auto-detect front app)", "auto"),
             ("Discord", "discord"),
+            ("Vesktop", "vesktop"),
             ("Zoom", "zoom"),
             ("Microsoft Teams", "teams"),
             ("WhatsApp", "whatsapp"),

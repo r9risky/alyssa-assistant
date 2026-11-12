@@ -919,7 +919,7 @@ def _handle_pre_model_intent(user_text: str):
             return reply
         if re.search(r"^join\s+(?:the\s+)?(?:([a-zA-Z0-9]+)\s+)?call(?:[,]?\s*(?:tell\s+them\s+|and\s+tell\s+them\s+|say\s+)(.+))?$", cleaned_text):
             m_join = re.search(r"^join\s+(?:the\s+)?(?:([a-zA-Z0-9]+)\s+)?call(?:[,]?\s*(?:tell\s+them\s+|and\s+tell\s+them\s+|say\s+)(.+))?$", cleaned_text)
-            app_arg = m_join.group(1) or "Discord"
+            app_arg = m_join.group(1) or "auto"
             msg_arg = m_join.group(2) or ""
             from plugins.call_mode import join_call
             reply = join_call({"app": app_arg, "message": msg_arg})

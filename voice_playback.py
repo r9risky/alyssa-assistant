@@ -25,6 +25,9 @@ import pygame
 
 _mixer_lock = threading.Lock()
 _mixer_ready = False
+# pygame.mixer.music is one global stream; two threads loading/stopping it at once
+# crashes SDL natively (e.g. a tool speaking into a call while her reply plays).
+_play_lock = threading.RLock()
 
 
 def _configured_output_device():
@@ -673,6 +676,11 @@ def _play_file_to_virtual_mic(path: str, stop_event=None):
 def _play(path: str, stop_event=None) -> bool:
     """Play *path* to completion, or stop when *stop_event* is set.
     True if finished on its own, False if cut off."""
+    with _play_lock:
+        return _play_locked(path, stop_event)
+
+
+def _play_locked(path: str, stop_event=None) -> bool:
     _ensure_mixer()
     music = pygame.mixer.music
     play_path = path

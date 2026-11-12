@@ -154,6 +154,8 @@ class SettingsMixin:
                 self.mini_player.apply_enabled()
         if getattr(self, "hover_pill", None) is not None and theme_changed:
             self.hover_pill.apply_theme()
+        if getattr(self, "call_panel", None) is not None and theme_changed:
+            self.call_panel.apply_theme()
         if self.tray is not None and theme_changed:
             from ..app_shell import _build_app_icon
 
