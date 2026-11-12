@@ -339,9 +339,15 @@ def _grace_period_active() -> bool:
     return time.time() < _grace_until
 
 
+# Saying "Alyssa" takes about half a second; less speech than this that comes
+# back as just her name is Whisper guessing from its prompt.
+_MIN_NAME_ONLY_SPEECH_SECONDS = 0.3
+
+
 def _extract_command(text: str):
-    """Command text if the assistant name was mentioned, else None."""
-    span = nameutil.find_name_span(text)
+    """Command text if she was addressed by name ("hey Alyssa, ..." or
+    "..., Alyssa"), else None. A passing mention mid-sentence doesn't count."""
+    span = nameutil.find_address_span(text)
     if span is None:
         return None
     return nameutil.strip_name_at_span(text, span)
@@ -646,7 +652,10 @@ def run_assistant_loop(bridge=None):
                         # Acoustic trigger wasn't caught in real-time, check if Whisper transcribed the name
                         command = _extract_command(text)
                         if command is None:
-                            continue  # didn't mention Alyssa - ignore
+                            continue  # didn't address Alyssa - ignore
+                        if not command.strip() and recorder.last_speech_seconds() < _MIN_NAME_ONLY_SPEECH_SECONDS:
+                            # A cough or click that Whisper "heard" as her name.
+                            continue
                 else:
                     command = _strip_name_mention(text)
 

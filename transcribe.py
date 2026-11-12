@@ -23,6 +23,7 @@ except ImportError:  # Existing installs keep working until requirements are ref
     websocket_connect = None
 
 from config import AUDIO_SETTINGS as config
+import nameutil
 import telemetry
 
 _model = None
@@ -196,6 +197,26 @@ def cache_streaming_transcript(text: str) -> None:
         _streamed_transcript = text or None
     if text:
         _notify_partial_transcript_hooks(text)
+
+
+_early_transcript = None  # (thread, result list) from recorder's early transcription
+
+
+def set_early_transcript(thread, result) -> None:
+    """Hand over a transcription the recorder started before you finished the
+    pause; the next transcribe() call waits for it instead of starting over."""
+    global _early_transcript
+    _early_transcript = (thread, result)
+
+
+def _consume_early_transcript():
+    global _early_transcript
+    job, _early_transcript = _early_transcript, None
+    if job is None:
+        return None
+    thread, result = job
+    thread.join()
+    return result[0] if result else None
 
 
 def _consume_streaming_transcript():
@@ -558,12 +579,17 @@ def _apply_vocabulary_corrections(text: str) -> str:
        on a close match (catches unlisted mishearings)."""
     corrections = getattr(config, "VOCABULARY_CORRECTIONS", [])
 
+    her_names = {n.lower() for n in nameutil.name_variants()}
     for correct, mishearings in corrections:
         for wrong in mishearings:
-            text = re.sub(re.escape(wrong), correct, text, flags=re.IGNORECASE)
+            text = re.sub(r"\b" + re.escape(wrong) + r"\b", correct, text, flags=re.IGNORECASE)
 
         if correct.lower() in text.lower():
             continue  # already correct (or just fixed above) - don't run fuzzy pass over it
+        if correct.lower() in her_names:
+            # Fuzzy-matching her name turned "Alice", "a listen" etc. into "Alyssa",
+            # which made her answer speech that wasn't for her.
+            continue
 
         target_len = len(correct.split())
         words = text.split()
@@ -595,7 +621,12 @@ def transcribe(audio) -> str:
     _t0 = time.time()
     result_text = _consume_streaming_transcript()
     if result_text is None:
+        result_text = _consume_early_transcript()
+    if result_text is None:
         result_text = _transcribe_impl(audio)
+    if _is_prompt_echo(result_text, build_contextual_prompt()):
+        print(f"(Ignored Whisper echoing its prompt: {result_text!r})")
+        result_text = ""
     if result_text:
         _notify_partial_transcript_hooks(result_text)
     telemetry.log(f"[timing] transcribe: {time.time() - _t0:.2f}s")
@@ -695,3 +726,21 @@ def _transcribe_impl_locked(audio, initial_prompt: str | None = None) -> str:
 
     result = " ".join(kept).strip()
     return _apply_vocabulary_corrections(result)
+
+
+def _is_prompt_echo(text: str, prompt: str | None) -> bool:
+    """Whisper sometimes "hears" its own prompt on noise ("Alyssa, open Chrome,
+    open Notepad"). Two or more prompt phrases in a row, and nothing else, is that
+    echo, not something you said."""
+    if not text or not prompt:
+        return False
+
+    def norm(s):
+        return " ".join(re.findall(r"[a-z0-9']+", s.lower()))
+
+    said = norm(text)
+    her_names = {n.lower() for n in nameutil.name_variants()}
+    phrases = [norm(p) for p in re.split(r"[,.:]", prompt)]
+    phrases = [p for p in phrases if p not in her_names]
+    hits = sum(1 for p in phrases if p and p in said)
+    return hits >= 2 and said in norm(prompt)
