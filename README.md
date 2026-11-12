@@ -57,9 +57,9 @@ Nanami voice. 🌸
 | 🍿 **Watch‑along** | "Watch this with me" and she'll react to videos and streams (sparingly, she has manners). |
 | ✏️ **Screen ink & mini‑games** | She can draw arrows and circles right on your screen, or play tic‑tac‑toe, Connect Four, rock paper scissors, or chess. |
 | 📝 **Remembers stuff** | Facts across sessions, reminders, timers, and sticky notes. |
-| 🤖 **Coding buddy** | Husk mode shows live status for Claude Code, Codex, and OpenCode sessions. |
+| 🤖 **Coding buddy** | Coding buddy mode shows live status for Claude Code, Codex, and OpenCode sessions. |
 | 🃏 **Pranks** | A harmless 5‑second fake blue screen and a swarm of cheeky clones. Turn off with `DESKTOP_CHAOS_ENABLED = False` if you're no fun. 😜 |
-| 🛡️ **Safety presets** | Lockdown, Guarded, Trusted, or Blackwall. You decide how much she's allowed to touch. |
+| 🛡️ **Safety presets** | Ask always, Careful, Balanced, or Autopilot. You decide how much she's allowed to touch. |
 
 ---
 
@@ -71,7 +71,7 @@ Nanami voice. 🌸
   browser calls.
 - Say *"Alyssa, join my Discord call"* and she'll ask **which server and
   voice channel**, then jump there with Discord's quick switcher (**Ctrl+K**).
-- Relay messages to your friends: *"tell them I'll be on in 15."*
+- Relay messages to your friends: *"tell them I'm joining in ten minutes."*
 - Friends on the call can ask her for songs or games too, but you get the
   final yes.
 - Her voice reaches the call through a virtual mic (`CABLE Input` by
@@ -164,7 +164,7 @@ setx CUSTOM_LLM_API_KEY "your-key"
 ```text
 Alyssa, open Spotify and play something chill
 Alyssa, join my Discord call
-Alyssa, tell them I'll be on in 15
+Alyssa, tell them I'm joining in ten minutes
 Alyssa, clip that!
 Alyssa, what am I looking at?
 Alyssa, tell me when the download finishes
@@ -200,10 +200,10 @@ person at your keyboard can do. So she comes with **safety presets**
 
 | Preset | Vibe |
 | --- | --- |
-| 🔒 `lockdown` | Asks before *everything*. |
-| 🧸 `guarded` | Media, clipboard, and screen reading only. |
-| 🤝 `trusted` *(default)* | Apps, windows, media, typing. Still asks before clicking, deleting, shell commands, or power actions. |
-| 🔥 `blackwall` | Full trust. You've been warned. |
+| 🔒 `ask_always` | Asks before *everything*. |
+| 🧸 `careful` | Media, clipboard, and screen reading only. |
+| 🤝 `balanced` *(default)* | Apps, windows, media, typing. Still asks before clicking, deleting, shell commands, or power actions. |
+| 🔥 `autopilot` | Never asks. You've been warned. |
 
 A few more honest notes:
 
@@ -342,7 +342,7 @@ commented‑out example.
 | `ASSISTANT_NAME` | The wake word (`Alyssa`) |
 | `LLM_PROVIDER` | Which brain is active |
 | `EDGE_TTS_VOICE` | Her voice (`ja-JP-NanamiNeural`) |
-| `SECURITY_PRESET` | `lockdown`, `guarded`, `trusted`, or `blackwall` |
+| `SECURITY_PRESET` | `ask_always`, `careful`, `balanced`, or `autopilot` (older names still work) |
 | `CONFIRM_BEFORE_ACTIONS` | Force a "yes" for every action |
 | `WHISPER_MODEL_SIZE` / `WHISPER_DEVICE` | STT model and `cpu` / `cuda` / `auto` |
 | `STT_PROVIDER` | `auto`, `local` Whisper, `groq`, or `elevenlabs_realtime` |

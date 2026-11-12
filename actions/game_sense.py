@@ -32,68 +32,123 @@ except ImportError:  # pragma: no cover
 
 logger = logging.getLogger("actions.game_sense")
 
-# Game genres and strategic wisdom
-GAME_GENRES: List[Tuple[str, str, str]] = [
+# Genre -> games we recognise by window title or process name, plus a short coaching note.
+# Short names that are also ordinary words get whole-word matching (see _title_pattern).
+_GENRE_GAMES: List[Tuple[str, Tuple[str, ...], str]] = [
     (
-        r"counter.?strike|\bcs ?2\b|\bcs ?go\b|valorant|rainbow six|\bsiege\b|tarkov|ready or not|insurgency|\bsquad\b|hunt.?showdown|gray zone",
         "Tactical shooter",
-        "Position beats speed. Keep crosshair at head height where enemies appear. Stop moving before shooting because moving ruins spread. Clear one angle at a time from cover. Walk near enemies—running is loud.",
+        ("arma", "counter-strike", "cs2", "csgo", "escape from tarkov", "hunt showdown",
+         "hunt: showdown", "insurgency", "rainbow six", "ready or not", "siege", "squad",
+         "tarkov", "valorant"),
+        "Rounds here are won by patience. Pre-aim the spots people peek from, stand still for "
+        "the shot, and tap rather than spray. Take fights one doorway at a time and use "
+        "footstep noise against them.",
     ),
     (
-        r"overwatch|marvel rivals|\bapex\b|fortnite|call of duty|warzone|battlefield|\bpubg\b|\bhalo\b|destiny|team fortress|titanfall|\bdoom\b|quake|the finals|splitgate|left 4 dead|borderlands|ultrakill|battlebit",
-        "Fast shooter",
-        "Keep moving, fight from cover or high ground, aim upper torso/head, and reload when safe. Play your character's role and back off when hurt to heal before re-engaging.",
+        "Arena & battle royale shooter",
+        ("apex", "apex legends", "battlefield", "borderlands", "call of duty", "deadlock",
+         "destiny", "doom", "fortnite", "halo", "left 4 dead", "marvel rivals", "overwatch",
+         "pubg", "quake", "splitgate", "team fortress", "the finals", "titanfall", "ultrakill",
+         "warzone"),
+        "Movement is your armour: strafe, use height, and never stand in the open. "
+        "Retreat to recover before you're one shot from dying, and play to your hero's job.",
     ),
     (
-        r"minecraft|terraria|valheim|\brust\b|\bark\b|subnautica|the forest|sons of the forest|palworld|don.?t starve|7 days to die|no man.?s sky|satisfactory|factorio|grounded|\braft\b|project zomboid|core keeper|enshrouded|v rising",
         "Survival & Crafting",
-        "The loop is gather -> craft better tools -> secure shelter -> explore further. Secure food and shelter before nightfall. Don't mine or fight on low health. Mark landmarks so you can navigate back.",
+        ("7 days to die", "ark", "core keeper", "don't starve", "enshrouded", "factorio",
+         "grounded", "minecraft", "no man's sky", "palworld", "project zomboid", "raft", "rust",
+         "satisfactory", "sons of the forest", "subnautica", "terraria", "the forest",
+         "v rising", "valheim"),
+        "Early on, everything serves the next upgrade: basic resources, then better tools, then "
+        "a safe base. Sort food and a bed before dark, avoid risky digging while hurt, and leave "
+        "markers so you can find home.",
     ),
     (
-        r"cyberpunk|skyrim|oblivion|fallout|witcher|grand theft|\bgta\b|red dead|assassin.?s creed|starfield|baldur|mass effect|dragon age|kingdom come|far cry|watch dogs|horizon|ghost of|\bmafia\b|outer worlds|avowed|hogwarts|arkham",
         "Open-World RPG",
-        "Follow quest markers on the minimap, read objectives, and scout encounters from cover before diving in. Check healing consumables and ammo. Save frequently before risky missions.",
+        ("arkham", "assassin's creed", "avowed", "baldur's gate", "cyberpunk", "dragon age",
+         "fallout", "far cry", "ghost of tsushima", "grand theft auto", "gta",
+         "hogwarts legacy", "horizon", "kingdom come", "mafia", "mass effect", "oblivion",
+         "outer worlds", "red dead", "skyrim", "starfield", "watch dogs", "witcher"),
+        "Lean on the quest tracker and minimap, and scope out a fight from a distance before "
+        "committing. Keep healing items stocked and save before anything that looks dangerous.",
     ),
     (
-        r"elden ring|dark souls|demon.?s souls|sekiro|bloodborne|hollow knight|monster hunter|god of war|devil may cry|lies of p|\bnioh\b|black myth|wukong|\bhades\b|cuphead|silksong|nier",
         "Action & Soulslike",
-        "Every enemy attack has a windup tell. Watch before committing. Hit once or twice in recovery windows, then roll out. Conserve stamina for dodges and heal only when safe.",
+        ("black myth", "bloodborne", "cuphead", "dark souls", "demon's souls", "devil may cry",
+         "elden ring", "god of war", "hades", "hollow knight", "lies of p", "monster hunter",
+         "nier", "nioh", "sekiro", "silksong", "wukong"),
+        "Learn the boss before trying to beat it: each attack has a wind-up you can read. "
+        "Punish in the gaps with a hit or two, keep stamina for dodging, and heal at a distance.",
     ),
     (
-        r"league of legends|\blol\b|dota|smite|heroes of the storm|age of empires|starcraft|company of heroes|civilization|\bciv\b|total war|stellaris|crusader kings|hearts of iron|\btft\b",
         "Strategy & MOBA",
-        "Decisions and map awareness matter more than fast clicks. Keep economy growing, maintain vision, track enemy cooldowns, and stay with waves/minions.",
+        ("age of empires", "civ", "civilization", "company of heroes", "crusader kings", "dota",
+         "hearts of iron", "heroes of the storm", "league of legends", "lol", "smite",
+         "starcraft", "stellaris", "teamfight tactics", "tft", "total war"),
+        "Good calls beat fast hands. Keep your economy climbing, know where the enemy is, "
+        "track their big cooldowns, and don't wander away from your lane or army.",
     ),
     (
-        r"bloons|tower defen[cs]e|kingdom rush|plants vs",
         "Tower Defense",
-        "Place towers where their range covers bends and multiple track sections. Prioritize early eco/money generators, and upgrade existing towers before spamming weak starters.",
+        ("bloons", "kingdom rush", "plants vs", "tower defence", "tower defense"),
+        "Build at corners and overlaps where one tower covers the path twice. Get income going "
+        "early and upgrade what you have before adding more cheap towers.",
     ),
     (
-        r"forza|need for speed|gran turismo|assetto|\bf1\b|mario kart|rocket league|trackmania|beamng|\bfifa\b|ea (sports )?fc|nba 2k|madden",
         "Racing & Sports",
-        "Look ahead down the track, not at your bumper. Brake in a straight line before entering a corner, then accelerate cleanly out. Steer in smooth taps.",
+        ("assetto corsa", "beamng", "ea sports fc", "f1", "fifa", "forza", "gran turismo",
+         "madden", "mario kart", "nba 2k", "need for speed", "rocket league", "trackmania"),
+        "Eyes on the next corner, not the car in front. Do your braking before the turn while "
+        "going straight, then power out, and keep steering inputs small.",
     ),
     (
-        r"super mario|celeste|ori and|rayman|\bsonic\b|\bcrash\b|fall guys|only up|getting over it|geometry dash",
         "Platformer",
-        "Jumps are about rhythm and edge precision. Stop and line up trajectory. Small controlled inputs beat erratic holding near fatal drops.",
+        ("celeste", "crash bandicoot", "fall guys", "geometry dash", "getting over it",
+         "only up", "ori and", "rayman", "sonic", "super mario"),
+        "Take a breath before tricky jumps and find the rhythm. Short, deliberate taps land more "
+        "ledges than holding a direction near a drop.",
     ),
     (
-        r"phasmophobia|lethal company|dead by daylight|outlast|amnesia|resident evil|silent hill|dead space|alien.?isolation|content warning|among us",
         "Horror & Co-op Survival",
-        "Audio cues reveal danger before sight. Keep an escape route clear, conserve light sources/batteries, and retreat rather than confronting unknown entities.",
+        ("alien isolation", "alien: isolation", "amnesia", "among us", "content warning",
+         "dead by daylight", "dead space", "lethal company", "outlast", "phasmophobia", "repo",
+         "resident evil", "silent hill"),
+        "Listen first: sounds give threats away before you see them. Know your way out, ration "
+        "batteries and light, and don't go poking at things you can't fight.",
     ),
     (
-        r"balatro|slay the spire|hearthstone|stardew|the sims|cities.? skylines|planet coaster|animal crossing|portal|the witness|tetris|chess|papers.? please|disco elysium",
         "Turn-based & Puzzle",
-        "Nothing is rushing you. Read card/item tooltips thoroughly, calculate synergies 2-3 turns ahead, and focus on consistency over high-variance gambles.",
+        ("animal crossing", "balatro", "chess", "cities skylines", "cities: skylines",
+         "disco elysium", "hearthstone", "papers please", "papers, please", "planet coaster",
+         "portal", "slay the spire", "stardew", "tetris", "the sims", "the witness"),
+        "There's no clock, so use it. Read every tooltip, plan a couple of turns out, and prefer "
+        "steady combos over risky long shots.",
     ),
     (
-        r"roblox",
         "Roblox",
-        "Every Roblox experience has unique rules. Check on-screen UI prompts (usually E to interact, number keys for inventory, / for chat). Esc then R then Enter resets character if stuck.",
+        ("roblox",),
+        "Each Roblox game has its own rules, so read the on-screen hints. E usually interacts, "
+        "number keys pick items and / opens chat. If you're stuck, Esc, R, Enter respawns you.",
     ),
+]
+
+
+def _title_pattern(names: Tuple[str, ...]) -> str:
+    """Alternation of names; punctuation inside a name may be a space or nothing.
+
+    Names of 4 letters or fewer ("ark", "rust", "lol") must stand alone so they don't fire
+    inside other words; longer ones match anywhere, e.g. "FortniteClient-Win64-Shipping.exe".
+    """
+    parts = []
+    for name in sorted(names, key=len, reverse=True):
+        tokens = [t for t in re.split(r"[^a-z0-9]+", name.lower()) if t]
+        body = r"[\W_]*".join(re.escape(t) for t in tokens)
+        parts.append(rf"(?<![a-z]){body}(?![a-z])" if len("".join(tokens)) <= 4 else body)
+    return "|".join(parts)
+
+
+GAME_GENRES: List[Tuple[str, str, str]] = [
+    (_title_pattern(names), genre, tips) for genre, names, tips in _GENRE_GAMES
 ]
 
 # Builtin control defaults for popular games

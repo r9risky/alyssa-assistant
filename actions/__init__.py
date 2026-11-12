@@ -12,7 +12,7 @@ from .clipboard_and_screen import (
 )
 from .confirmation import (
     SECURITY_PRESETS, VoiceConfirmationRequired, apply_security_preset,
-    get_preset_permissions, requires_confirmation,
+    get_preset_permissions, normalize_preset, requires_confirmation,
     set_critical_confirmation_callback, set_power_confirmation_callback,
     tool_confirmation_context,
 )
