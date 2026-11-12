@@ -36,6 +36,7 @@ class Bridge(QObject):
     talk_start_signal = Signal()  # emitted right before she starts talking
     talk_end_signal = Signal()  # emitted right after she finishes talking
     thinking_signal = Signal()  # emitted right after a command is captured, before the model replies
+    fondness_signal = Signal()  # fondness score changed; the hover pill re-reads it
     steps_signal = Signal(list)  # [(label, 'running'|'done'|'failed')] tool steps of the current turn
     sources_signal = Signal(list)  # [{url, title, site}] web pages behind the last reply
     mood_signal = Signal(str)  # emitted to set companion emotional mood ("happy", "surprised", etc.)
@@ -670,6 +671,8 @@ class HoverPill(_TopmostWindowMixin, QWidget):
         layout.setContentsMargins(4, 2, 4, 2)
         layout.setSpacing(4)
 
+        self.heart_label = QLabel(self)
+        layout.addWidget(self.heart_label)
         self.type_btn = QPushButton("TYPE", self)
         self.quiet_btn = QPushButton("QUIET", self)
         self.ride_btn = QPushButton("RIDE", self)
@@ -683,8 +686,8 @@ class HoverPill(_TopmostWindowMixin, QWidget):
         self.quiet_btn.clicked.connect(self._on_quiet_clicked)
         self.ride_btn.clicked.connect(self._on_ride_clicked)
 
-        self.resize(172, 30)
-        self.apply_theme()
+        self.resize(214, 30)
+        self.refresh_state()
         self.hide()
 
     def _on_type_clicked(self):
@@ -707,7 +710,14 @@ class HoverPill(_TopmostWindowMixin, QWidget):
         riding = bool(getattr(self.companion, "_riding_cursor", False))
         self.quiet_btn.setText("QUIET: ON" if quiet else "QUIET")
         self.ride_btn.setText("HOP OFF" if riding else "RIDE")
+        self._refresh_heart()
         self.apply_theme()
+
+    def _refresh_heart(self):
+        import fondness
+        value = fondness.score()
+        self.heart_label.setText(f"♥ {value}")
+        self.heart_label.setToolTip(f"Fondness: {fondness.level(value)[0]} ({value}/100)")
 
     def apply_theme(self):
         t = _theme(self.settings)
@@ -731,6 +741,15 @@ class HoverPill(_TopmostWindowMixin, QWidget):
             }}
             QPushButton:pressed {{
                 background: {_rgba(accent, 0.22)};
+            }}
+            QLabel {{
+                background: {_rgba(t['card'], 0.94)};
+                border: 1px solid {_rgba(t['border'], 0.85)};
+                border-radius: 9px;
+                color: {accent};
+                font-size: 9px;
+                font-weight: 700;
+                padding: 2px 7px;
             }}
         """)
         if quiet:

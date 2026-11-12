@@ -81,6 +81,7 @@ import plugin_loader
 import nameutil
 import telemetry
 import sources
+import fondness
 
 # Serializes speak() between the listen loop and the watcher thread so
 # alerts never overlap a reply. Watcher alerts wait; nothing is dropped.
@@ -675,6 +676,9 @@ def run_assistant_loop(bridge=None):
                 command, bridge, text_queue=text_queue
             )
             speculative_engine.clear(force=True)
+            fondness.record_turn(command)
+            if bridge is not None:
+                bridge.fondness_signal.emit()
             if actions.consume_restart_request():
                 actions.relaunch_alyssa()
             pending_interrupt_audio = final_interrupt_audio

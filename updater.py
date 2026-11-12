@@ -39,6 +39,7 @@ PRESERVED_FILES = {
     "briefing_state.json",
     "color_themes.json",
     "credentials.json",
+    "fondness.json",
     "memory.json",
     "overlay_config.json",
     "reminders.json",
