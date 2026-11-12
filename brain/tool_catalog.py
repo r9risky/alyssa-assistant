@@ -59,24 +59,12 @@ BASE_TOOLS = [
         "function": {
             "name": "open_url",
             "description": (
-                "Open a website URL in the default web browser, e.g. "
-                "'youtube.com', 'https://google.com/search?q=cats'. Also "
-                "use this for requests that explicitly ask to open, "
-                "browse to, or search the web/Google/a specific site - "
-                "'look that up online', 'search the web for X', 'google "
-                "X', 'pull up X's website'. Build a search URL (e.g. "
-                "'https://google.com/search?q=X') for those. Do NOT use "
-                "this for ordinary factual or trivia questions the user "
-                "is just asking out loud - 'who is Spider-Man', 'what's "
-                "the capital of France', 'how tall is the Eiffel Tower', "
-                "'how many ounces in a cup'. Those get answered directly "
-                "in your own spoken reply, from what you already know, "
-                "with NO tool call at all - exactly like a knowledgeable "
-                "person would just answer rather than grabbing a browser. "
-                "Opening a browser window steals focus from whatever the "
-                "user is doing (e.g. a game), so only open one when they "
-                "clearly asked to open/browse/search something themselves "
-                "- not merely asked a question you can answer yourself."
+                "Open a website in the default browser, e.g. 'youtube.com'. "
+                "For explicit 'search the web / google X / look it up online' "
+                "requests, open 'https://google.com/search?q=X'. Never use it "
+                "for questions you can answer yourself ('who is Spider-Man', "
+                "'capital of France'): answer those directly, since a browser "
+                "steals focus from what the user is doing."
             ),
             "parameters": {
                 "type": "object",
