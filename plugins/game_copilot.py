@@ -19,12 +19,12 @@ from actions.game_sense import (
     get_game_notes,
     save_game_controls,
 )
-from overlay.widgets import get_active_companion_window
+from overlay.widgets import get_active_companion_window, run_on_gui_thread
 
 logger = logging.getLogger("plugins.game_copilot")
 
 
-def detect_game(args: Optional[Dict[str, Any]] = None) -> str:
+def detect_game(args: Optional[Dict[str, Any]] = None, **kwargs) -> str:
     """Detect currently running game and return co-pilot tips."""
     detected = detect_active_game()
     if not detected:
@@ -37,9 +37,14 @@ def detect_game(args: Optional[Dict[str, Any]] = None) -> str:
     # If companion window has game_hud, update it
     win = get_active_companion_window()
     if win and hasattr(win, "game_hud") and win.game_hud:
-        win.game_hud.set_game(game_name)
-        win.game_hud.say(f"Ready for {game_name}. {genre} mode engaged.", mood="focus")
-        win.game_hud.show()
+        hud = win.game_hud
+
+        def _show_hud():
+            hud.set_game(game_name)
+            hud.say(f"Ready for {game_name}. {genre} mode engaged.", mood="focus")
+            hud.show()
+
+        run_on_gui_thread(_show_hud)
 
     notes = get_game_notes(game_name)
     extra_notes = f"\nYour notes for {game_name}:\n{notes}" if notes else ""
@@ -51,9 +56,9 @@ def detect_game(args: Optional[Dict[str, Any]] = None) -> str:
     )
 
 
-def clip_gameplay(args: Optional[Dict[str, Any]] = None) -> str:
+def clip_gameplay(args: Optional[Dict[str, Any]] = None, **kwargs) -> str:
     """Save the last N seconds of gameplay as an MP4 clip."""
-    args = args or {}
+    args = {**(args or {}), **kwargs}  # the brain calls tools as func(**model_args)
     seconds = int(args.get("seconds", 30))
     game = args.get("game")
 
@@ -64,18 +69,18 @@ def clip_gameplay(args: Optional[Dict[str, Any]] = None) -> str:
         path = result.get("path")
         msg = result.get("message")
         if win and hasattr(win, "game_hud") and win.game_hud:
-            win.game_hud.say("Clipped that! Saved to Videos/Alyssa.", mood="happy")
+            run_on_gui_thread(lambda: win.game_hud.say("Clipped that! Saved to Videos/Alyssa.", mood="happy"))
         return f"Clip recorded! {msg} (Path: {path})"
     else:
         err = result.get("message", "Unknown error")
         if win and hasattr(win, "game_hud") and win.game_hud:
-            win.game_hud.say("Couldn't grab the clip yet. Replay buffer was empty.", mood="surprise")
+            run_on_gui_thread(lambda: win.game_hud.say("Couldn't grab the clip yet. Replay buffer was empty.", mood="surprise"))
         return f"Could not clip gameplay: {err}"
 
 
-def view_game_controls(args: Optional[Dict[str, Any]] = None) -> str:
+def view_game_controls(args: Optional[Dict[str, Any]] = None, **kwargs) -> str:
     """View saved or builtin keybinds/controls for a game."""
-    args = args or {}
+    args = {**(args or {}), **kwargs}  # the brain calls tools as func(**model_args)
     game = args.get("game")
     if not game:
         detected = detect_active_game()
@@ -89,9 +94,9 @@ def view_game_controls(args: Optional[Dict[str, Any]] = None) -> str:
     return f"Keybinds & Controls for {game.title()}:\n{formatted}"
 
 
-def teach_game_controls(args: Optional[Dict[str, Any]] = None) -> str:
+def teach_game_controls(args: Optional[Dict[str, Any]] = None, **kwargs) -> str:
     """Save user-taught controls or keybinds for a game."""
-    args = args or {}
+    args = {**(args or {}), **kwargs}  # the brain calls tools as func(**model_args)
     game = args.get("game", "").strip()
     text = args.get("text", "").strip()
 
@@ -109,15 +114,15 @@ def teach_game_controls(args: Optional[Dict[str, Any]] = None) -> str:
 
     win = get_active_companion_window()
     if win and hasattr(win, "game_hud") and win.game_hud:
-        win.game_hud.set_game(game)
-        win.game_hud.say(f"Saved custom controls for {game}.", mood="happy")
+        hud = win.game_hud
+        run_on_gui_thread(lambda: (hud.set_game(game), hud.say(f"Saved custom controls for {game}.", mood="happy")))
 
     return f"Saved controls for {game} to {file_path}."
 
 
-def toggle_game_hud(args: Optional[Dict[str, Any]] = None) -> str:
+def toggle_game_hud(args: Optional[Dict[str, Any]] = None, **kwargs) -> str:
     """Toggle the floating cyberpunk Game HUD overlay."""
-    args = args or {}
+    args = {**(args or {}), **kwargs}  # the brain calls tools as func(**model_args)
     show = args.get("show", True)
     game = args.get("game")
 
@@ -125,13 +130,12 @@ def toggle_game_hud(args: Optional[Dict[str, Any]] = None) -> str:
     if not win or not hasattr(win, "game_hud") or not win.game_hud:
         return "Game HUD widget is not available in the current companion window."
 
+    hud = win.game_hud
     if show:
-        if game:
-            win.game_hud.set_game(game)
-        win.game_hud.show()
+        run_on_gui_thread(lambda: (game and hud.set_game(game), hud.show()))
         return "Game HUD overlay shown."
     else:
-        win.game_hud.hide()
+        run_on_gui_thread(hud.hide)
         return "Game HUD overlay hidden."
 
 

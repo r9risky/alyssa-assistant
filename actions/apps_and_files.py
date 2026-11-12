@@ -102,7 +102,9 @@ def relaunch_alyssa():
         CREATE_NO_WINDOW = 0x08000000
         DETACHED_PROCESS = 0x00000008
         subprocess.Popen(cmd, creationflags=CREATE_NO_WINDOW | DETACHED_PROCESS, close_fds=True)
-        sys.exit(0)
+        # Not sys.exit(): this runs on the assistant thread or inside a Qt slot, where
+        # SystemExit doesn't end the process and the batch file would wait forever.
+        os._exit(0)
 
     args = [sys.executable] + (sys.argv[1:] if getattr(sys, "frozen", False) else sys.argv)
     os.execv(sys.executable, args)

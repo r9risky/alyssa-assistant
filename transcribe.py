@@ -385,45 +385,8 @@ def preload():
         _get_model()
 
 
-def get_foreground_window_title() -> str:
-    """Return the title of the currently focused/active window.
-    Fast, safe, and non-blocking cross-platform implementation.
-    """
-    if os.name == "nt":
-        try:
-            import ctypes
-            user32 = ctypes.windll.user32
-            hwnd = user32.GetForegroundWindow()
-            if not hwnd:
-                return ""
-            length = user32.GetWindowTextLengthW(hwnd)
-            if length <= 0:
-                return ""
-            buf = ctypes.create_unicode_buffer(length + 1)
-            user32.GetWindowTextW(hwnd, buf, length + 1)
-            return buf.value.strip()
-        except Exception:
-            return ""
-    else:
-        try:
-            import subprocess
-            res = subprocess.run(
-                ["xdotool", "getactivewindow", "getwindowname"],
-                capture_output=True,
-                text=True,
-                timeout=0.1,
-            )
-            if res.returncode == 0:
-                return res.stdout.strip()
-        except Exception:
-            pass
-    return ""
-
-
 def build_contextual_prompt() -> str:
-    """Dynamically condition Whisper's decoder with current assistant state,
-    active window context, user nickname, tool names, and vocabulary corrections.
-    """
+    """Whisper initial prompt: base prompt, assistant name, user nickname, and vocabulary corrections."""
     parts = []
     base_prompt = getattr(config, "WHISPER_INITIAL_PROMPT", "")
     if base_prompt:
@@ -437,11 +400,8 @@ def build_contextual_prompt() -> str:
     if nickname:
         parts.append(f"User: {nickname}")
 
-    win_title = get_foreground_window_title()
-    if win_title:
-        # Keep title concise to save prompt tokens
-        clean_title = win_title[:60].strip()
-        parts.append(f"Active window: {clean_title}")
+    # No active-window title here: Whisper echoes its prompt on near-silent audio, so
+    # titles came back as "commands", and the prompt is also sent to Groq when enabled.
 
     vocab = getattr(config, "VOCABULARY_CORRECTIONS", [])
     vocab_words = []
@@ -716,9 +676,8 @@ def _transcribe_impl_locked(audio, initial_prompt: str | None = None) -> str:
             continue
         if segment.no_speech_prob > 0.6:
             continue  # model itself thinks this was probably non-speech
-        logprob_thresh = float(getattr(config, "WHISPER_LOG_PROB_THRESHOLD", -1.5))
-        if segment.avg_logprob < logprob_thresh:
-            continue  # low confidence in what it transcribed
+        if segment.avg_logprob < -1.0:
+            continue  # very low confidence; looser cutoffs let hallucinated commands through
         kept.append(text)
 
     result = " ".join(kept).strip()

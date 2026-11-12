@@ -171,7 +171,8 @@ def _refresh_ink_overlay():
         _ink_overlay_window.raise_()
         _ink_overlay_window.update()
 
-    QTimer.singleShot(0, _update_ui)
+    from overlay.widgets import run_on_gui_thread
+    run_on_gui_thread(_update_ui)
 
 
 def draw_on_screen(
@@ -584,7 +585,8 @@ def open_mini_game_window(game_key: str = "tic_tac_toe", parent=None):
         panel.raise_()
         panel.activateWindow()
 
-    QTimer.singleShot(0, _show)
+    from overlay.widgets import run_on_gui_thread
+    run_on_gui_thread(_show)
     return True
 
 

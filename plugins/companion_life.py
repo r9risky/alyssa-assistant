@@ -12,14 +12,13 @@ Lets the user control Alyssa's desktop companion body by voice or chat:
 
 from __future__ import annotations
 
-from PySide6.QtCore import QTimer
 
 
 def move_companion(action: str = "come_here", wander_frequency: str = "sometimes") -> str:
     """Control the desktop companion's movement, posture, cursor-riding, sleep, or mini player."""
     act = (action or "come_here").strip().lower()
     try:
-        from overlay.widgets import get_active_companion, save_overlay_settings
+        from overlay.widgets import get_active_companion, run_on_gui_thread, save_overlay_settings
     except ImportError:
         return "The desktop companion overlay isn't available right now."
 
@@ -28,15 +27,15 @@ def move_companion(action: str = "come_here", wander_frequency: str = "sometimes
         return "The desktop companion window isn't active right now."
 
     if act in ("come_here", "come", "cursor"):
-        QTimer.singleShot(0, companion.come_to_cursor)
+        run_on_gui_thread(companion.come_to_cursor)
         return "Coming over to your cursor."
 
     if act in ("ride_cursor", "ride", "follow_cursor"):
-        QTimer.singleShot(0, companion.start_cursor_ride)
+        run_on_gui_thread(companion.start_cursor_ride)
         return "Hopping onto your cursor! Press Ctrl+Alt+C or tell me to hop off anytime."
 
     if act in ("hop_off", "stop_riding", "unfollow"):
-        QTimer.singleShot(0, companion.stop_cursor_ride)
+        run_on_gui_thread(companion.stop_cursor_ride)
         return "Hopped off your cursor."
 
     if act in ("wander", "roam", "walk"):
@@ -45,7 +44,7 @@ def move_companion(action: str = "come_here", wander_frequency: str = "sometimes
             freq = "sometimes"
         companion.settings["wander_mode"] = freq
         save_overlay_settings(companion.settings)
-        QTimer.singleShot(0, companion.wander_step)
+        run_on_gui_thread(companion.wander_step)
         return f"I'll wander around your desktop ({freq})."
 
     if act in ("stop_wander", "stay", "sit"):
@@ -54,19 +53,19 @@ def move_companion(action: str = "come_here", wander_frequency: str = "sometimes
         return "Got it — staying right in my spot."
 
     if act in ("sleep", "nap", "rest"):
-        QTimer.singleShot(0, companion.enter_sleep)
+        run_on_gui_thread(companion.enter_sleep)
         return "Taking a little nap. Just call my name when you need me."
 
     if act in ("wake", "wake_up"):
-        QTimer.singleShot(0, companion.wake_up)
+        run_on_gui_thread(companion.wake_up)
         return "I'm awake and ready!"
 
     if act == "hide":
-        QTimer.singleShot(0, companion.hide)
+        run_on_gui_thread(companion.hide)
         return "Hiding my overlay. Use the tray icon or Ctrl+Alt+H to bring me back."
 
     if act == "show":
-        QTimer.singleShot(0, companion.show)
+        run_on_gui_thread(companion.show)
         return "Back on your screen!"
 
     if act in ("toggle_mini_player", "mini_player", "music_player"):
@@ -74,13 +73,13 @@ def move_companion(action: str = "come_here", wander_frequency: str = "sometimes
         companion.settings["mini_player_enabled"] = enabled
         save_overlay_settings(companion.settings)
         if getattr(companion, "mini_player", None) is not None:
-            QTimer.singleShot(0, companion.mini_player.apply_enabled)
+            run_on_gui_thread(companion.mini_player.apply_enabled)
         return "Showing the mini music player." if enabled else "Hid the mini music player."
 
     if act in ("mood", "emote", "react"):
         mood_type = (wander_frequency or "happy").strip().lower()
         if hasattr(companion, "set_mood"):
-            QTimer.singleShot(0, lambda: companion.set_mood(mood_type))
+            run_on_gui_thread(lambda: companion.set_mood(mood_type))
             return f"Expressed mood: {mood_type}."
         return "Companion mood not supported."
 
@@ -93,15 +92,14 @@ def move_companion(action: str = "come_here", wander_frequency: str = "sometimes
 def set_companion_mood(mood: str = "happy") -> str:
     """Set the desktop companion's mood and emote badge (e.g. happy, thinking, surprised, sparkle, sleepy, cool, neutral)."""
     try:
-        from overlay.widgets import get_active_companion
+        from overlay.widgets import get_active_companion, run_on_gui_thread
     except ImportError:
         return "The desktop companion overlay isn't available right now."
     companion = get_active_companion()
     if companion is None:
         return "The desktop companion window isn't active right now."
     if hasattr(companion, "set_mood"):
-        from PySide6.QtCore import QTimer
-        QTimer.singleShot(0, lambda: companion.set_mood(mood))
+        run_on_gui_thread(lambda: companion.set_mood(mood))
         return f"Expressed mood: {mood}."
     return "Companion mood not supported."
 

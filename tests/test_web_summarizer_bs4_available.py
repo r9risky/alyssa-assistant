@@ -18,9 +18,13 @@ class TestBeautifulSoupAvailable(unittest.TestCase):
             )
 
     def test_web_summarizer_reports_bs4_available(self):
-        import importlib
-        import plugins.web_summarizer as web_summarizer
-        importlib.reload(web_summarizer)  # pick up bs4 if it was just installed mid-session
+        import importlib.util
+        # Fresh load from the file (as plugin_loader does) to pick up bs4 if it was
+        # just installed; importlib.reload can't re-find loader-registered plugins.
+        path = os.path.join(os.path.dirname(__file__), "..", "plugins", "web_summarizer.py")
+        spec = importlib.util.spec_from_file_location("web_summarizer_bs4_check", path)
+        web_summarizer = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(web_summarizer)
         self.assertTrue(
             web_summarizer._BS4_AVAILABLE,
             "plugins/web_summarizer.py fell back to the regex HTML "

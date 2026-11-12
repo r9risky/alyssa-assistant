@@ -66,11 +66,10 @@ def record_husk_event(
 
     if getattr(config, "HUSK_MODE_ENABLED", False) and not getattr(config, "QUIET_MODE", False):
         try:
-            from overlay.widgets import get_active_companion
-            from PySide6.QtCore import QTimer
+            from overlay.widgets import get_active_companion, run_on_gui_thread
             companion = get_active_companion()
             if companion is not None and companion.bubble is not None:
-                QTimer.singleShot(0, lambda text=caption: companion.bubble.show_message(text))
+                run_on_gui_thread(lambda text=caption: companion.bubble.show_message(text))
         except Exception:
             pass
 

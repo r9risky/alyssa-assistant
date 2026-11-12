@@ -23,10 +23,10 @@ OLLAMA_URL = "http://localhost:11434/api/chat"
 OLLAMA_KEEP_ALIVE = "10m"
 
 GEMINI_API_KEY = _cred.get_secret('GEMINI_API_KEY')  # env always wins
-GEMINI_MODEL = 'gemini-2.5-flash'
+GEMINI_MODEL = 'gemini-3.5-flash-lite'
 
 OPENAI_API_KEY = _cred.get_secret('OPENAI_API_KEY')  # env always wins
-OPENAI_MODEL = 'gpt-4o-mini'
+OPENAI_MODEL = 'gpt-5-mini'
 OPENAI_BASE_URL = "https://api.openai.com/v1"
 
 SPOTIFY_CLIENT_ID = _cred.get_secret('SPOTIFY_CLIENT_ID')  # env always wins
@@ -34,7 +34,7 @@ SPOTIFY_CLIENT_SECRET = _cred.get_secret('SPOTIFY_CLIENT_SECRET')  # env always 
 YOUTUBE_API_KEY = _cred.get_secret('YOUTUBE_API_KEY')  # env always wins
 
 ANTHROPIC_API_KEY = _cred.get_secret('ANTHROPIC_API_KEY')  # env always wins
-ANTHROPIC_MODEL = 'claude-3-7-sonnet-latest'
+ANTHROPIC_MODEL = 'claude-sonnet-5'
 
 CUSTOM_API_KEY = _cred.get_secret('CUSTOM_API_KEY')  # env var is CUSTOM_LLM_API_KEY; always wins
 CUSTOM_BASE_URL = 'https://openrouter.ai/api/v1'
@@ -58,7 +58,7 @@ WHISPER_DEVICE = 'auto'
 WHISPER_COMPUTE_TYPE = 'auto'
 WHISPER_CPU_THREADS = 0
 WHISPER_NUM_WORKERS = 1
-WHISPER_LOG_PROB_THRESHOLD = -2.0
+WHISPER_LOG_PROB_THRESHOLD = -1.0
 WHISPER_INITIAL_PROMPT = (
     "Alyssa, open Chrome, open Notepad, open Spotify, open Windows Explorer, "
     "search for files, delete file, run command, remember that, type this, "
@@ -110,7 +110,7 @@ SPECULATIVE_TIMEOUT_SECONDS = 3.0
 SPEAK_RESPONSES = True
 TTS_PROVIDER = 'edge'  # "edge" or "elevenlabs"
 
-EDGE_TTS_VOICE = 'en-US-AriaNeural'
+EDGE_TTS_VOICE = 'ja-JP-NanamiNeural'
 EDGE_TTS_RATE = "+0%"
 EDGE_TTS_VOLUME = '+0%'
 EDGE_TTS_PITCH = "+0Hz"

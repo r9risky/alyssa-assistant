@@ -28,26 +28,27 @@ async def _synthesize(text: str, out_path: str):
     else:
         await _synthesize_edge(text, out_path)
 
-def _ensure_edge_tts_ssl_compat():
-    """Ensure edge_tts can connect even when behind SSL-inspecting proxies or custom roots."""
-    try:
-        import ssl
-        import edge_tts.communicate
-        import edge_tts.voices
-        ctx = ssl.create_default_context()
-        ctx.check_hostname = False
-        ctx.verify_mode = ssl.CERT_NONE
-        edge_tts.communicate._SSL_CTX = ctx
-        edge_tts.voices._SSL_CTX = ctx
-    except Exception:
-        pass
+def _is_cert_error(error: Exception) -> bool:
+    return "certificate" in str(error).lower()
+
+
+def _use_os_trust_store_for_edge_tts():
+    """edge_tts pins certifi's CA bundle, which lacks the root that antivirus/corporate
+    HTTPS inspection installs in the OS store. Retry against the OS store, still verified."""
+    import ssl
+    import edge_tts.communicate
+    import edge_tts.voices
+
+    ctx = ssl.create_default_context()
+    edge_tts.communicate._SSL_CTX = ctx
+    edge_tts.voices._SSL_CTX = ctx
 
 
 async def _synthesize_edge(text: str, out_path: str):
     rate_str = getattr(config, "EDGE_TTS_RATE", "+0%")
     pitch_str = getattr(config, "EDGE_TTS_PITCH", "+0Hz")
     voice_name = getattr(config, "EDGE_TTS_VOICE", "en-US-AriaNeural") or "en-US-AriaNeural"
-    try:
+    for attempt in range(2):
         communicate = edge_tts.Communicate(
             text,
             voice_name,
@@ -55,21 +56,13 @@ async def _synthesize_edge(text: str, out_path: str):
             volume=getattr(config, "EDGE_TTS_VOLUME", "+0%"),
             pitch=pitch_str,
         )
-        await communicate.save(out_path)
-    except Exception as e:
-        err_msg = str(e)
-        if "CERTIFICATE_VERIFY_FAILED" in err_msg or "certificate" in err_msg.lower():
-            _ensure_edge_tts_ssl_compat()
-            communicate = edge_tts.Communicate(
-                text,
-                voice_name,
-                rate=rate_str,
-                volume=getattr(config, "EDGE_TTS_VOLUME", "+0%"),
-                pitch=pitch_str,
-            )
+        try:
             await communicate.save(out_path)
-        else:
-            raise
+            return
+        except Exception as e:
+            if attempt or not _is_cert_error(e):
+                raise
+            _use_os_trust_store_for_edge_tts()
 
 
 # Reused Session: keep-alive to api.elevenlabs.io so pipelined sentences
@@ -124,11 +117,10 @@ async def _fetch_edge_voices_async():
     try:
         return await edge_tts.list_voices()
     except Exception as e:
-        err_msg = str(e)
-        if "CERTIFICATE_VERIFY_FAILED" in err_msg or "certificate" in err_msg.lower():
-            _ensure_edge_tts_ssl_compat()
-            return await edge_tts.list_voices()
-        raise
+        if not _is_cert_error(e):
+            raise
+        _use_os_trust_store_for_edge_tts()
+        return await edge_tts.list_voices()
 
 
 def list_edge_voices(force_refresh: bool = False) -> list:

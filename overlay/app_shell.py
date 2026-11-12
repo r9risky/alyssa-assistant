@@ -260,18 +260,24 @@ def run_with_assistant(assistant_loop_fn):
         from hotkeys import GlobalHotkeyManager
         import actions
         import recorder
+        from .widgets import run_on_gui_thread
+        gui_callbacks = {
+            "talk": lambda: (recorder.request_push_to_talk(), window.wake_up()),
+            "mute": lambda: actions.toggle_mute(),
+            "type": lambda: (chatbar.show(), chatbar.raise_(), chatbar.activateWindow(), chatbar.edit.setFocus()),
+            "hide": lambda: window.setVisible(not window.isVisible()),
+            "quiet": lambda: (setattr(config, "QUIET_MODE", not getattr(config, "QUIET_MODE", False)), hover_pill.refresh_state()),
+            "hop_off": lambda: window.stop_cursor_ride(),
+        }
+        # The Win32 poller fires on its own thread; widgets may only be touched on the GUI thread.
         hotkey_mgr = GlobalHotkeyManager(
-            {
-                "talk": lambda: (recorder.request_push_to_talk(), window.wake_up()),
-                "mute": lambda: actions.toggle_mute(),
-                "type": lambda: (chatbar.show(), chatbar.raise_(), chatbar.activateWindow(), chatbar.edit.setFocus()),
-                "hide": lambda: window.setVisible(not window.isVisible()),
-                "quiet": lambda: (setattr(config, "QUIET_MODE", not getattr(config, "QUIET_MODE", False)), hover_pill.refresh_state()),
-                "hop_off": lambda: window.stop_cursor_ride(),
-            }
+            {name: (lambda fn=fn: run_on_gui_thread(fn)) for name, fn in gui_callbacks.items()}
         )
-        hotkey_mgr.bind_qt_shortcuts(window)
         hotkey_mgr.start()
+        if hotkey_mgr._thread is None:
+            # No global poller (non-Windows): fall back to in-app shortcuts. Binding both
+            # made every chord fire twice, so "hide" toggled off and straight back on.
+            hotkey_mgr.bind_qt_shortcuts(window)
         window._hotkey_manager = hotkey_mgr
     except Exception as e:
         print(f"[hotkeys] Failed to initialize global hotkeys: {e}")

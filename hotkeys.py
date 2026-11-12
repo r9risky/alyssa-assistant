@@ -85,6 +85,7 @@ class GlobalHotkeyManager:
         self._thread: threading.Thread | None = None
         self._pressed_last: set[str] = set()
         self._qt_shortcuts: list = []
+        self._qt_parent = None
 
     def get_bindings(self) -> dict[str, str]:
         """Return current action -> chord mapping from config."""
@@ -109,6 +110,7 @@ class GlobalHotkeyManager:
 
     def bind_qt_shortcuts(self, parent_widget) -> None:
         """Attach QShortcut instances to `parent_widget` for in-app responsiveness."""
+        self._qt_parent = parent_widget
         try:
             from PySide6.QtCore import Qt
             from PySide6.QtGui import QKeySequence, QShortcut
@@ -133,6 +135,11 @@ class GlobalHotkeyManager:
                 lambda act=action_name: self.trigger(act)
             )
             self._qt_shortcuts.append(shortcut)
+
+    def reload_from_config(self) -> None:
+        """Apply edited chords. The Win32 poller re-reads config each tick; Qt shortcuts need rebinding."""
+        if self._qt_parent is not None:
+            self.bind_qt_shortcuts(self._qt_parent)
 
     def start(self) -> None:
         """Start background Windows key-state polling if running on Windows."""
