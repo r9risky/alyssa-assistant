@@ -35,14 +35,17 @@ _server: ThreadingHTTPServer | None = None
 _bridge = None
 
 
-def log(who: str, text: str) -> None:
-    """Add a line to the chat the phone shows ('you' or 'alyssa')."""
+def log(who: str, text: str, sources=None) -> None:
+    """Add a line to the chat the phone and the chat history window show ('you' or 'alyssa')."""
     global _next_id
     text = (text or "").strip()
     if not text:
         return
     with _lock:
-        _log.append({"id": _next_id, "who": who, "text": text[:2000], "time": time.strftime("%H:%M")})
+        entry = {"id": _next_id, "who": who, "text": text[:2000], "time": time.strftime("%H:%M")}
+        if sources:
+            entry["sources"] = list(sources)
+        _log.append(entry)
         _next_id += 1
         del _log[:-MAX_LOG]
 

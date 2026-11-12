@@ -273,7 +273,8 @@ def _stream_command_reply(command: str, bridge=None, text_queue=None):
             speaker.finish()
             speaker_finished = True
             visible_reply = clean_reply or streamed_text
-            phone_remote.log("alyssa", visible_reply)
+            found = sources.take() if visible_reply else []
+            phone_remote.log("alyssa", visible_reply, sources=found)
             if visible_reply:
                 print(
                     startup_logging.format_content_log(
@@ -284,7 +285,6 @@ def _stream_command_reply(command: str, bridge=None, text_queue=None):
                 )
                 if bridge is not None:
                     bridge.speak_signal.emit(visible_reply)
-                    found = sources.take()
                     if found:
                         bridge.sources_signal.emit(found)
             return reply, interrupt_result["audio"]

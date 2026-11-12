@@ -171,6 +171,7 @@ class InteractionMixin:
         menu.setAttribute(Qt.WA_TranslucentBackground)
         menu.setStyleSheet(_build_menu_style(self.settings))
         settings_action = menu.addAction("Settings…")
+        history_action = menu.addAction("Chat History…")
         menu.addSeparator()
 
         quiet_action = menu.addAction("Quiet Mode (Pause Proactive Speech)")
@@ -206,6 +207,9 @@ class InteractionMixin:
             return
         if chosen == settings_action:
             self.open_settings()
+        elif chosen == history_action:
+            from ..chat_history import open_for
+            open_for(self)
         elif chosen == quiet_action:
             config.QUIET_MODE = quiet_action.isChecked()
             if hasattr(self, "hover_pill") and self.hover_pill is not None:

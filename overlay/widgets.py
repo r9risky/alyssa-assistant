@@ -773,8 +773,10 @@ class HoverPill(_TopmostWindowMixin, QWidget):
         self.type_btn = QPushButton("TYPE", self)
         self.quiet_btn = QPushButton("QUIET", self)
         self.ride_btn = QPushButton("RIDE", self)
+        self.chat_btn = QPushButton("CHAT", self)
+        self.chat_btn.setToolTip("Chat history")
 
-        for btn in (self.type_btn, self.quiet_btn, self.ride_btn):
+        for btn in (self.type_btn, self.chat_btn, self.quiet_btn, self.ride_btn):
             btn.setCursor(Qt.PointingHandCursor)
             btn.setFixedHeight(22)
             layout.addWidget(btn)
@@ -782,8 +784,9 @@ class HoverPill(_TopmostWindowMixin, QWidget):
         self.type_btn.clicked.connect(self._on_type_clicked)
         self.quiet_btn.clicked.connect(self._on_quiet_clicked)
         self.ride_btn.clicked.connect(self._on_ride_clicked)
+        self.chat_btn.clicked.connect(self._on_chat_clicked)
 
-        self.resize(214, 30)
+        self.resize(262, 30)
         self.refresh_state()
         self.hide()
 
@@ -793,6 +796,10 @@ class HoverPill(_TopmostWindowMixin, QWidget):
             self.companion.chatbar.raise_()
             self.companion.chatbar.activateWindow()
             self.companion.chatbar.edit.setFocus()
+
+    def _on_chat_clicked(self):
+        from .chat_history import open_for
+        open_for(self.companion)
 
     def _on_quiet_clicked(self):
         config.QUIET_MODE = not bool(getattr(config, "QUIET_MODE", False))
