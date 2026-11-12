@@ -258,13 +258,9 @@ def relay_to_call(args: Optional[dict] = None, message: str = "", **kwargs) -> s
         return "No message specified."
 
     session.post_caption(getattr(config, "ASSISTANT_NAME", "Alyssa"), cleaned)
-    try:
-        import voice_playback
-        voice_playback.speak(cleaned)
-    except Exception as e:
-        return f"Couldn't speak to call: {e}"
-
-    return f"Spoke to call: '{cleaned}'"
+    # Never play audio from this tool thread (two players at once crash pygame).
+    # The reply is spoken by the normal speech path, which also feeds the call.
+    return f"Relaying to the call. Your whole reply must be exactly this, word for word: {cleaned}"
 
 
 def confirm_friend_request(args: Optional[dict] = None, confirm: bool = True, **kwargs) -> str:

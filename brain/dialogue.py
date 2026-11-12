@@ -537,6 +537,14 @@ def _remember_turn(user_text: str, assistant_text: str):
         del _conversation_history[:2]
 
 
+def _relay_wording(lowered: str, original: str) -> str:
+    """'tell them I'm late' -> 'Message from Roi: I'm late.' (kept in the user's own words)."""
+    start = (original or "").lower().find(lowered)
+    text = original[start:start + len(lowered)] if start >= 0 else lowered
+    name = str(getattr(ui_config, "USER_NICKNAME", "") or "").strip() or "your friend"
+    return f"Message from {name}: {text.strip().rstrip('.!')}."
+
+
 _WATCH_ALONG_PHRASES = {
     f"{verb} {thing}{tail}"
     for verb in ("watch", "let's watch", "lets watch", "come watch", "react to")
@@ -930,6 +938,14 @@ def _handle_pre_model_intent(user_text: str):
             reply = leave_call({})
             _remember_turn(user_text, reply)
             return reply
+        m_tell = re.match(r"^(?:tell|let)\s+(?:them|everyone|everybody|the call|the guys)\s+(?:that\s+)?(.+)$", cleaned_text)
+        if m_tell:
+            from call_ears import is_call_mode_active
+            if is_call_mode_active():
+                # Spoken by the caller's normal speech path, which feeds the call. No model call.
+                reply = _relay_wording(m_tell.group(1), user_text)
+                _remember_turn(user_text, reply)
+                return reply
         if re.search(r"^join\s+(?:the\s+)?(?:([a-zA-Z0-9]+)\s+)?call(?:[,]?\s*(?:tell\s+them\s+|and\s+tell\s+them\s+|say\s+)(.+))?$", cleaned_text):
             m_join = re.search(r"^join\s+(?:the\s+)?(?:([a-zA-Z0-9]+)\s+)?call(?:[,]?\s*(?:tell\s+them\s+|and\s+tell\s+them\s+|say\s+)(.+))?$", cleaned_text)
             app_arg = m_join.group(1) or "auto"
