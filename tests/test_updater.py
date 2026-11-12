@@ -682,10 +682,11 @@ class UpdaterTests(unittest.TestCase):
                 self.tooltip = tooltip
 
         target = SimpleNamespace(
-            check_update_btn=Button(), restart_alyssa_btn=Button()
+            check_update_btn=Button(), restart_alyssa_btn=Button(), uninstall_btn=Button()
         )
         UpdatesTabMixin._set_update_installing(target, True)
         self.assertTrue(target._update_installing)
+        self.assertFalse(target.uninstall_btn.enabled)
         self.assertFalse(target.check_update_btn.enabled)
         self.assertFalse(target.restart_alyssa_btn.enabled)
         self.assertIn("do not close", target.restart_alyssa_btn.tooltip)

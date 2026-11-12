@@ -32,8 +32,9 @@ CURRENT_VERSION = "v1.10.0"
 TRANSACTION_DIR = ".alyssa-update-transaction"
 COMMITTED_TRANSACTION_DIR = ".alyssa-update-committed"
 MAX_CHECKSUM_BYTES = 1024 * 1024
-MAX_DOWNLOAD_BYTES = 250 * 1024 * 1024
-MAX_EXTRACTED_BYTES = 500 * 1024 * 1024
+# Zip-bomb guards with room to grow: v1.9.0 unpacked to 560 MB and broke the old 500 MB cap.
+MAX_DOWNLOAD_BYTES = 1024 * 1024 * 1024
+MAX_EXTRACTED_BYTES = 2 * 1024 * 1024 * 1024
 MAX_ARCHIVE_FILES = 10_000
 PRESERVED_FILES = {
     "briefing_state.json",
@@ -1259,3 +1260,76 @@ def install_latest(install_root: str | os.PathLike[str]) -> tuple[bool, str]:
     if not release["update_available"]:
         return False, release["latest_version"]
     return True, install_release(install_root, release)
+
+
+_EXTRA_SECRETS = ("GOOGLE_CALENDAR_GMAIL_OAUTH_TOKEN",)
+
+
+def _whisper_cache_dirs() -> list[Path]:
+    """Speech models faster-whisper downloaded for her (other apps' models stay)."""
+    try:
+        from huggingface_hub.constants import HF_HUB_CACHE
+        hub = Path(HF_HUB_CACHE)
+    except Exception:
+        hub = Path.home() / ".cache" / "huggingface" / "hub"
+    return sorted(hub.glob("models--Systran--faster-whisper-*")) if hub.is_dir() else []
+
+
+def _uninstall_script(pid: int, install_root: Path, extra_dirs: list[Path]) -> str:
+    root = str(install_root)
+    uninstaller = next(iter(sorted(install_root.glob("unins*.exe"))), None)
+    startup = Path(os.environ.get("APPDATA", "")) / "Microsoft/Windows/Start Menu/Programs/Startup/Alyssa.lnk"
+    lines = [
+        "@echo off",
+        ":wait",
+        f'tasklist /FI "PID eq {pid}" 2>nul | find "{pid}" >nul && (timeout /t 1 /nobreak >nul & goto wait)',
+    ]
+    if uninstaller is not None:
+        # Removes shortcuts and the Add/Remove Programs entry.
+        lines.append(f'"{uninstaller}" /VERYSILENT /SUPPRESSMSGBOXES /NORESTART')
+    lines += [
+        f'del /f /q "{startup}" 2>nul',
+        *(f'rmdir /s /q "{d}" 2>nul' for d in extra_dirs),
+        "set tries=0",
+        ":remove",
+        f'rmdir /s /q "{root}" 2>nul',
+        # The uninstaller may still hold files for a moment; retry up to ~30 s.
+        f'if exist "{root}" if %tries% lss 30 (set /a tries+=1 & timeout /t 1 /nobreak >nul & goto remove)',
+        'del "%~f0"',
+    ]
+    return "\r\n".join(lines) + "\r\n"
+
+
+def uninstall(install_root: str | os.PathLike[str]) -> None:
+    """Remove Alyssa completely: saved API keys, downloaded speech models and her
+    whole install folder, memories and settings included. The folder is deleted by
+    a script that waits for this process to exit, so call os._exit() right after."""
+    root = Path(install_root).resolve()
+    if sys.platform != "win32" or not getattr(sys, "frozen", False):
+        raise RuntimeError(
+            "Uninstall works for the installed Windows app. "
+            "For a source checkout, delete its folder yourself."
+        )
+    # Never point rmdir at a drive, home folder or anything that isn't her install.
+    if (
+        root == Path(root.anchor)
+        or root == Path.home()
+        or not (root / "Alyssa.exe").is_file()
+        or not (root / "config.py").is_file()
+    ):
+        raise RuntimeError(f"{root} doesn't look like Alyssa's install folder; nothing was removed.")
+
+    import credential_store
+
+    for name in (*credential_store.SECRET_ENV_VARS, *_EXTRA_SECRETS):
+        credential_store.clear_secret(name)
+
+    fd, script = tempfile.mkstemp(prefix="alyssa-uninstall-", suffix=".bat")
+    with os.fdopen(fd, "w", encoding="utf-8") as handle:
+        handle.write(_uninstall_script(os.getpid(), root, _whisper_cache_dirs()))
+    subprocess.Popen(
+        ["cmd.exe", "/c", script],
+        cwd=tempfile.gettempdir(),  # cmd can't delete the folder it's sitting in
+        creationflags=0x08000000 | 0x00000008,  # CREATE_NO_WINDOW | DETACHED_PROCESS
+        close_fds=True,
+    )

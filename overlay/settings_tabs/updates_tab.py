@@ -1,3 +1,4 @@
+import os
 import threading
 
 from PySide6.QtCore import Qt
@@ -36,7 +37,7 @@ class UpdatesTabMixin:
             "↻",
         )
 
-        self.current_version_label = QLabel(f"{cur_ver}  ·  latest release")
+        self.current_version_label = QLabel(cur_ver)
         self.current_version_label.setWordWrap(False)
         self.current_version_label.setStyleSheet(
             f"font-size: 13px; font-weight: 700; color: {self._t()['accent']};"
@@ -75,13 +76,56 @@ class UpdatesTabMixin:
             self._stack_under(button_row, self.update_status_label),
         )
         outer.addWidget(card)
+
+        remove_card, remove_form = self._create_card(
+            "Uninstall",
+            "Remove Alyssa from this PC.",
+            "✕",
+        )
+        self.uninstall_btn = QPushButton("Uninstall Alyssa")
+        self.uninstall_btn.setObjectName("secondaryButton")
+        self.uninstall_btn.setStyleSheet(f"color: {self._t()['danger']};")
+        self.uninstall_btn.setToolTip(
+            "Deletes Alyssa, her memories and settings, saved API keys and downloaded speech models."
+        )
+        self.uninstall_btn.clicked.connect(self._on_uninstall_alyssa)
+        uninstall_row = QHBoxLayout()
+        uninstall_row.addWidget(self.uninstall_btn)
+        uninstall_row.addStretch(1)
+        self._add_row(remove_form, "Remove:", uninstall_row)
+        outer.addWidget(remove_card)
         outer.addStretch(1)
         return w
+
+    def _on_uninstall_alyssa(self):
+        if getattr(self, "_update_installing", False):
+            self.update_status_label.setText("Update in progress - try again when it's done.")
+            return
+        answer = QMessageBox.warning(
+            self,
+            "Uninstall Alyssa",
+            "This removes Alyssa from this PC completely: the app, her memories and "
+            "settings, your saved API keys and her downloaded voice and speech models.\n\n"
+            "This can't be undone. Uninstall now?",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No,
+        )
+        if answer != QMessageBox.Yes:
+            return
+        try:
+            updater.uninstall(_BASE_DIR)
+        except Exception as error:
+            QMessageBox.warning(self, "Uninstall Failed", str(error))
+            return
+        # Same as restart: SystemExit wouldn't end the process from a Qt slot, and
+        # the cleanup script waits for this process to be gone.
+        os._exit(0)
 
     def _set_update_installing(self, installing: bool) -> None:
         self._update_installing = installing
         self.check_update_btn.setEnabled(not installing)
         self.restart_alyssa_btn.setEnabled(not installing)
+        self.uninstall_btn.setEnabled(not installing)
         self.restart_alyssa_btn.setToolTip(
             "Update in progress - do not close or restart Alyssa."
             if installing
@@ -130,6 +174,9 @@ class UpdatesTabMixin:
         release = detail or {}
         latest = str(release.get("latest_version") or "").strip() or "unknown"
         current = str(release.get("current_version") or updater.CURRENT_VERSION).strip()
+        self.current_version_label.setText(
+            f"{current}  ·  {'update available' if release.get('update_available') else 'latest release'}"
+        )
         if not release.get("update_available"):
             self.update_status_label.setStyleSheet(
                 f"color: {self._t()['success']}; font-size: 11.5px;"
@@ -203,7 +250,7 @@ class UpdatesTabMixin:
             return
 
         self.current_version_label.setText(
-            f"Current Version: {updater.current_version(_BASE_DIR)}"
+            f"{updater.current_version(_BASE_DIR)}  ·  restart to finish updating"
         )
         self.update_status_label.setStyleSheet(
             f"color: {self._t()['success']}; font-size: 11.5px;"

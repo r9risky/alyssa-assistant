@@ -2,6 +2,7 @@
 
 import base64
 import difflib
+import glob
 import importlib
 import io
 import json
@@ -15,6 +16,7 @@ from urllib.parse import urlencode
 
 import numpy as np
 import requests
+import faster_whisper
 from faster_whisper import WhisperModel
 
 try:
@@ -655,6 +657,13 @@ def _transcribe_impl(audio) -> str:
             return _transcribe_impl_locked(audio)
 
 
+# Builds before v1.10.0 shipped without faster-whisper's VAD model, so vad_filter
+# crashed every local transcription. Our own VAD already trimmed the audio.
+_WHISPER_VAD_AVAILABLE = bool(
+    glob.glob(os.path.join(os.path.dirname(faster_whisper.__file__), "assets", "silero_vad*.onnx"))
+)
+
+
 def _transcribe_impl_locked(audio, initial_prompt: str | None = None) -> str:
     if initial_prompt is None:
         initial_prompt = build_contextual_prompt()
@@ -671,7 +680,7 @@ def _transcribe_impl_locked(audio, initial_prompt: str | None = None) -> str:
             # Don't let one uncertain segment bias the next (accented speech).
             condition_on_previous_text=False,
             # Trim silence/noise; stops dead air from hallucinating into junk.
-            vad_filter=True,
+            vad_filter=_WHISPER_VAD_AVAILABLE,
             initial_prompt=initial_prompt,
         )
         segments = list(segments)  # evaluate now — faster-whisper decodes lazily; GPU DLL failure can surface here
@@ -706,7 +715,7 @@ def _transcribe_impl_locked(audio, initial_prompt: str | None = None) -> str:
                 compression_ratio_threshold=2.4,
                 log_prob_threshold=getattr(config, "WHISPER_LOG_PROB_THRESHOLD", -1.0),
                 condition_on_previous_text=False,
-                vad_filter=True,
+                vad_filter=_WHISPER_VAD_AVAILABLE,
                 initial_prompt=initial_prompt,
             )
         else:

@@ -46,6 +46,34 @@ def run_pyinstaller_build():
     subprocess.check_call(cmd, cwd=str(ROOT_DIR))
 
 
+# Optional files that are only loaded on demand. Without them the release unpacks
+# to under 500 MB, the most that the updater in v1.9.0 and older will install.
+_TRIM_GLOBS = (
+    "_internal/PySide6/opengl32sw.dll",  # software OpenGL fallback; her windows draw without OpenGL
+    "_internal/PySide6/translations/*",  # Qt's own dialog translations; her UI is English
+    "_internal/cv2/opencv_videoio_ffmpeg*.dll",  # video files and streams; webcams use Windows' own backend
+    "_internal/PIL/_avif*",  # AVIF images; Pillow skips the format when it's missing
+    "_internal/espeakng_loader/espeak-ng-data/ru_dict",  # Kokoro has no Russian voice
+)
+OLD_UPDATER_LIMIT_BYTES = 500 * 1024 * 1024
+
+
+def _trim_bundle():
+    removed = 0
+    for pattern in _TRIM_GLOBS:
+        for path in OUTPUT_FOLDER.glob(pattern):
+            if path.is_file():
+                removed += path.stat().st_size
+                path.unlink()
+    total = sum(f.stat().st_size for f in OUTPUT_FOLDER.rglob("*") if f.is_file())
+    print(f"[build] Trimmed {removed / 1e6:.0f} MB; bundle is {total / 1e6:.0f} MB")
+    if total > OLD_UPDATER_LIMIT_BYTES:
+        print(
+            "[build] WARNING: over 500 MB unpacked - Alyssa v1.9.0 and older can't "
+            "update to this release in-app and need Alyssa-Setup.exe instead."
+        )
+
+
 def post_process_bundle():
     print("[build] Post-processing output distribution...")
     if not OUTPUT_FOLDER.is_dir():
@@ -106,6 +134,8 @@ def post_process_bundle():
         dst = OUTPUT_FOLDER / dirname
         if src.is_dir() and not dst.is_dir():
             shutil.copytree(src, dst)
+
+    _trim_bundle()
 
     # Create a quick-start README for end-users
     readme_path = OUTPUT_FOLDER / "HOW_TO_RUN.txt"

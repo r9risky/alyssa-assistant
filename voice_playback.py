@@ -60,7 +60,17 @@ def _configured_output_device_name():
     needle = str(configured).lower()
     try:
         import pygame._sdl2.audio as sdl2_audio
-        sdl_names = sdl2_audio.get_audio_device_names(False)
+        # SDL lists devices only once its audio is up; before that this came back
+        # empty and the fallback gave sounddevice's 31-character cut-off name
+        # ("SteelSeries Sonar - Gaming (Ste"), which the mixer can't open.
+        probe = not pygame.mixer.get_init()
+        if probe:
+            pygame.mixer.init()
+        try:
+            sdl_names = sdl2_audio.get_audio_device_names(False)
+        finally:
+            if probe:
+                pygame.mixer.quit()
         for name in sdl_names:
             if needle in name.lower() or name.lower() in needle:
                 return name
