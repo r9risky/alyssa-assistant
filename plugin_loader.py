@@ -48,6 +48,8 @@ _pending_approvals = []
 # Opt in with GUI_PANEL_TITLE + build_gui_panel() at module level.
 # Qt is not imported here; overlay builds the widget later (headless-safe).
 _gui_panels = []
+# handle_intent(cleaned, text) hooks: answer fixed phrases before any model call (no tokens).
+_intent_handlers = []
 
 
 def get_load_errors():
@@ -62,6 +64,11 @@ def get_gui_panels():
     return _gui_panels
 
 
+def get_intent_handlers():
+    """[handle_intent(cleaned, text) -> reply | None] from plugins, in load order."""
+    return _intent_handlers
+
+
 def get_pending_approvals():
     return _pending_approvals
 
@@ -70,7 +77,8 @@ def load_plugins():
     """(functions, tools) merged from every .py in plugins/.
     functions: {name: callable}; tools: tool-schema dicts.
     Skip files starting with '_' (including __init__.py) — rename to disable."""
-    global _load_errors, _watchers, _gui_panels, _pending_approvals
+    global _load_errors, _watchers, _gui_panels, _pending_approvals, _intent_handlers
+    _intent_handlers = []
     _load_errors = []
     _watchers = []
     _gui_panels = []
@@ -112,6 +120,8 @@ def load_plugins():
         plugin_functions = getattr(module, "FUNCTIONS", {}) or {}
         plugin_tools = getattr(module, "TOOLS", []) or []
         untrusted_outputs = set(getattr(module, "UNTRUSTED_OUTPUTS", ()) or ())
+        # Tools whose return value is already the whole spoken reply: no second model call.
+        instant_replies = set(getattr(module, "INSTANT_REPLY_TOOLS", ()) or ())
         if not isinstance(plugin_functions, dict):
             print(f"[plugins] Skipping '{filename}' - FUNCTIONS must be a dict.")
             _load_errors.append(f"'{filename}': FUNCTIONS must be a dict")
@@ -137,6 +147,8 @@ def load_plugins():
             functions[name] = func
             if name in untrusted_outputs:
                 func._alyssa_untrusted_output = True
+            if name in instant_replies:
+                func._alyssa_instant_reply = True
             loaded_names.append(name)
 
         for tool in plugin_tools:
@@ -150,6 +162,10 @@ def load_plugins():
 
         if loaded_names:
             print(f"[plugins] Loaded from {filename}: {', '.join(loaded_names)}")
+
+        intent_func = getattr(module, "handle_intent", None)
+        if callable(intent_func):
+            _intent_handlers.append(intent_func)
 
         watch_func = getattr(module, "check_watch", None)
         if callable(watch_func):

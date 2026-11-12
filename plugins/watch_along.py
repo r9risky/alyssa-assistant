@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import collections
 import logging
+import re
 import time
 from typing import Any, Deque, Dict, Optional
 
@@ -179,6 +180,30 @@ TOOLS = [
         },
     },
 ]
+
+_WATCH_PHRASES = {
+    f"{verb} {thing}{tail}"
+    for verb in ("watch", "let's watch", "lets watch", "come watch", "react to")
+    for thing in ("this", "that", "this video", "this stream", "this movie", "this show")
+    for tail in ("", " with me", " together")
+    if tail or verb != "watch"  # plain "watch this" is too vague on its own
+}
+
+
+def handle_intent(cleaned: str, text: str = "") -> Optional[str]:
+    """'watch this with me' / 'stop watching' without a model call."""
+    import config
+
+    if cleaned.rstrip("!.?") in _WATCH_PHRASES:
+        if not getattr(config, "WATCH_ALONG_ENABLED", True):
+            return "Watch-along mode is currently disabled in Settings."
+        return start_watch_along({"title": "the screen"})
+    if WATCH_ALONG_SESSION.active and re.search(
+        r"^(?:stop watching|end watch[- ]along|we'?re done watching)$", cleaned
+    ):
+        return stop_watch_along({})
+    return None
+
 
 FUNCTIONS = {
     "start_watch_along": start_watch_along,

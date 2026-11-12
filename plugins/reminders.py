@@ -309,6 +309,9 @@ TOOLS = [
     },
 ]
 
+# Their result is already the whole reply: no second model call to rephrase it.
+INSTANT_REPLY_TOOLS = {"add_reminder", "complete_reminder", "delete_reminder"}
+
 FUNCTIONS = {
     "add_reminder": add_reminder,
     "list_reminders": list_reminders,

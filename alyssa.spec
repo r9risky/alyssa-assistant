@@ -64,21 +64,8 @@ hiddenimports = [
     "voice_playback",
     "voice_synthesis",
     "wake_word",
-    "audio",
-    "audio.recorder",
-    "audio.transcribe",
-    "audio.playback",
-    "audio.synthesis",
-    "audio.dsp",
-    "audio.wake_word",
-    "audio.call_ears",
-    "core",
-    "core.credential_store",
-    "core.startup_logging",
-    "core.telemetry",
-    "core.nameutil",
-    "core.hotkeys",
-    "core.memory",
+    "brain.persona",
+    "brain.usage",
 ]
 
 # Kokoro offline voice: its config.json and espeak-ng's DLL + phoneme data.

@@ -9,6 +9,7 @@ from functools import lru_cache
 import requests
 
 import actions
+import plugin_loader
 from config import (
     DIALOGUE_SETTINGS as config,
     MEMORY_SETTINGS as memory_config,
@@ -572,26 +573,6 @@ def _remember_turn(user_text: str, assistant_text: str):
         del _conversation_history[:2]
 
 
-_YES_ANSWERS = {"yes", "yeah", "yep", "sure", "ok", "okay", "do it", "go ahead", "yes please", "allow it", "fine"}
-_NO_ANSWERS = {"no", "nope", "nah", "don't", "dont", "no thanks", "deny it", "not now"}
-
-
-def _relay_wording(lowered: str, original: str) -> str:
-    """'tell them I'm late' -> 'Message from Roi: I'm late.' (kept in the user's own words)."""
-    start = (original or "").lower().find(lowered)
-    text = original[start:start + len(lowered)] if start >= 0 else lowered
-    name = str(getattr(ui_config, "USER_NICKNAME", "") or "").strip() or "your friend"
-    return f"Message from {name}: {text.strip().rstrip('.!')}."
-
-
-_WATCH_ALONG_PHRASES = {
-    f"{verb} {thing}{tail}"
-    for verb in ("watch", "let's watch", "lets watch", "come watch", "react to")
-    for thing in ("this", "that", "this video", "this stream", "this movie", "this show")
-    for tail in ("", " with me", " together")
-    if tail or verb != "watch"  # plain "watch this" is too vague on its own
-}
-
 _CREATOR_QUESTION_RE = re.compile(
     r"who\s+(?:made|make|created|create|built|build|developed|develop|"
     r"programmed|program|coded|code|designed|design)\s+(?:you|"
@@ -931,25 +912,12 @@ def _handle_pre_model_intent(user_text: str):
                 reply = format_status_reply(ACTIVE_JOB)
                 _remember_turn(user_text, reply)
                 return reply
-    except Exception:
-        pass
+    except Exception as e:
+        telemetry.log(f"[intent] mid-job aside check failed, asking the model instead: {e}")
 
-    # Fast watch-along & gaming co-pilot deterministic triggers
+    # Fixed phrases answered without a model call (plugins add theirs via handle_intent)
     try:
         cleaned_text = _strip_leading_filler(user_text or "").strip().lower()
-        if cleaned_text.rstrip("!.?") in _WATCH_ALONG_PHRASES:
-            if not getattr(config, "WATCH_ALONG_ENABLED", True):
-                return "Watch-along mode is currently disabled in Settings."
-            from plugins.watch_along import start_watch_along
-            reply = start_watch_along({"title": "the screen"})
-            _remember_turn(user_text, reply)
-            return reply
-        if re.search(r"^(?:stop watching|end watch[- ]along|we'?re done watching)$", cleaned_text):
-            from plugins.watch_along import WATCH_ALONG_SESSION, stop_watch_along
-            if WATCH_ALONG_SESSION.active:
-                reply = stop_watch_along({})
-                _remember_turn(user_text, reply)
-                return reply
         if re.search(r"^(?:clip that!?|clip (?:the )?last \d+ seconds?|save clip)$", cleaned_text):
             if not getattr(config, "REPLAY_BUFFER_ENABLED", True):
                 return "Replay buffer clipping is currently disabled in Settings."
@@ -967,38 +935,17 @@ def _handle_pre_model_intent(user_text: str):
             reply = show_fake_crash()
             _remember_turn(user_text, reply)
             return reply
-        if re.search(r"^(?:hang\s*up|leave\s+(?:the\s+)?call|end\s+(?:the\s+)?call|disconnect\s+(?:from\s+)?(?:the\s+)?call)$", cleaned_text):
-            from plugins.call_mode import leave_call
-            reply = leave_call({})
-            _remember_turn(user_text, reply)
-            return reply
-        from call_ears import get_call_session
-        pending = get_call_session().pending_request
-        if pending is not None and not pending.is_expired:
-            answer = cleaned_text.rstrip("!.")
-            if answer in _YES_ANSWERS or answer in _NO_ANSWERS:
-                from plugins.call_mode import confirm_friend_request
-                reply = confirm_friend_request({"confirm": answer in _YES_ANSWERS})
+        for plugin_intent in plugin_loader.get_intent_handlers():
+            try:
+                reply = plugin_intent(cleaned_text, user_text or "")
+            except Exception as e:  # one broken plugin mustn't block the rest
+                telemetry.log(f"[plugins] handle_intent in {plugin_intent.__module__} failed: {e}")
+                continue
+            if reply is not None:
                 _remember_turn(user_text, reply)
                 return reply
-        m_tell = re.match(r"^(?:tell|let)\s+(?:them|everyone|everybody|the call|the guys)\s+(?:that\s+)?(.+)$", cleaned_text)
-        if m_tell:
-            from call_ears import is_call_mode_active
-            if is_call_mode_active():
-                # Spoken by the caller's normal speech path, which feeds the call. No model call.
-                reply = _relay_wording(m_tell.group(1), user_text)
-                _remember_turn(user_text, reply)
-                return reply
-        if re.search(r"^join\s+(?:the\s+)?(?:([a-zA-Z0-9]+)\s+)?call(?:[,]?\s*(?:tell\s+them\s+|and\s+tell\s+them\s+|say\s+)(.+))?$", cleaned_text):
-            m_join = re.search(r"^join\s+(?:the\s+)?(?:([a-zA-Z0-9]+)\s+)?call(?:[,]?\s*(?:tell\s+them\s+|and\s+tell\s+them\s+|say\s+)(.+))?$", cleaned_text)
-            app_arg = m_join.group(1) or "auto"
-            msg_arg = m_join.group(2) or ""
-            from plugins.call_mode import join_call
-            reply = join_call({"app": app_arg, "message": msg_arg})
-            _remember_turn(user_text, reply)
-            return reply
-    except Exception:
-        pass
+    except Exception as e:
+        telemetry.log(f"[intent] fixed-phrase intent check failed, asking the model instead: {e}")
 
     for handler in (
         _handle_creator_question,
@@ -1312,7 +1259,10 @@ def handle_command(
             failed = _step_failed(tool_output)
             if on_step is not None:
                 on_step(step_label, "failed" if failed else "done")
-            if failed or name not in _SELF_PHRASED_TOOLS:
+            if failed or not (
+                name in _SELF_PHRASED_TOOLS
+                or getattr(actions.FUNCTIONS.get(name), "_alyssa_instant_reply", False)
+            ):
                 self_phrased = False
             opened_app_this_round |= opened_app
             used_web_content_this_round |= used_web_content

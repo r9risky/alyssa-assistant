@@ -85,6 +85,9 @@ def clear_sticky_notes() -> str:
     return f"Cleared {count} sticky note{'s' if count != 1 else ''}."
 
 
+# Their result is already the whole reply: no second model call to rephrase it.
+INSTANT_REPLY_TOOLS = {"add_sticky_note", "delete_sticky_note", "clear_sticky_notes"}
+
 FUNCTIONS = {
     "add_sticky_note": add_sticky_note,
     "list_sticky_notes": list_sticky_notes,
