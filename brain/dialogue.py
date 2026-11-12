@@ -392,6 +392,7 @@ def _natural_fast_reply(name: str, arguments: dict, output: str, user_text: str)
 _CONFIRMATION_GATED_TOOLS = {
     "delete_file", "run_command", "system_power_action", "click_screen_element",
     "kill_process", "clean_temp_files", "empty_recycle_bin",
+    "edit_text_file", "append_to_text_file", "create_text_file", "undo_last_file_edit",
 }
 
 
