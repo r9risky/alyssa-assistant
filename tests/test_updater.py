@@ -819,7 +819,12 @@ class UpdaterTests(unittest.TestCase):
             state = updater._load_transaction_state(install / updater.TRANSACTION_DIR)
             self.assertEqual(state["helper_attempts"], 1)
             # Off Windows there is never a helper to start.
-            self.assertFalse(updater.launch_pending_update(install))
+            with (
+                patch.object(updater.sys, "platform", "linux"),
+                patch.object(updater.subprocess, "Popen") as popen,
+            ):
+                self.assertFalse(updater.launch_pending_update(install))
+            popen.assert_not_called()
 
     def test_helper_that_never_runs_is_rolled_back_instead_of_looping(self):
         with tempfile.TemporaryDirectory() as temporary:
