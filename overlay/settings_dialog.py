@@ -31,8 +31,8 @@ except ImportError:  # pragma: no cover - sounddevice is a core dependency
 
 from .app_shell import _set_console_visible
 from .credential_checks import (
-    _atomic_write_text, _extract_elevenlabs_voice_id, _fetch_custom_openai_models,
-    _is_http_url, _patch_config_line, _percent_to_volume_str,
+    _extract_elevenlabs_voice_id, _fetch_custom_openai_models,
+    _is_http_url, _percent_to_volume_str,
     _verify_anthropic_key, _verify_elevenlabs_key, _verify_gemini_key,
     _verify_groq_key,
     _verify_openai_key, _verify_spotify_credentials, _verify_youtube_key,

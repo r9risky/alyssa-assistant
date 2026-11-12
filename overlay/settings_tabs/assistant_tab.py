@@ -1,4 +1,3 @@
-import os
 import threading
 
 from PySide6.QtCore import Qt, QTime, QTimer
@@ -23,11 +22,11 @@ from brain.common import api_origin
 import config
 import credential_store
 import memory
+import user_settings
 from ..credential_checks import (
     _extract_elevenlabs_voice_id,
     _fetch_custom_openai_models,
     _is_http_url,
-    _patch_config_line,
     _percent_to_volume_str,
     _verify_anthropic_key,
     _verify_elevenlabs_key,
@@ -38,7 +37,6 @@ from ..credential_checks import (
     _verify_youtube_key,
     _volume_str_to_percent,
 )
-from ..rendering import _BASE_DIR
 
 
 class AssistantTabMixin:
@@ -194,7 +192,7 @@ class AssistantTabMixin:
         self._custom_rows.append(self._add_row(form, "", custom_note))
 
         note = self._help_label(
-            "Keys apply immediately and are stored as plain text in config.py."
+            "Keys apply immediately and are stored in Windows Credential Manager."
         )
         note.setWordWrap(True)
         note.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
@@ -876,14 +874,10 @@ class AssistantTabMixin:
     def _on_show_console_toggled(self, show: bool):
         from .. import settings_dialog as _settings_dialog
 
-        _atomic_write_text = _settings_dialog._atomic_write_text
         _set_console_visible = _settings_dialog._set_console_visible
         hide = not show
         try:
-            config_path = os.path.join(_BASE_DIR, "config.py")
-            with open(config_path, "r", encoding="utf-8") as f:
-                text = _patch_config_line(f.read(), "HIDE_CONSOLE_WINDOW", str(hide))
-            _atomic_write_text(config_path, text)
+            user_settings.save({"HIDE_CONSOLE_WINDOW": hide})
         except OSError as e:
             self.show_console_check.blockSignals(True)
             self.show_console_check.setChecked(not config.HIDE_CONSOLE_WINDOW)
@@ -1011,34 +1005,28 @@ class AssistantTabMixin:
         }
 
     def _gather_assistant_updates(self, values=None) -> dict:
-        """Non-secret fields to patch into config.py. SECRET_ENV_VARS go through _gather_secret_updates()."""
+        """Non-secret fields to save to settings.json. SECRET_ENV_VARS go through _gather_secret_updates()."""
         values = values or self._gather_assistant_values()
         return {
-            key: repr(value) for key, value in values.items()
+            key: value for key, value in values.items()
             if key not in credential_store.SECRET_ENV_VARS
         }
 
     def _apply_edge_volume_live(self, value: int):
-        # Playback reads this immediately; config.py write stays debounced.
+        # Playback reads this immediately; the settings.json write stays debounced.
         config.EDGE_TTS_VOLUME = _percent_to_volume_str(value)
         self._queue_assistant_apply()
 
     def _apply_assistant_live(self):
         from .. import settings_dialog as _settings_dialog
 
-        _atomic_write_text = _settings_dialog._atomic_write_text
         _set_console_visible = _settings_dialog._set_console_visible
         values = self._gather_assistant_values()
         updates = self._gather_assistant_updates(values)
         try:
-            config_path = os.path.join(_BASE_DIR, "config.py")
-            with open(config_path, "r", encoding="utf-8") as f:
-                text = f.read()
-            for key, literal in updates.items():
-                text = _patch_config_line(text, key, literal)
-            _atomic_write_text(config_path, text)
+            user_settings.save(updates)
         except OSError as e:
-            QMessageBox.warning(self, "Settings", f"Couldn't write changes to config.py: {e}")
+            QMessageBox.warning(self, "Settings", f"Couldn't save your settings: {e}")
             return
 
         secret_updates = self._gather_secret_updates(values)

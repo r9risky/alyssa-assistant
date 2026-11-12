@@ -16,6 +16,7 @@ import plugin_permissions
 from overlay import settings_dialog, widgets
 import config
 import updater
+import user_settings
 
 
 class SettingsGuiTests(unittest.TestCase):
@@ -137,14 +138,12 @@ class SettingsGuiTests(unittest.TestCase):
         show = not self.dialog.show_console_check.isChecked()
         try:
             with (
-                patch.object(settings_dialog, "_atomic_write_text") as write_text,
+                patch.object(user_settings, "save") as save,
                 patch.object(settings_dialog, "_set_console_visible") as set_visible,
             ):
                 self.dialog.show_console_check.setChecked(show)
 
-            self.assertIn(
-                f"HIDE_CONSOLE_WINDOW = {not show}", write_text.call_args.args[1]
-            )
+            save.assert_called_once_with({"HIDE_CONSOLE_WINDOW": not show})
             self.assertEqual(settings_dialog.config.HIDE_CONSOLE_WINDOW, not show)
             set_visible.assert_called_once_with(show)
         finally:
@@ -156,7 +155,7 @@ class SettingsGuiTests(unittest.TestCase):
         self.dialog.show_console_check.setChecked(original)
         self.dialog.show_console_check.blockSignals(False)
         with (
-            patch.object(settings_dialog, "_atomic_write_text", side_effect=OSError("disk full")),
+            patch.object(user_settings, "save", side_effect=OSError("disk full")),
             patch.object(settings_dialog.QMessageBox, "warning"),
             patch.object(settings_dialog, "_set_console_visible") as set_visible,
         ):
@@ -175,14 +174,14 @@ class SettingsGuiTests(unittest.TestCase):
             self.dialog.system_watch_enabled_check.setChecked(enabled)
             self.dialog.system_watch_interval_spin.setValue(interval)
             with (
-                patch.object(settings_dialog, "_atomic_write_text") as write_text,
+                patch.object(user_settings, "save") as save,
                 patch.object(self.dialog, "_reload_plugins_backend") as reload_plugins,
             ):
                 self.real_assistant_apply(self.dialog)
 
-            saved = write_text.call_args.args[1]
-            self.assertIn(f"SYSTEM_WATCH_ENABLED = {enabled}", saved)
-            self.assertIn(f"SYSTEM_WATCH_INTERVAL_SECONDS = {interval}", saved)
+            saved = save.call_args.args[0]
+            self.assertEqual(saved["SYSTEM_WATCH_ENABLED"], enabled)
+            self.assertEqual(saved["SYSTEM_WATCH_INTERVAL_SECONDS"], interval)
             self.assertEqual(config.SYSTEM_WATCH_ENABLED, enabled)
             self.assertEqual(config.SYSTEM_WATCH_INTERVAL_SECONDS, interval)
             reload_plugins.assert_called_once_with()
@@ -193,7 +192,7 @@ class SettingsGuiTests(unittest.TestCase):
         original = settings_dialog.config.CUSTOM_BASE_URL
         self.dialog.custom_base_url_edit.setText("not a URL")
         updates = self.dialog._gather_assistant_updates()
-        self.assertEqual(updates["CUSTOM_BASE_URL"], repr(original))
+        self.assertEqual(updates["CUSTOM_BASE_URL"], original)
         self.assertIn("valid http", self.dialog.custom_models_status_label.text())
 
     def test_edge_volume_slider_updates_runtime_immediately(self):

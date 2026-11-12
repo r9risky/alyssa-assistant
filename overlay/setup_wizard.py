@@ -4,7 +4,6 @@ Shown instead of the old "add a Gemini key" message box when she starts with
 no brain configured. Everything it sets is also in Settings, so "Later" is
 always safe.
 """
-import os
 import threading
 
 import requests
@@ -17,9 +16,10 @@ from PySide6.QtWidgets import (
 
 import config
 import credential_store
+import user_settings
 
-from .credential_checks import _atomic_write_text, _patch_config_line, _verify_gemini_key
-from .rendering import _BASE_DIR, BUNDLED_IDLE_IMAGE
+from .credential_checks import _verify_gemini_key
+from .rendering import BUNDLED_IDLE_IMAGE
 from .theming import _theme
 
 try:
@@ -31,11 +31,11 @@ GEMINI_KEY_URL = "https://aistudio.google.com/apikey"
 OLLAMA_URL = "http://localhost:11434/api/tags"
 
 
-def save_setup(choices: dict, config_path: str | None = None) -> list[str]:
+def save_setup(choices: dict, settings_path: str | None = None) -> list[str]:
     """Persist wizard choices. Returns a list of problems (empty on success).
 
     choices: provider ("gemini"/"ollama"), gemini_key, tts ("edge"/"kokoro"), microphone.
-    Non-secret values go into config.py; the Gemini key goes to the OS keyring.
+    Non-secret values go into settings.json; the Gemini key goes to the OS keyring.
     """
     problems = []
     updates = {
@@ -43,15 +43,10 @@ def save_setup(choices: dict, config_path: str | None = None) -> list[str]:
         "TTS_PROVIDER": choices["tts"],
         "MICROPHONE_DEVICE": choices.get("microphone") or "default",
     }
-    path = config_path or os.path.join(_BASE_DIR, "config.py")
     try:
-        with open(path, "r", encoding="utf-8") as f:
-            text = f.read()
-        for key, value in updates.items():
-            text = _patch_config_line(text, key, repr(value))
-        _atomic_write_text(path, text)
+        user_settings.save(updates, settings_path)
     except OSError as e:
-        problems.append(f"Couldn't save to config.py: {e}")
+        problems.append(f"Couldn't save your settings: {e}")
     for key, value in updates.items():
         setattr(config, key, value)  # live: the waiting preflight loop picks it up
 

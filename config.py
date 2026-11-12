@@ -1,4 +1,9 @@
-"""Central configuration settings for Alyssa Assistant."""
+"""Default settings for Alyssa Assistant.
+
+Anything changed in Settings or the setup wizard is saved to settings.json and
+overrides the value here (see the bottom of this file). If an edit here seems to
+do nothing, that setting is probably in settings.json: change it there or in Settings.
+"""
 from typing import Any
 
 import credential_store as _cred
@@ -454,3 +459,13 @@ DIALOGUE_SETTINGS = _SettingsView(
     *UISettings.__annotations__,
 )
 
+
+
+# What the user changed in Settings or the setup wizard lives in settings.json
+# (see user_settings.py); this file only holds the defaults.
+try:
+    import user_settings as _user_settings
+except ImportError:  # an older Alyssa.exe running this newer config.py
+    _user_settings = None
+if _user_settings is not None:
+    _user_settings.apply(globals(), skip=_cred.SECRET_ENV_VARS)  # keys live in the keyring

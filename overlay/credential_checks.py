@@ -1,4 +1,3 @@
-import os
 import re
 
 import requests
@@ -274,36 +273,3 @@ def _verify_groq_key(api_key: str) -> "tuple[bool, str, list]":
     if resp.status_code in (400, 401, 403):
         return False, detail or "Groq rejected this key.", []
     return False, detail or f"Groq returned an error ({resp.status_code}).", []
-
-
-def _patch_config_line(text: str, key: str, value_literal: str) -> str:
-    """Replace a top-level `KEY = ...` in config.py text; keep trailing comments. Append if missing."""
-    import re
-
-    pattern = re.compile(rf"(?m)^{re.escape(key)}\s*=\s*.*?(\s*#.*)?$")
-
-    def _sub(m):
-        comment = m.group(1) or ""
-        return f"{key} = {value_literal}{comment}"
-
-    new_text, n = pattern.subn(_sub, text, count=1)
-    if n == 0:
-        new_text = text.rstrip("\n") + f"\n{key} = {value_literal}\n"
-    return new_text
-
-
-def _atomic_write_text(path: str, text: str) -> None:
-    """Replace a text file only after its complete new contents reach disk."""
-    tmp_path = path + ".tmp"
-    try:
-        with open(tmp_path, "w", encoding="utf-8") as f:
-            f.write(text)
-            f.flush()
-            os.fsync(f.fileno())
-        os.replace(tmp_path, path)
-    except OSError:
-        try:
-            os.remove(tmp_path)
-        except OSError:
-            pass
-        raise

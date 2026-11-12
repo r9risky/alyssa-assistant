@@ -55,3 +55,7 @@ file_backups/
 fondness.json
 plugin_approvals.json
 phone_remote.json
+
+# User-changed settings (config.py holds only defaults)
+settings.json
+settings.json.tmp
