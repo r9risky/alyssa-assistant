@@ -9,13 +9,15 @@ from PySide6.QtCore import (
     QTimer,
     QPoint,
     QRect,
+    QSize,
+    QAbstractAnimation,
     QPropertyAnimation,
     QEasingCurve,
     QParallelAnimationGroup,
 )
 from PySide6.QtGui import (
     QPainter, QColor, QGuiApplication,
-    QPainterPath, QLinearGradient, QFont, QFontMetrics,
+    QPainterPath, QLinearGradient, QFont, QTextDocument,
 )
 from PySide6.QtWidgets import QWidget, QLabel
 
@@ -36,6 +38,9 @@ _BUBBLE_PAD_X = 16
 
 
 _BUBBLE_PAD_Y = 12
+
+
+_BUBBLE_TEXT_MAX_W = 260  # px; longer lines wrap
 
 
 class SpeechBubble(_TopmostWindowMixin, QWidget):
@@ -70,11 +75,15 @@ class SpeechBubble(_TopmostWindowMixin, QWidget):
 
         self.label = QLabel("", self)
         self.label.setWordWrap(True)
-        self.label.setMaximumWidth(260)
+        self.label.setMaximumWidth(_BUBBLE_TEXT_MAX_W)
         font = QFont("Segoe UI Variable Text", 10)
         font.setStyleHint(QFont.SansSerif)
         font.setWeight(QFont.Medium)
         self.label.setFont(font)
+        # Measures how wide the visible text wants to be (reused: one per bubble, not per frame).
+        self._measure_doc = QTextDocument(self)
+        self._measure_doc.setDocumentMargin(0)
+        self._measure_doc.setDefaultFont(font)
         self.label.setTextFormat(Qt.RichText)
         self.label.setOpenExternalLinks(True)
         self.label.setTextInteractionFlags(Qt.LinksAccessibleByMouse)
@@ -176,8 +185,8 @@ class SpeechBubble(_TopmostWindowMixin, QWidget):
         if self._thinking or self._full_text:
             self._render(force=True)
 
-    def _thinking_html(self) -> str:
-        return "Thinking" + "." * self._thinking_dots + self._steps_html()
+    def _thinking_html(self, dots: int | None = None) -> str:
+        return "Thinking" + "." * (self._thinking_dots if dots is None else dots) + self._steps_html()
 
     def _has_sources(self) -> bool:
         return bool(self._sources) and self._sources_for == self._full_text
@@ -208,10 +217,19 @@ class SpeechBubble(_TopmostWindowMixin, QWidget):
         if markup == self._last_rendered and not force:
             return
         self._last_rendered = markup
+        # Size "Thinking" for its widest dots so the bubble doesn't twitch as they tick.
+        self._show_markup(markup, self._thinking_html(3) if markup == self._thinking_html() else markup)
+
+    def _show_markup(self, markup: str, sizing: str | None = None):
+        """Put markup in the label and fit the bubble snugly around it (sizing: what to measure)."""
         self.label.setText(markup)
-        self.label.adjustSize()
+        self._measure_doc.setHtml(sizing or markup)
+        self._measure_doc.setTextWidth(_BUBBLE_TEXT_MAX_W)
+        # +4: rounding slack (fractional DPI scaling) so the measured width never wraps a line the doc kept whole.
+        width = max(24, min(_BUBBLE_TEXT_MAX_W, int(self._measure_doc.idealWidth()) + 4))
+        # Height asked for at the real width (adjustSize guesses at another width and leaves gaps).
+        self.label.resize(width, self.label.heightForWidth(width))
         self._resize_to_content()
-        self.reposition()
 
     # -- typing in step with her voice -----------------------------------
     _SPEAK_CPS = 16.0  # about how fast her voices talk, in characters per second
@@ -297,10 +315,8 @@ class SpeechBubble(_TopmostWindowMixin, QWidget):
             if self._has_sources():
                 copied += "\n\nSources:\n" + "\n".join(s["url"] for s in self._sources)
             cb.setText(copied)
-        self.label.setText("> sys: copied")
-        self.label.adjustSize()
-        self._resize_to_content()
-        self.reposition()
+        self._last_rendered = None
+        self._show_markup("&gt; sys: copied")
         QTimer.singleShot(900, self._render_current_page)
         return self._full_text
 
@@ -351,7 +367,6 @@ class SpeechBubble(_TopmostWindowMixin, QWidget):
 
         t = _theme(self.settings)
         self.label.setStyleSheet(f"QLabel {{ background: transparent; color: {t['bubble_text']}; }}")
-        self._fit_label_width("Thinking...")
         self._render(force=True)
         self._appear()
 
@@ -402,13 +417,6 @@ class SpeechBubble(_TopmostWindowMixin, QWidget):
         except Exception:
             pass
 
-    def _fit_label_width(self, text: str):
-        """Fix the width to the longest line of the text so far: while she types, the
-        bubble only grows downward instead of wobbling sideways with every letter."""
-        metrics = QFontMetrics(self.label.font())
-        widest = max((metrics.horizontalAdvance(line) for line in (text or " ").splitlines()), default=0)
-        self.label.setFixedWidth(max(60, min(260, widest + 4)))
-
     def show_message(self, text: str):
         try:
             self._show_message_impl(text)
@@ -449,7 +457,6 @@ class SpeechBubble(_TopmostWindowMixin, QWidget):
 
         t = _theme(self.settings)
         self.label.setStyleSheet(f"QLabel {{ background: transparent; color: {t['bubble_text']}; }}")
-        self._fit_label_width(text)
         self._appear()
         self._render(force=True)
         if self._typing_done():
@@ -503,16 +510,33 @@ class SpeechBubble(_TopmostWindowMixin, QWidget):
         self._opacity_anim.start()
 
     def _resize_to_content(self):
-        w = self.label.width() + _BUBBLE_PAD_X * 2
-        h = self.label.height() + _BUBBLE_PAD_Y * 2 + _BUBBLE_TAIL_H
-        self.resize(w, h)
+        """Fit the bubble to the label, moving and resizing in one step (no flicker), and only
+        when the size actually changed."""
+        size = QSize(
+            self.label.width() + _BUBBLE_PAD_X * 2,
+            self.label.height() + _BUBBLE_PAD_Y * 2 + _BUBBLE_TAIL_H,
+        )
+        if size == self.size():
+            return
+        if not self.isVisible():
+            self.resize(size)
+            return
+        pos = self._compute_position(size)
+        if self._show_group.state() == QAbstractAnimation.Running:
+            self._pos_anim.setEndValue(pos)  # still sliding in: slide to where the new size sits
+            self.resize(size)
+        else:
+            self.setGeometry(QRect(pos, size))
+        self.update()
 
-    def _compute_position(self) -> QPoint:
+    def _compute_position(self, size: QSize | None = None) -> QPoint:
         cw = self.companion
         if cw is None:
             return QPoint(100, 100)
-        x = cw.x() + cw.width() // 2 - self.width() // 2
-        y = cw.y() - self.height() - 4
+        if size is None:
+            size = self.size()
+        x = cw.x() + cw.width() // 2 - size.width() // 2
+        y = cw.y() - size.height() - 4
 
         screen = (
             QGuiApplication.screenAt(cw.pos())
@@ -522,12 +546,12 @@ class SpeechBubble(_TopmostWindowMixin, QWidget):
         if screen is None:
             # No screens: unclamped companion position rather than crashing the slot.
             self._tail_on_top = True
-            self._tail_x = max(_BUBBLE_RADIUS + 6, self.width() // 2)
+            self._tail_x = max(_BUBBLE_RADIUS + 6, size.width() // 2)
             self.label.move(_BUBBLE_PAD_X, _BUBBLE_PAD_Y)
             return QPoint(x, y)
 
         geo = screen.availableGeometry()
-        x = max(geo.left(), min(x, geo.right() - self.width()))
+        x = max(geo.left(), min(x, geo.right() - size.width()))
 
         # Always above her (no below-her flip). Clamp y to screen top.
         self._tail_on_top = True
@@ -536,7 +560,7 @@ class SpeechBubble(_TopmostWindowMixin, QWidget):
         # Tail at her horizontal center, clamped inside the rounded body.
         target_center = cw.x() + cw.width() // 2
         self._tail_x = max(
-            _BUBBLE_RADIUS + 6, min(target_center - x, self.width() - _BUBBLE_RADIUS - 6)
+            _BUBBLE_RADIUS + 6, min(target_center - x, size.width() - _BUBBLE_RADIUS - 6)
         )
         self.label.move(_BUBBLE_PAD_X, _BUBBLE_PAD_Y)
         return QPoint(x, y)
