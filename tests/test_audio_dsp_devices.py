@@ -82,14 +82,8 @@ def dummy_mp3(dummy_wav):
 
 
 class TestVoiceDSPProcessing:
-    def test_process_audio_file_disabled_by_default(self, dummy_wav):
-        with patch.object(config, "VOICE_DSP_ENABLED", False):
-            out_path = voice_dsp.process_audio_file(dummy_wav)
-            assert out_path is None
-
     def test_process_audio_file_neutral_bypass(self, dummy_wav):
-        with patch.object(config, "VOICE_DSP_ENABLED", True), \
-             patch.object(config, "VOICE_PITCH_SEMITONES", 0.0), \
+        with patch.object(config, "VOICE_PITCH_SEMITONES", 0.0), \
              patch.object(config, "VOICE_SPEED_FACTOR", 1.0), \
              patch.object(config, "VOICE_ROBOT_AMOUNT", 0), \
              patch.object(config, "VOICE_GLITCH_AMOUNT", 0), \
@@ -98,8 +92,7 @@ class TestVoiceDSPProcessing:
             assert out_path is None
 
     def test_process_audio_file_wav(self, dummy_wav):
-        with patch.object(config, "VOICE_DSP_ENABLED", True), \
-             patch.object(config, "VOICE_PITCH_SEMITONES", 3.0), \
+        with patch.object(config, "VOICE_PITCH_SEMITONES", 3.0), \
              patch.object(config, "VOICE_SPEED_FACTOR", 1.1), \
              patch.object(config, "VOICE_ROBOT_AMOUNT", 20), \
              patch.object(config, "VOICE_GLITCH_AMOUNT", 10), \
@@ -116,8 +109,7 @@ class TestVoiceDSPProcessing:
             os.remove(out_path)
 
     def test_process_audio_file_mp3(self, dummy_mp3):
-        with patch.object(config, "VOICE_DSP_ENABLED", True), \
-             patch.object(config, "VOICE_PITCH_SEMITONES", -2.5):
+        with patch.object(config, "VOICE_PITCH_SEMITONES", -2.5):
             out_path = voice_dsp.process_audio_file(dummy_mp3)
             assert out_path is not None
             assert os.path.isfile(out_path)
@@ -140,8 +132,7 @@ class TestVoiceDSPProcessing:
             return real_import(name, *args, **kwargs)
 
         with patch.object(builtins, "__import__", side_effect=fake_import):
-            with patch.object(config, "VOICE_DSP_ENABLED", True), \
-                 patch.object(config, "VOICE_PITCH_SEMITONES", 1.0):
+            with patch.object(config, "VOICE_PITCH_SEMITONES", 1.0):
                 out_path = voice_dsp.process_audio_file(dummy_mp3)
                 assert out_path is not None
                 assert os.path.isfile(out_path)
@@ -149,7 +140,7 @@ class TestVoiceDSPProcessing:
                 os.remove(out_path)
 
     def test_process_audio_file_nonexistent(self):
-        with patch.object(config, "VOICE_DSP_ENABLED", True):
+        with patch.object(config, "VOICE_PITCH_SEMITONES", 2.0):
             out_path = voice_dsp.process_audio_file("/nonexistent/audio/file.wav")
             assert out_path is None
 

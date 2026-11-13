@@ -466,7 +466,7 @@ class StreamingSpeaker:
 
     def _queue_audio(self, chunk):
         if not self.interrupted:
-            if chunk and getattr(config, "VOICE_DSP_ENABLED", False):
+            if chunk:
                 try:
                     import voice_dsp
                     chunk = voice_dsp.process_pcm16_mono(chunk, sample_rate=24000)
@@ -808,14 +808,13 @@ def _play_file_locked(path: str, stop_event=None) -> bool:
     music = pygame.mixer.music
     play_path = path
     dsp_temp = None
-    if getattr(config, "VOICE_DSP_ENABLED", False):
-        try:
-            import voice_dsp
-            dsp_temp = voice_dsp.process_audio_file(path)
-            if dsp_temp:
-                play_path = dsp_temp
-        except Exception as e:
-            print(f"(voice DSP processing failed, falling back to original: {e})")
+    try:
+        import voice_dsp
+        dsp_temp = voice_dsp.process_audio_file(path)  # None when no effect is set
+        if dsp_temp:
+            play_path = dsp_temp
+    except Exception as e:
+        print(f"(voice DSP processing failed, falling back to original: {e})")
 
     vmic_thread = None
     try:

@@ -412,7 +412,7 @@ commented‑out example.
 | `ALLOW_INTERRUPTIONS` / `BARGE_IN_REQUIRE_NAME` | Whether and how you can talk over her |
 | `CALL_APP` / `CALL_VIRTUAL_MIC_DEVICE` | Call mode app and virtual mic |
 | `DESKTOP_CHAOS_ENABLED` | Pranks on or off |
-| `WATCH_ALONG_ENABLED` / `REPLAY_BUFFER_ENABLED` / `GAME_COPILOT_ENABLED` / `MINI_GAMES_ENABLED` | Feature switches |
+| `WATCH_ALONG_ENABLED` / `REPLAY_BUFFER_ENABLED` | Feature switches |
 | `HOTKEYS_ENABLED` | Global hotkeys on or off |
 | `PLUGINS_ENABLED` | Load `plugins/` at all |
 | `ENABLE_COMPANION_GUI` | Show or hide the desktop companion |

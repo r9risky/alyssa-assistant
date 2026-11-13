@@ -112,13 +112,13 @@ def test_join_greets_the_call_herself():
             patch.object(discord_bot, "join", return_value="I'm in #Lobby on Friends."), \
             patch.object(discord_bot, "connected", return_value=True), \
             patch.object(discord_bot, "channel_members", return_value=["Sam", "Jo"]), \
-            patch.object(call_mode.config, "USER_NICKNAME", "Riya", create=True):
+            patch.object(call_mode.config, "USER_NICKNAME", "Riya"):
         reply = call_mode.join_call({})
     session.end_call()
     assert " Sam and Jo! " in reply
     # She greets them herself: never "Just say 'Hey everyone!'" or "You should announce...".
     assert "word for word" not in reply and "you should" not in reply.lower()
-    with patch.object(call_mode.config, "USER_NICKNAME", "Riya", create=True), \
+    with patch.object(call_mode.config, "USER_NICKNAME", "Riya"), \
             patch.object(call_ears.random, "choice", lambda options: options[0]):
         assert call_ears.greeting([], "on in 15.") == "Hey everyone! Riya asked me to tell you: on in 15."
 

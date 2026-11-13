@@ -220,7 +220,7 @@ class MicrophoneSelectionTests(unittest.TestCase):
             {"name": "Microphone (PD100X)", "max_input_channels": 1},
         ]
         with (
-            patch.object(recorder.config, "MICROPHONE_DEVICE", "PD100X", create=True),
+            patch.object(recorder.config, "MICROPHONE_DEVICE", "PD100X"),
             patch.object(recorder.sd, "query_devices", return_value=devices),
             patch.object(recorder.sd, "check_input_settings"),
             patch.object(recorder.sd, "InputStream", Stream),

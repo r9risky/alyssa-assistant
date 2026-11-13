@@ -17,8 +17,6 @@ from typing import Optional
 from call_ears import get_call_session, greeting, parse_call_friend_intent
 import config
 
-TAB_TITLE = "Call & Meeting Mode"
-
 
 # Process name -> display name used by call detection. Vesktop is a Discord client.
 CALL_APP_PROCESSES = {

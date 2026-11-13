@@ -33,6 +33,21 @@ def load(path: str | None = None) -> dict:
     if not isinstance(data, dict):
         print(f"[settings] Ignoring {os.path.basename(path)} (not a JSON object); using defaults.")
         return {}
+    return _migrate(data)
+
+
+# Voice effects used to need a "DSP pipeline" switch hidden under Show advanced, so effects
+# saved while it was off never played. They now play whenever they're set: keep those off.
+_NEUTRAL_VOICE_EFFECTS = {
+    "VOICE_PITCH_SEMITONES": 0.0, "VOICE_SPEED_FACTOR": 1.0, "VOICE_ROBOT_AMOUNT": 0,
+    "VOICE_GLITCH_AMOUNT": 0, "VOICE_LAYERS_ENABLED": False,
+}
+
+
+def _migrate(data: dict) -> dict:
+    """Bring an older settings.json up to date. The next save() writes the result."""
+    if data.pop("VOICE_DSP_ENABLED", None) is False:
+        data.update(_NEUTRAL_VOICE_EFFECTS)
     return data
 
 
@@ -45,6 +60,18 @@ def apply(namespace: dict, path: str | None = None, skip=()) -> list[str]:
             namespace[key] = value
             applied.append(key)
     return applied
+
+
+def change(key: str, value) -> None:
+    """Use a setting now and keep it after a restart (for Settings tabs that add-ons build)."""
+    import config
+    import startup_logging
+
+    setattr(config, key, value)
+    try:
+        save({key: value})
+    except OSError as e:
+        startup_logging.warn_once(f"saving {key}", e)
 
 
 def save(updates: dict, path: str | None = None) -> None:

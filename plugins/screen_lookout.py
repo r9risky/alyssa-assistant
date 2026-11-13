@@ -20,7 +20,7 @@ import actions
 import config
 import memory
 
-TAB_TITLE = "Screen & Check-ins"
+GUI_PANEL_TITLE = "Screen & Check-ins"
 WATCH_INTERVAL_SECONDS = 20
 
 _MAX_WATCHES = 5
@@ -236,7 +236,7 @@ def check_watch() -> str | None:
     return None
 
 
-def build_gui(parent=None):
+def build_gui_panel(parent=None):
     """Build the Settings tab widget for Screen Watching, Visual Lookout, and Check-ins."""
     from PySide6.QtWidgets import (
         QCheckBox,
@@ -251,19 +251,17 @@ def build_gui(parent=None):
         QWidget,
     )
 
-    panel = QWidget(parent)
+    from user_settings import change  # saved, so they're still set after a restart
+
+    panel = QWidget()
+    panel.setObjectName("tabPage")
     layout = QVBoxLayout(panel)
     layout.setContentsMargins(12, 12, 12, 12)
     layout.setSpacing(10)
 
-    quiet_check = QCheckBox("Quiet Mode (silence proactive screen commentary & check-ins)")
-    quiet_check.setChecked(bool(getattr(config, "QUIET_MODE", False)))
-    quiet_check.toggled.connect(lambda checked: setattr(config, "QUIET_MODE", bool(checked)))
-    layout.addWidget(quiet_check)
-
-    watch_check = QCheckBox("Watch my screen (periodic commentary & 3h visual memory)")
+    watch_check = QCheckBox("Watch my screen (she comments now and then and remembers the last 3 hours)")
     watch_check.setChecked(bool(getattr(config, "SCREEN_WATCH_ENABLED", False)))
-    watch_check.toggled.connect(lambda checked: setattr(config, "SCREEN_WATCH_ENABLED", bool(checked)))
+    watch_check.toggled.connect(lambda checked: change("SCREEN_WATCH_ENABLED", bool(checked)))
     layout.addWidget(watch_check)
 
     interval_row = QHBoxLayout()
@@ -271,23 +269,20 @@ def build_gui(parent=None):
     interval_spin = QSpinBox()
     interval_spin.setRange(30, 3600)
     interval_spin.setValue(int(getattr(config, "SCREEN_WATCH_INTERVAL_SECONDS", 120)))
-    interval_spin.valueChanged.connect(
-        lambda val: setattr(config, "SCREEN_WATCH_INTERVAL_SECONDS", int(val))
-    )
+    interval_spin.setKeyboardTracking(False)  # save once typing ends, not per keystroke
+    interval_spin.valueChanged.connect(lambda val: change("SCREEN_WATCH_INTERVAL_SECONDS", int(val)))
     interval_row.addWidget(interval_spin)
     interval_row.addStretch(1)
     layout.addLayout(interval_row)
 
     caught_up_check = QCheckBox("Keep caught up (include last 3 hours of screen glances in context)")
     caught_up_check.setChecked(bool(getattr(config, "SCREEN_WATCH_KEEP_CAUGHT_UP", True)))
-    caught_up_check.toggled.connect(
-        lambda checked: setattr(config, "SCREEN_WATCH_KEEP_CAUGHT_UP", bool(checked))
-    )
+    caught_up_check.toggled.connect(lambda checked: change("SCREEN_WATCH_KEEP_CAUGHT_UP", bool(checked)))
     layout.addWidget(caught_up_check)
 
-    checkin_check = QCheckBox("Check in on me (periodic water, stretch, eye-rest & sleep nudges)")
+    checkin_check = QCheckBox("Check in on me (water, stretch, eye-rest and bedtime nudges)")
     checkin_check.setChecked(bool(getattr(config, "CHECK_IN_ENABLED", False)))
-    checkin_check.toggled.connect(lambda checked: setattr(config, "CHECK_IN_ENABLED", bool(checked)))
+    checkin_check.toggled.connect(lambda checked: change("CHECK_IN_ENABLED", bool(checked)))
     layout.addWidget(checkin_check)
 
     checkin_row = QHBoxLayout()
@@ -295,14 +290,13 @@ def build_gui(parent=None):
     checkin_spin = QSpinBox()
     checkin_spin.setRange(5, 240)
     checkin_spin.setValue(int(getattr(config, "CHECK_IN_INTERVAL_MINUTES", 45)))
-    checkin_spin.valueChanged.connect(
-        lambda val: setattr(config, "CHECK_IN_INTERVAL_MINUTES", int(val))
-    )
+    checkin_spin.setKeyboardTracking(False)
+    checkin_spin.valueChanged.connect(lambda val: change("CHECK_IN_INTERVAL_MINUTES", int(val)))
     checkin_row.addWidget(checkin_spin)
     checkin_row.addStretch(1)
     layout.addLayout(checkin_row)
 
-    layout.addWidget(QLabel("Active Visual Lookouts (`watch_for`):"))
+    layout.addWidget(QLabel("Things she's watching for:"))
     watch_list = QListWidget()
     watch_list.setMaximumHeight(90)
     layout.addWidget(watch_list)
@@ -338,7 +332,7 @@ def build_gui(parent=None):
     clear_btn.clicked.connect(_on_clear)
     _refresh_watches()
 
-    layout.addWidget(QLabel("Custom Check-in Lines (`check-ins.md`):"))
+    layout.addWidget(QLabel("Check-in lines (check-ins.md):"))
     checkins_editor = QPlainTextEdit()
     checkins_editor.setPlainText(memory.load_check_in_lines())
     layout.addWidget(checkins_editor, 1)

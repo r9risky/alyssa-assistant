@@ -210,8 +210,7 @@ SCREEN_WATCH_KEEP_CAUGHT_UP = True
 CHECK_IN_ENABLED = False
 CHECK_IN_INTERVAL_MINUTES = 45
 
-# Capri-inspired Voice DSP Effects & Typing Sound
-VOICE_DSP_ENABLED = False
+# Capri-inspired voice effects (any non-neutral value turns them on) & typing sound
 VOICE_PITCH_SEMITONES = 0.0
 VOICE_SPEED_FACTOR = 1.0
 VOICE_ROBOT_AMOUNT = 0
@@ -233,15 +232,11 @@ HOTKEY_HOP_OFF = 'ctrl+alt+c'
 # Coding buddy mode (live status for coding agents)
 HUSK_MODE_ENABLED = False
 HUSK_PORT = 47831
-HUSK_WATCH_CLAUDE_CODE = True
 
 # Capri-inspired Modular Extensions & Toggles
-EXTENSIONS_ENABLED = True
 DESKTOP_CHAOS_ENABLED = True  # Set False for a prank-free desktop (disables fake BSOD & clones)
 WATCH_ALONG_ENABLED = True   # Screen stream reaction mode
 REPLAY_BUFFER_ENABLED = True # 30s rolling replay buffer ("clip that!")
-GAME_COPILOT_ENABLED = True  # Visual game detection & controls assistant
-MINI_GAMES_ENABLED = True    # Desktop ink overlay & mini-games
 
 
 class _SettingsView:
@@ -353,7 +348,6 @@ class AudioSettings(_SettingsView):
     BARGE_IN_MIN_SPEECH_MS: int
     BARGE_IN_VAD_AGGRESSIVENESS: int
     DEBUG_PRINT_TRANSCRIPTS: bool
-    VOICE_DSP_ENABLED: bool
     VOICE_PITCH_SEMITONES: float
     VOICE_SPEED_FACTOR: float
     VOICE_ROBOT_AMOUNT: int
@@ -408,18 +402,14 @@ class PluginSettings(_SettingsView):
     CHECK_IN_INTERVAL_MINUTES: int
     HUSK_MODE_ENABLED: bool
     HUSK_PORT: int
-    HUSK_WATCH_CLAUDE_CODE: bool
     WEATHER_DEFAULT_LOCATION: str
     WEATHER_UNITS: str
     AUTO_DETECT_LOCATION: bool
     LOCATION_CACHE_MINUTES: int
     REMINDER_UPCOMING_WINDOW_HOURS: int
-    EXTENSIONS_ENABLED: bool
     DESKTOP_CHAOS_ENABLED: bool
     WATCH_ALONG_ENABLED: bool
     REPLAY_BUFFER_ENABLED: bool
-    GAME_COPILOT_ENABLED: bool
-    MINI_GAMES_ENABLED: bool
 
 
 class UISettings(_SettingsView):
