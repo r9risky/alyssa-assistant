@@ -234,5 +234,7 @@ def _describe_image_anthropic(image_bytes: bytes, mime_type: str, prompt: str) -
         return f"Anthropic returned an error ({status}) while looking at the screen."
 
     data = response.json()
+    usage = data.get("usage") or {}
+    _usage.record("anthropic", usage.get("input_tokens"), usage.get("output_tokens"))
     text = "".join(b.get("text", "") for b in data.get("content") or [] if b.get("type") == "text").strip()
     return text or "I looked, but didn't get a usable description back."
