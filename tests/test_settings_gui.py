@@ -164,6 +164,25 @@ class SettingsGuiTests(unittest.TestCase):
         self.assertEqual(settings_dialog.config.HIDE_CONSOLE_WINDOW, original)
         set_visible.assert_not_called()
 
+    def test_heavy_task_model_picker_saves_and_shows_with_auto(self):
+        original = (config.LLM_REASONING_TIER, config.LLM_STRONG_PROVIDER, config.LLM_STRONG_MODEL)
+        dialog = self.dialog
+        try:
+            dialog.reasoning_tier_combo.setCurrentIndex(dialog.reasoning_tier_combo.findData("fast"))
+            self.assertFalse(dialog._assistant_form.isRowVisible(dialog.strong_model_edit))
+            dialog.reasoning_tier_combo.setCurrentIndex(dialog.reasoning_tier_combo.findData("auto"))
+            self.assertTrue(dialog._assistant_form.isRowVisible(dialog.strong_model_edit))
+            dialog.strong_provider_combo.setCurrentText("gemini")
+            dialog.strong_model_edit.setCurrentText("gemini-4-hydrogen")
+            with patch.object(user_settings, "save") as save:
+                self.real_assistant_apply(dialog)
+            saved = save.call_args.args[0]
+            self.assertEqual(saved["LLM_REASONING_TIER"], "auto")
+            self.assertEqual(saved["LLM_STRONG_PROVIDER"], "gemini")
+            self.assertEqual(saved["LLM_STRONG_MODEL"], "gemini-4-hydrogen")
+        finally:
+            config.LLM_REASONING_TIER, config.LLM_STRONG_PROVIDER, config.LLM_STRONG_MODEL = original
+
     def test_system_watch_controls_apply_and_reload_plugins(self):
         original = (
             config.SYSTEM_WATCH_ENABLED, config.SYSTEM_WATCH_INTERVAL_SECONDS
@@ -491,7 +510,7 @@ class SettingsSearchTests(unittest.TestCase):
         self.assertIn("VAD engine:", self._visible_labels())
 
     def test_search_keeps_other_providers_rows_hidden(self):
-        hidden_before = "Claude model:" not in self._visible_labels()
+        self.assertEqual(self._visible_labels().count("Chat model:"), 1)
         self.dialog.tabs.search_edit.setText("model")
         self.dialog.tabs.search_edit.setText("")
-        self.assertEqual(hidden_before, "Claude model:" not in self._visible_labels())
+        self.assertEqual(self._visible_labels().count("Chat model:"), 1)

@@ -20,6 +20,7 @@ ASSISTANT_NAME_ALIASES = [
 
 LLM_PROVIDER = 'gemini'
 LLM_STRONG_PROVIDER = 'anthropic'
+LLM_STRONG_MODEL = ''  # heavy-task model on LLM_STRONG_PROVIDER; blank = that service's chat model
 LLM_REASONING_TIER = 'fast'  # "fast" (always the main model), "auto" (strong model for heavy tasks), or "strong"
 
 OLLAMA_MODEL = 'qwen2.5:3b'
@@ -274,6 +275,7 @@ class _SettingsView:
 class ProviderSettings(_SettingsView):
     LLM_PROVIDER: str
     LLM_STRONG_PROVIDER: str
+    LLM_STRONG_MODEL: str
     LLM_REASONING_TIER: str
     OLLAMA_MODEL: str
     OLLAMA_URL: str

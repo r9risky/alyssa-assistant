@@ -153,7 +153,7 @@ def _call_openai_compatible(
     }
 
 
-def _call_openai(messages, on_text_delta=None, cancel_event=None, tools=None):
+def _call_openai(messages, on_text_delta=None, cancel_event=None, tools=None, model=None):
     if not config.OPENAI_API_KEY:
         raise RuntimeError(
             "OPENAI_API_KEY isn't set. Set it as an environment variable "
@@ -164,7 +164,7 @@ def _call_openai(messages, on_text_delta=None, cancel_event=None, tools=None):
         messages,
         getattr(config, "OPENAI_BASE_URL", "https://api.openai.com/v1"),
         config.OPENAI_API_KEY,
-        config.OPENAI_MODEL,
+        model or config.OPENAI_MODEL,
         "OpenAI",
         on_text_delta,
         cancel_event,
@@ -172,12 +172,12 @@ def _call_openai(messages, on_text_delta=None, cancel_event=None, tools=None):
     )
 
 
-def _call_custom_openai(messages, on_text_delta=None, cancel_event=None, tools=None):
+def _call_custom_openai(messages, on_text_delta=None, cancel_event=None, tools=None, model=None):
     return _call_openai_compatible(
         messages,
         getattr(config, "CUSTOM_BASE_URL", ""),
         getattr(config, "CUSTOM_API_KEY", ""),
-        getattr(config, "CUSTOM_MODEL", ""),
+        model or getattr(config, "CUSTOM_MODEL", ""),
         "Your custom provider",
         on_text_delta,
         cancel_event,

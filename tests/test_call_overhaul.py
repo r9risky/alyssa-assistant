@@ -134,7 +134,7 @@ def test_call_tools_are_her_whole_reply_without_a_second_model_call():
     session = call_ears.get_call_session()
     session.start_call("Discord", "general")
     try:
-        with patch.object(dialogue, "_build_model_request", return_value=([], "openai", "OpenAI", [])), \
+        with patch.object(dialogue, "_build_model_request", return_value=([], "openai", "OpenAI", [], None)), \
                 patch.object(dialogue, "_invoke_model_turn", side_effect=model_turn):
             reply = dialogue.handle_command("could you let my friends know I will be there in five")
     finally:

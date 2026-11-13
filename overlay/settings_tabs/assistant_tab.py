@@ -43,12 +43,21 @@ from ..credential_checks import (
 class AssistantTabMixin:
     def _update_provider_rows_visibility(self, *args):
         provider = self.provider_combo.currentText()
+        # The heavy-task service needs its key too, but only the main service's chat model shows.
+        heavy = (
+            self.strong_provider_combo.currentText()
+            if (self.reasoning_tier_combo.currentData() or "fast") != "fast" else provider
+        )
         form = self._assistant_form
-        self._set_rows_visible(form, [(self._ollama_model_label, self.ollama_model_edit)], provider == "ollama")
-        self._set_rows_visible(form, self._gemini_key_rows, provider == "gemini")
-        self._set_rows_visible(form, self._openai_key_rows, provider == "openai")
-        self._set_rows_visible(form, self._anthropic_key_rows, provider == "anthropic")
-        self._set_rows_visible(form, self._custom_rows, provider == "custom_openai")
+        for name, key_rows in (
+            ("gemini", self._gemini_key_rows),
+            ("openai", self._openai_key_rows),
+            ("anthropic", self._anthropic_key_rows),
+            ("custom_openai", self._custom_rows),
+        ):
+            self._set_rows_visible(form, key_rows, name in (provider, heavy))
+        for name, row in self._chat_model_rows.items():
+            self._set_rows_visible(form, [row], name == provider)
 
     def _update_tts_provider_rows_visibility(self, *args):
         provider = self.tts_provider_combo.currentText()
@@ -91,33 +100,14 @@ class AssistantTabMixin:
         self.provider_combo.setCurrentText(config.LLM_PROVIDER)
         self.provider_combo.currentTextChanged.connect(self._queue_assistant_apply)
         self.provider_combo.currentTextChanged.connect(self._update_provider_rows_visibility)
-        self._add_row(form, "Main model:", self.provider_combo)
-
-        # Which model answers: the main one always (cheapest), or a stronger one for heavy work.
-        self.reasoning_tier_combo = QComboBox()
-        self.reasoning_tier_combo.addItem("Always the main model (cheapest)", "fast")
-        self.reasoning_tier_combo.addItem("Stronger model for planning, research and writing", "auto")
-        self.reasoning_tier_combo.addItem("Stronger model for everything", "strong")
-        tier_idx = self.reasoning_tier_combo.findData(str(getattr(config, "LLM_REASONING_TIER", "fast")))
-        self.reasoning_tier_combo.setCurrentIndex(max(0, tier_idx))
-        self.reasoning_tier_combo.currentIndexChanged.connect(self._queue_assistant_apply)
-        self.reasoning_tier_combo.currentIndexChanged.connect(self._update_strong_provider_visibility)
-        self.tokens_today_label = self._help_label("")
-        self._add_row(form, "Use for chat:", self._stack_under(self.reasoning_tier_combo, self.tokens_today_label))
-
-        self.strong_provider_combo = QComboBox()
-        self.strong_provider_combo.addItems(["anthropic", "openai", "gemini", "custom_openai", "ollama"])
-        self.strong_provider_combo.setCurrentText(str(getattr(config, "LLM_STRONG_PROVIDER", "anthropic")))
-        self.strong_provider_combo.currentTextChanged.connect(self._queue_assistant_apply)
-        self._strong_provider_row = self._add_row(form, "Stronger model:", self.strong_provider_combo)
-        self._update_strong_provider_visibility()
-        self.refresh_tokens_today()
+        self._add_row(form, "AI service:", self.provider_combo)
+        self._chat_model_rows = {}  # service -> its "Chat model:" row; only the main service's shows
 
         # -- Ollama (local) --
         self.ollama_model_edit = QLineEdit(config.OLLAMA_MODEL)
         self.ollama_model_edit.textChanged.connect(self._queue_assistant_apply)
-        self._ollama_model_label = QLabel("Ollama model:")
-        self._add_row(form, self._ollama_model_label, self.ollama_model_edit)
+        self._ollama_model_label = QLabel("Chat model:")
+        self._chat_model_rows["ollama"] = self._add_row(form, self._ollama_model_label, self.ollama_model_edit)
 
         # -- Gemini --
         self._original_gemini_key = config.GEMINI_API_KEY
@@ -136,7 +126,7 @@ class AssistantTabMixin:
             extras=(self.gemini_key_status_label, get_key_link, self.gemini_setup_hint),
         )
         self.gemini_model_edit = self._build_model_combo(config.GEMINI_MODEL, provider="gemini")
-        self._gemini_key_rows.append(self._add_row(form, "Gemini model:", self.gemini_model_edit))
+        self._chat_model_rows["gemini"] = self._add_row(form, "Chat model:", self.gemini_model_edit)
 
         # -- OpenAI --
         self._original_openai_key = getattr(config, "OPENAI_API_KEY", "")
@@ -152,7 +142,7 @@ class AssistantTabMixin:
             extras=(self.openai_key_status_label, openai_key_link),
         )
         self.openai_model_edit = self._build_model_combo(getattr(config, "OPENAI_MODEL", "gpt-5-mini"), provider="openai")
-        self._openai_key_rows.append(self._add_row(form, "OpenAI model:", self.openai_model_edit))
+        self._chat_model_rows["openai"] = self._add_row(form, "Chat model:", self.openai_model_edit)
 
         # -- Anthropic (Claude) --
         self._original_anthropic_key = getattr(config, "ANTHROPIC_API_KEY", "")
@@ -168,7 +158,7 @@ class AssistantTabMixin:
             extras=(self.anthropic_key_status_label, anthropic_key_link),
         )
         self.anthropic_model_edit = self._build_model_combo(getattr(config, "ANTHROPIC_MODEL", "claude-sonnet-5"), provider="anthropic")
-        self._anthropic_key_rows.append(self._add_row(form, "Claude model:", self.anthropic_model_edit))
+        self._chat_model_rows["anthropic"] = self._add_row(form, "Chat model:", self.anthropic_model_edit)
 
         # -- Custom OpenAI-compatible provider --
         self._custom_rows = []
@@ -204,13 +194,41 @@ class AssistantTabMixin:
         custom_model_row.addWidget(self.custom_model_edit, 1)
         custom_model_row.addWidget(self._custom_fetch_models_btn)
         custom_model_field = self._stack_under(custom_model_row, self.custom_models_status_label)
-        self._custom_rows.append(self._add_row(form, "Custom model:", custom_model_field))
+        self._chat_model_rows["custom_openai"] = self._add_row(form, "Chat model:", custom_model_field)
 
         custom_note = self._help_label(
             "Works with OpenAI-compatible providers (Groq, OpenRouter, Together, LM Studio, vLLM)."
         )
         custom_note.setStyleSheet(f"color: {self._t()['subtext']}; font-size: 11.5px;")
         self._custom_rows.append(self._add_row(form, "", custom_note))
+
+        # Heavy tasks: chat stays on the cheap chat model; coding/research can use a bigger one.
+        self.reasoning_tier_combo = QComboBox()
+        self.reasoning_tier_combo.addItem("Use the chat model too (cheapest)", "fast")
+        self.reasoning_tier_combo.addItem("Auto: heavy model for coding, research and writing", "auto")
+        self.reasoning_tier_combo.addItem("Heavy model for everything", "strong")
+        tier_idx = self.reasoning_tier_combo.findData(str(getattr(config, "LLM_REASONING_TIER", "fast")))
+        self.reasoning_tier_combo.setCurrentIndex(max(0, tier_idx))
+        self.reasoning_tier_combo.currentIndexChanged.connect(self._queue_assistant_apply)
+        self.reasoning_tier_combo.currentIndexChanged.connect(self._update_strong_provider_visibility)
+        self.tokens_today_label = self._help_label("")
+        self._add_row(form, "Heavy tasks:", self._stack_under(self.reasoning_tier_combo, self.tokens_today_label))
+
+        self.strong_provider_combo = QComboBox()
+        self.strong_provider_combo.addItems(["gemini", "anthropic", "openai", "custom_openai", "ollama"])
+        self.strong_provider_combo.setCurrentText(str(getattr(config, "LLM_STRONG_PROVIDER", "anthropic")))
+        self.strong_provider_combo.currentTextChanged.connect(self._queue_assistant_apply)
+        self.strong_provider_combo.currentTextChanged.connect(self._update_strong_provider_visibility)
+        self.strong_provider_combo.currentTextChanged.connect(self._refill_strong_model_combo)
+        self._strong_provider_row = self._add_row(form, "Heavy-task service:", self.strong_provider_combo)
+
+        self.strong_model_edit = self._build_model_combo(
+            str(getattr(config, "LLM_STRONG_MODEL", "") or ""),
+            provider=self._model_list_key(self.strong_provider_combo.currentText()),
+        )
+        self.strong_model_edit.lineEdit().setPlaceholderText("Blank = same as that service's chat model")
+        self._strong_model_row = self._add_row(form, "Heavy-task model:", self.strong_model_edit)
+        self.refresh_tokens_today()
 
         note = self._help_label(
             "Keys apply immediately and are stored in Windows Credential Manager."
@@ -500,7 +518,7 @@ class AssistantTabMixin:
         self._refresh_discord_status()
         outer.addStretch(1)
 
-        self._update_provider_rows_visibility()
+        self._update_strong_provider_visibility()  # also sets the provider rows
         self._update_tts_provider_rows_visibility()
         return w
 
@@ -934,6 +952,7 @@ class AssistantTabMixin:
             "LLM_PROVIDER": self.provider_combo.currentText(),
             "LLM_REASONING_TIER": self.reasoning_tier_combo.currentData() or "fast",
             "LLM_STRONG_PROVIDER": self.strong_provider_combo.currentText(),
+            "LLM_STRONG_MODEL": self.strong_model_edit.currentText().strip(),
             "OLLAMA_MODEL": self.ollama_model_edit.text().strip() or config.OLLAMA_MODEL,
             "GEMINI_MODEL": self.gemini_model_edit.currentText().strip() or config.GEMINI_MODEL,
             "OPENAI_MODEL": self.openai_model_edit.currentText().strip() or getattr(config, "OPENAI_MODEL", ""),
@@ -1040,7 +1059,21 @@ class AssistantTabMixin:
 
     def _update_strong_provider_visibility(self, *args):
         visible = (self.reasoning_tier_combo.currentData() or "fast") != "fast"
-        self._set_rows_visible(self._assistant_form, [self._strong_provider_row], visible)
+        self._set_rows_visible(self._assistant_form, [self._strong_provider_row, self._strong_model_row], visible)
+        self._update_provider_rows_visibility()
+
+    @staticmethod
+    def _model_list_key(service: str) -> str:
+        return "custom" if service == "custom_openai" else service
+
+    def _refill_strong_model_combo(self, service: str):
+        """Offer the new service's models; a name from the old service would just 404."""
+        self.strong_model_edit.blockSignals(True)
+        self.strong_model_edit.clear()
+        self.strong_model_edit.addItems(self.DEFAULT_PROVIDER_MODELS.get(self._model_list_key(service), []))
+        self.strong_model_edit.setCurrentText("")
+        self.strong_model_edit.blockSignals(False)
+        self._queue_assistant_apply()
 
     def refresh_tokens_today(self):
         from brain import usage
