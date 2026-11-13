@@ -291,6 +291,20 @@ if any("couldn't import it" in line or "no 'bin'" in line or "failed (" in line 
         print(f"[transcribe]   {line}")
 
 
+def _cuda_libs_loadable() -> bool:
+    """A GPU alone isn't enough: without the CUDA 12 libraries the first transcription
+    fails and reloads on CPU, which made the first command after every start slow."""
+    if os.name != "nt":
+        return True
+    import ctypes
+
+    try:
+        ctypes.WinDLL("cublas64_12.dll")
+        return True
+    except OSError:
+        return False
+
+
 def _resolve_device_and_compute_type():
     """(device, compute_type) for WhisperModel from WHISPER_DEVICE/COMPUTE_TYPE
     (default "auto"). Detects NVIDIA GPU via ctranslate2; no torch needed."""
@@ -300,7 +314,7 @@ def _resolve_device_and_compute_type():
     if device == "auto":
         try:
             import ctranslate2
-            device = "cuda" if ctranslate2.get_cuda_device_count() > 0 else "cpu"
+            device = "cuda" if ctranslate2.get_cuda_device_count() > 0 and _cuda_libs_loadable() else "cpu"
         except Exception:
             device = "cpu"  # no CUDA build / no GPU / detection failed - CPU always works
         print(f"[transcribe] WHISPER_DEVICE=auto resolved to '{device}'")
@@ -689,6 +703,7 @@ def transcribe_call_audio(audio, hint_names=()) -> str:
 
 
 def _transcribe_impl_locked(audio, initial_prompt: str | None = None, quick: bool = False) -> str:
+    global _WHISPER_VAD_AVAILABLE
     if initial_prompt is None:
         initial_prompt = build_contextual_prompt()
     model = _get_model()
@@ -709,6 +724,11 @@ def _transcribe_impl_locked(audio, initial_prompt: str | None = None, quick: boo
         )
         segments = list(segments)  # evaluate now — faster-whisper decodes lazily; GPU DLL failure can surface here
     except Exception as e:
+        if _WHISPER_VAD_AVAILABLE and "silero" in str(e).lower():
+            # A damaged install can miss the VAD model file; our own VAD already trimmed the audio.
+            print(f"[transcribe] Whisper's VAD model failed ({e}); transcribing without it")
+            _WHISPER_VAD_AVAILABLE = False
+            return _transcribe_impl_locked(audio, initial_prompt=initial_prompt, quick=quick)
         if _model_is_on_gpu:
             # Missing/broken CUDA/cuBLAS/cuDNN — often only on first real
             # transcription. Reload on CPU and retry instead of crashing the loop.

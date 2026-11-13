@@ -358,6 +358,17 @@ class AssistantTabMixin:
         self.confirm_check.toggled.connect(self._queue_assistant_apply)
         self._add_row(behavior_form, "Action prompts:", self.confirm_check)
 
+        from brain.persona import DEFAULT_PRESET, PRESETS
+
+        self.personality_combo = QComboBox()
+        for key, (label, vibe) in PRESETS.items():
+            self.personality_combo.addItem(label, key)
+            self.personality_combo.setItemData(self.personality_combo.count() - 1, vibe.capitalize(), Qt.ToolTipRole)
+        idx = self.personality_combo.findData(getattr(config, "PERSONALITY_PRESET", DEFAULT_PRESET))
+        self.personality_combo.setCurrentIndex(max(idx, 0))
+        self.personality_combo.currentIndexChanged.connect(self._queue_assistant_apply)
+        self._add_row(behavior_form, "Personality:", self.personality_combo)
+
         self.caveman_combo = QComboBox()
         self.caveman_combo.addItem("Off (Full natural personality)", None)
         self.caveman_combo.addItem("Lite (Concise replies)", "lite")
@@ -939,6 +950,7 @@ class AssistantTabMixin:
             ),
             "SPEAK_RESPONSES": self.speak_check.isChecked(),
             "CAVEMAN_MODE": self.caveman_combo.currentData(),
+            "PERSONALITY_PRESET": self.personality_combo.currentData() or "playful",
             "CONFIRM_BEFORE_ACTIONS": self.confirm_check.isChecked(),
             "SECURITY_PRESET": self.security_preset_combo.currentData() or "balanced",
             "QUIET_MODE": self.quiet_mode_check.isChecked(),

@@ -8,6 +8,10 @@ import sys
 import threading
 import time
 
+if len(sys.argv) > 2 and sys.argv[1] == "--plugin-host":  # an add-on's sandbox process: before logging or Alyssa's own startup
+    import plugin_sandbox
+    sys.exit(plugin_sandbox.host_main(sys.argv[2], sys.argv[3] if len(sys.argv) > 3 else ""))
+
 # PyInstaller: config.py is next to the exe, not bundled; edits take effect without rebuild.
 if getattr(sys, "frozen", False):
     sys.path.insert(0, os.path.dirname(sys.executable))
@@ -334,7 +338,7 @@ def run_watcher_loop(bridge=None):
                 alert = None
             if alert:
                 print(f"[watcher] {w['name']}: {alert}")
-                if getattr(config, "QUIET_MODE", False):
+                if getattr(config, "QUIET_MODE", False) and not w.get("always"):
                     continue
                 try:  # a failed announcement must not kill every future watcher check
                     announce = brain.dialogue._natural_announce_reply(

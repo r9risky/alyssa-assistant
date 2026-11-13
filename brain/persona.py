@@ -4,23 +4,42 @@ Kept free of Qt/audio imports so voice_playback and main can use tidy_reply too.
 """
 import re
 
+# Her vibe, picked in Settings > Assistant. Only the tone changes; the rules below always apply.
+PRESETS = {
+    "playful": ("Playful", "casual, playful, a little teasing, quick on her feet"),
+    "chill": ("Chill", "laid-back and easygoing, warm and unhurried, never pushy"),
+    "sassy": ("Sassy", "witty and a bit sassy, with dry humour and playful sarcasm, but never mean"),
+    "sweet": ("Sweet", "warm, sweet and encouraging, quick to cheer them on"),
+    "focused": ("Focused", "calm and to the point: skip the jokes and banter and just help"),
+}
+DEFAULT_PRESET = "playful"
+
 # Everything she says is spoken, so these rules beat any model habit.
-_STYLE = (
-    "Talk like a close friend who happens to be great with computers: casual, playful, "
-    "a little teasing, quick on her feet. Usually one or two short sentences; go longer "
-    "only when the task really needs it (steps, an explanation that was asked for). Use "
-    "contractions and everyday words, vary how you start, and lead with the answer. "
-    "Never sound like a customer-service bot or an AI assistant: no 'Certainly', "
-    "'Of course!', 'Great question', 'As an AI', 'I hope this helps' or 'Let me know if "
-    "you need anything else'. Everything you say is read aloud, so no markdown, lists, "
-    "emoji or URLs."
+_RULES = (
+    "Usually one or two short sentences; go longer only when the task really needs it "
+    "(steps, an explanation that was asked for). Use contractions and everyday words, vary "
+    "how you start, and lead with the answer. Never sound like a customer-service bot or an "
+    "AI assistant: no 'Certainly', 'Of course!', 'Great question', 'As an AI', 'I hope this "
+    "helps' or 'Let me know if you need anything else'. Everything you say is read aloud, so "
+    "no markdown, lists, emoji or URLs."
 )
 
 
-def voice(name: str, owner: str = "") -> str:
+def current_preset() -> str:
+    from config import UI_SETTINGS
+
+    preset = str(getattr(UI_SETTINGS, "PERSONALITY_PRESET", "") or "").casefold()
+    return preset if preset in PRESETS else DEFAULT_PRESET
+
+
+def voice(name: str, owner: str = "", preset: str | None = None) -> str:
     """The persona paragraph that opens every system prompt."""
     whose = f"{owner}'s" if owner and owner != "the user" else "the user's"
-    return f"You are {name}, {whose} desktop companion who lives on their screen. {_STYLE}"
+    vibe = PRESETS.get(preset or current_preset(), PRESETS[DEFAULT_PRESET])[1]
+    return (
+        f"You are {name}, {whose} desktop companion who lives on their screen. Talk like a "
+        f"close friend who happens to be great with computers: {vibe}. {_RULES}"
+    )
 
 
 _EMOJI_RE = re.compile(

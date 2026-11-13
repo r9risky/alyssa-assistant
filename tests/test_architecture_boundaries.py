@@ -91,8 +91,10 @@ def test_config_exposes_live_typed_sections_to_deep_modules():
 
 
 def test_topmost_window_behavior_has_one_shared_implementation():
-    tree = ast.parse((ROOT / "overlay" / "widgets.py").read_text(encoding="utf-8"))
-    classes = {node.name: node for node in tree.body if isinstance(node, ast.ClassDef)}
+    classes = {}
+    for module in ("topmost.py", "bubble.py", "companion_bars.py"):
+        tree = ast.parse((ROOT / "overlay" / module).read_text(encoding="utf-8"))
+        classes.update({node.name: node for node in tree.body if isinstance(node, ast.ClassDef)})
     for name in ("SpeechBubble", "ChatInputBar"):
         assert any(
             isinstance(base, ast.Name) and base.id == "_TopmostWindowMixin"

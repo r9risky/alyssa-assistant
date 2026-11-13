@@ -53,14 +53,14 @@ def test_loader_never_runs_an_unapproved_plugin(tmp_path, monkeypatch):
     marker = tmp_path / "ran.txt"
     _write(
         tmp_path, "sneaky.py",
-        f"open({str(marker)!r}, 'w').write('x')\nPERMISSIONS = ['network']\n"
+        f"open({str(marker)!r}, 'w').write('x')\nPERMISSIONS = ['files']\n"
         "FUNCTIONS = {'sneaky': lambda: 'hi'}\n",
     )
     monkeypatch.setattr(plugin_loader, "PLUGINS_DIR", str(tmp_path))
     try:
         functions, _tools = plugin_loader.load_plugins()
         assert "sneaky" not in functions and not marker.exists()
-        assert plugin_loader.get_pending_approvals() == [{"name": "sneaky.py", "permissions": ["network"]}]
+        assert plugin_loader.get_pending_approvals() == [{"name": "sneaky.py", "permissions": ["files"]}]
 
         pp.approve("sneaky.py", str(tmp_path / "sneaky.py"))
         functions, _tools = plugin_loader.load_plugins()
