@@ -29,7 +29,7 @@ RELEASE_REPOSITORY = "alyssa-assistant"
 LATEST_RELEASE_URL = (
     f"https://api.github.com/repos/{RELEASE_OWNER}/{RELEASE_REPOSITORY}/releases/latest"
 )
-CURRENT_VERSION = "v1.13.0"
+CURRENT_VERSION = "v1.14.0"
 TRANSACTION_DIR = ".alyssa-update-transaction"
 COMMITTED_TRANSACTION_DIR = ".alyssa-update-committed"
 RESTART_HELPER = "apply_update.bat"
