@@ -94,3 +94,29 @@ def test_call_reply_uses_persona_voice(monkeypatch):
     assert reply == "Ha, nice one!"
     assert persona.voice(dialogue.ui_config.ASSISTANT_NAME, "x").split()[0] in seen["system"]
     assert "Loves puns." in seen["system"]
+
+
+def test_timing_lines_are_not_redacted_as_secrets():
+    assert startup_logging.redact_sensitive_text("[timing] LLM time-to-first-token: 1.08s").endswith("1.08s")
+    assert "abcd1234" not in startup_logging.redact_sensitive_text("token=abcd1234")
+
+
+def test_missing_whisper_vad_model_falls_back(monkeypatch):
+    import types
+
+    import transcribe
+
+    calls = []
+
+    class FakeModel:
+        def transcribe(self, audio, **kw):
+            calls.append(kw["vad_filter"])
+            if kw["vad_filter"]:
+                raise RuntimeError("[ONNXRuntimeError] NO_SUCHFILE: silero_vad_v6.onnx")
+            return [types.SimpleNamespace(text=" hello", no_speech_prob=0.0, avg_logprob=-0.1)], None
+
+    monkeypatch.setattr(transcribe, "_WHISPER_VAD_AVAILABLE", True)
+    monkeypatch.setattr(transcribe, "_get_model", lambda: FakeModel())
+    monkeypatch.setattr(transcribe, "_model_is_on_gpu", False)
+    assert transcribe._transcribe_impl_locked(b"", initial_prompt="", quick=True) == "hello"
+    assert calls == [True, False]

@@ -43,7 +43,8 @@ _SECRET_ENV_VARS = (
     "YOUTUBE_API_KEY",
 )
 _LABELED_SECRET_RE = re.compile(
-    r"(?i)(\b(?:api[_-]?key|access[_-]?token|refresh[_-]?token|id[_-]?token|"
+    # (?<!-): "time-to-first-token: 1.08s" is a timing, not a secret
+    r"(?i)((?<!-)\b(?:api[_-]?key|access[_-]?token|refresh[_-]?token|id[_-]?token|"
     r"client[_-]?secret|authorization|token)\b\s*[:=]\s*[\"']?)([^\s,;\"'}&]+)"
 )
 _BEARER_RE = re.compile(r"(?i)(\bbearer\s+)([A-Za-z0-9._~+/=-]+)")
