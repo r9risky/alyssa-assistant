@@ -71,7 +71,9 @@ def test_bubble_hugs_the_words_as_she_types(bubble):
     bubble._shown = 16.0
     bubble._render()
     typed = bubble.label.width()
-    assert early < typed < 200  # "Cat got your ton" fits snugly, not the full reply's width
+    from PySide6.QtGui import QFontMetrics
+    snug = QFontMetrics(bubble.label.font()).horizontalAdvance(bubble._revealed())
+    assert early < typed <= snug + 10  # "Cat got your ton" fits snugly, not the full reply's width
     assert bubble.width() == typed + 32
 
     bubble.on_talk_end()  # whole reply wraps at the max width, height exactly fits its lines
