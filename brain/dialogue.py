@@ -268,6 +268,7 @@ _CANT_DO_THAT_REPLY = (
 # "auto" sends only real thinking work to the strong model; chat, trivia and commands stay on the fast one.
 _HEAVY_TASK_RE = re.compile(
     r"\b(?:plan|compare|analy[sz]e|research|summari[sz]e|explain|draft|write|debug|"
+    r"code|coding|script|program|essay|"
     r"step by step|think (?:hard|carefully|it through))\b",
     re.IGNORECASE,
 )
@@ -305,6 +306,7 @@ def _call_model_with_error_handling(
     on_text_delta=None,
     cancel_event=None,
     tools=None,
+    model=None,
 ):
     """Call the model; map transport/auth/rate-limit errors to a spoken reply.
 
@@ -321,6 +323,7 @@ def _call_model_with_error_handling(
             cancel_event=cancel_event,
             provider=provider,
             tools=tools,
+            model=model,
         )
         if not isinstance(result, dict) or not isinstance(result.get("message"), dict):
             raise ValueError("missing message object")
@@ -547,9 +550,11 @@ _PROVIDER_LABELS = {
 def _build_model_request(user_text: str):
     """Select a provider and build the initial model request state."""
     global _fallback_notice_logged
-    from .providers import _provider_for_tier
+    from .providers import _model_for_tier, _provider_for_tier
 
-    provider, fallback_from = _provider_for_tier(_reasoning_tier(user_text))
+    tier = _reasoning_tier(user_text)
+    provider, fallback_from = _provider_for_tier(tier)
+    model = _model_for_tier(tier, provider)
     messages = [
         {"role": "system", "content": _build_system_prompt(user_text)},
         *_conversation_history,
@@ -565,7 +570,9 @@ def _build_model_request(user_text: str):
         missing_label = _PROVIDER_LABELS.get(fallback_from, fallback_from)
         notice = f"{missing_label} isn't configured, so I'm using {provider_label} for this request."
         telemetry.log(f"[routing] {notice}")
-    return messages, provider, provider_label, select_tools(user_text, _conversation_history)
+    if model:
+        telemetry.log(f"[routing] heavy task -> {provider_label} {model}")
+    return messages, provider, provider_label, select_tools(user_text, _conversation_history), model
 
 
 def _invoke_model_turn(
@@ -577,6 +584,7 @@ def _invoke_model_turn(
     cancel_event,
     *,
     force_tools=False,
+    model=None,
 ):
     """Run one model turn through the shared validation/error boundary."""
     return _call_model_with_error_handling(
@@ -587,6 +595,7 @@ def _invoke_model_turn(
         on_text_delta=on_text_delta,
         cancel_event=cancel_event,
         tools=request_tools,
+        model=model,
     )
 
 
@@ -702,7 +711,7 @@ def handle_command(
     if pre_model_reply is not None:
         return pre_model_reply
 
-    messages, provider, provider_label, request_tools = _build_model_request(user_text)
+    messages, provider, provider_label, request_tools, model = _build_model_request(user_text)
     already_delivered_partial = False
     retried_lazy_turn = False
     untrusted_web_content_seen = False
@@ -739,6 +748,7 @@ def handle_command(
             request_tools,
             None if already_delivered_partial else on_text_delta,
             cancel_event,
+            model=model,
         )
         if error_reply is not None:
             return error_reply
@@ -759,6 +769,7 @@ def handle_command(
                     None,  # a text answer here is discarded below; streaming it was spoken anyway
                     cancel_event,
                     force_tools=True,
+                    model=model,
                 )
                 if error_reply is not None:
                     return error_reply

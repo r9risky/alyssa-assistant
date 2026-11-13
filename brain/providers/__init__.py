@@ -28,6 +28,13 @@ def _provider_for_tier(tier: str):
     return strong_provider, None
 
 
+def _model_for_tier(tier: str, provider: str):
+    """The heavy-task model name, or None to use `provider`'s own chat model."""
+    if tier != "strong" or provider != getattr(config, "LLM_STRONG_PROVIDER", None):
+        return None
+    return str(getattr(config, "LLM_STRONG_MODEL", "") or "").strip() or None
+
+
 def _call_model(
     messages,
     force_tools: bool = False,
@@ -35,19 +42,21 @@ def _call_model(
     cancel_event=None,
     provider=None,
     tools=None,
+    model=None,
 ):
     """Dispatch to `provider` (default: config.LLM_PROVIDER).
 
     Returns {"message": {"content", "tool_calls"}}.
-    `force_tools` is Gemini-only; other providers ignore it.
+    `force_tools` is Gemini-only; other providers ignore it. `model` overrides the
+    provider's chat model (the heavy-task model).
     """
     provider = provider or config.LLM_PROVIDER
     if provider == "gemini":
-        return _call_gemini(messages, force_tools, on_text_delta, cancel_event, tools)
+        return _call_gemini(messages, force_tools, on_text_delta, cancel_event, tools, model=model)
     if provider == "openai":
-        return _call_openai(messages, on_text_delta, cancel_event, tools)
+        return _call_openai(messages, on_text_delta, cancel_event, tools, model=model)
     if provider == "anthropic":
-        return _call_anthropic(messages, on_text_delta, cancel_event, tools)
+        return _call_anthropic(messages, on_text_delta, cancel_event, tools, model=model)
     if provider == "custom_openai":
-        return _call_custom_openai(messages, on_text_delta, cancel_event, tools)
-    return _call_ollama(messages, on_text_delta, cancel_event, tools)
+        return _call_custom_openai(messages, on_text_delta, cancel_event, tools, model=model)
+    return _call_ollama(messages, on_text_delta, cancel_event, tools, model=model)

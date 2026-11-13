@@ -11,12 +11,12 @@ from ..common import GenerationCancelled, _HTTP_SESSION
 from .. import usage as _usage
 from ..tool_registry import TOOLS
 
-def _call_ollama(messages, on_text_delta=None, cancel_event=None, tools=None):
+def _call_ollama(messages, on_text_delta=None, cancel_event=None, tools=None, model=None):
     tool_list = TOOLS if tools is None else tools
     response = _HTTP_SESSION.post(
         config.OLLAMA_URL,
         json={
-            "model": config.OLLAMA_MODEL,
+            "model": model or config.OLLAMA_MODEL,
             "messages": messages,
             **({"tools": tool_list} if tool_list else {}),
             "stream": True,

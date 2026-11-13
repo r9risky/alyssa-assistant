@@ -112,7 +112,7 @@ def _messages_to_gemini(messages):
     return system_text, contents
 
 
-def _call_gemini(messages, force_tools: bool = False, on_text_delta=None, cancel_event=None, tools=None):
+def _call_gemini(messages, force_tools: bool = False, on_text_delta=None, cancel_event=None, tools=None, model=None):
     if not config.GEMINI_API_KEY:
         raise RuntimeError(
             "GEMINI_API_KEY isn't set. Set it as an environment variable "
@@ -141,7 +141,7 @@ def _call_gemini(messages, force_tools: bool = False, on_text_delta=None, cancel
     if system_text:
         body["systemInstruction"] = {"parts": [{"text": system_text}]}
 
-    url = _GEMINI_STREAM_URL_TEMPLATE.format(model=config.GEMINI_MODEL)
+    url = _GEMINI_STREAM_URL_TEMPLATE.format(model=model or config.GEMINI_MODEL)
     response = _post_with_thinking_fallback(
         url,
         body,

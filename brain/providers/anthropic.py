@@ -90,7 +90,7 @@ def _messages_to_anthropic(messages):
     return system_text, out
 
 
-def _call_anthropic(messages, on_text_delta=None, cancel_event=None, tools=None):
+def _call_anthropic(messages, on_text_delta=None, cancel_event=None, tools=None, model=None):
     if not config.ANTHROPIC_API_KEY:
         raise RuntimeError(
             "ANTHROPIC_API_KEY isn't set. Set it as an environment variable "
@@ -100,7 +100,7 @@ def _call_anthropic(messages, on_text_delta=None, cancel_event=None, tools=None)
 
     system_text, anthropic_messages = _messages_to_anthropic(messages)
     body = {
-        "model": config.ANTHROPIC_MODEL,
+        "model": model or config.ANTHROPIC_MODEL,
         "max_tokens": getattr(config, "LLM_MAX_OUTPUT_TOKENS", 256),
         "messages": anthropic_messages,
         "tools": _tools_to_anthropic(tools),

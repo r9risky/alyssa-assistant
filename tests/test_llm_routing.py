@@ -92,6 +92,40 @@ class LlmRoutingTests(unittest.TestCase):
         progress = [r for r in partial_replies if r.endswith("...")]
         self.assertEqual(len(progress), 1, partial_replies)
 
+    def test_auto_tier_sends_coding_to_the_heavy_model(self):
+        with patch.object(config, "LLM_REASONING_TIER", "auto"):
+            self.assertEqual(dialogue._reasoning_tier("Write me a python script"), "strong")
+            self.assertEqual(dialogue._reasoning_tier("How are you today?"), "fast")
+
+    def test_heavy_model_only_applies_to_heavy_tasks_on_its_own_service(self):
+        with (
+            patch.object(config, "LLM_STRONG_PROVIDER", "gemini"),
+            patch.object(config, "LLM_STRONG_MODEL", "gemini-4-hydrogen"),
+        ):
+            self.assertEqual(providers._model_for_tier("strong", "gemini"), "gemini-4-hydrogen")
+            self.assertIsNone(providers._model_for_tier("fast", "gemini"))
+            # Heavy service had no key, so it fell back to the main one: keep the main chat model.
+            self.assertIsNone(providers._model_for_tier("strong", "openai"))
+        with patch.object(config, "LLM_STRONG_MODEL", ""):
+            self.assertIsNone(providers._model_for_tier("strong", config.LLM_STRONG_PROVIDER))
+
+    def test_same_service_routes_chat_and_research_to_different_models(self):
+        self.addCleanup(dialogue.clear_conversation_history)
+        reply = {"message": {"content": "Penguins mate for life, which is sweet.", "tool_calls": []}}
+        with (
+            patch.object(config, "LLM_PROVIDER", "gemini"),
+            patch.object(config, "GEMINI_API_KEY", "key"),
+            patch.object(config, "GEMINI_MODEL", "gemini-3.5-flash-lite"),
+            patch.object(config, "LLM_REASONING_TIER", "auto"),
+            patch.object(config, "LLM_STRONG_PROVIDER", "gemini"),
+            patch.object(config, "LLM_STRONG_MODEL", "gemini-4-hydrogen"),
+            patch.object(providers, "_call_gemini", return_value=reply) as gemini,
+        ):
+            dialogue.handle_command("Tell me a joke")
+            dialogue.handle_command("Research the best budget laptops")
+
+        self.assertEqual([c.kwargs["model"] for c in gemini.call_args_list], [None, "gemini-4-hydrogen"])
+
 
 if __name__ == "__main__":
     unittest.main()

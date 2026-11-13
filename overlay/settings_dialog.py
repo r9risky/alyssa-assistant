@@ -1039,6 +1039,14 @@ class ConfigDialog(QDialog, AssistantTabMixin, EngineTabMixin, AudioTabMixin,
         target = target_map.get(provider)
         if target is not None and models:
             self._populate_model_combo(target, models)
+        strong = getattr(self, "strong_model_edit", None)
+        if strong is not None and models and self.strong_provider_combo.currentText() == provider:
+            blank = not strong.currentText().strip()
+            self._populate_model_combo(strong, models)
+            if blank:  # blank means "same as the chat model"; don't swap in the first fetched name
+                strong.blockSignals(True)
+                strong.setCurrentText("")
+                strong.blockSignals(False)
 
     def _trigger_quiet_model_fetches(self):
         """If API keys are configured, quietly fetch fresh model lists in the background."""

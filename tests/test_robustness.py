@@ -83,7 +83,7 @@ def test_call_reply_uses_persona_voice(monkeypatch):
 
     seen = {}
 
-    def fake_call(messages, provider, label, tools=None):
+    def fake_call(messages, provider, label, tools=None, **_kw):
         seen["system"] = messages[0]["content"]
         return {"message": {"content": "**Ha**, nice one!"}}, None
 
