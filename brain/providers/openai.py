@@ -240,6 +240,8 @@ def _describe_image_openai_compatible(
         return f"{provider_label} returned an error ({status}) while looking at the screen."
 
     data = response.json()
+    usage = data.get("usage") or {}
+    _usage.record(provider_label, usage.get("prompt_tokens"), usage.get("completion_tokens"))
     choices = data.get("choices") or []
     if not choices:
         return "I looked, but didn't get a usable description back."

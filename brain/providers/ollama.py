@@ -132,5 +132,6 @@ def _describe_image_ollama(image_bytes: bytes, prompt: str) -> str:
         return f"Ollama returned an error ({status}) while looking at the screen."
 
     data = response.json()
+    _usage.record("ollama", data.get("prompt_eval_count"), data.get("eval_count"))
     text = ((data.get("message") or {}).get("content") or "").strip()
     return text or "I looked, but didn't get a usable description back."

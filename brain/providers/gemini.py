@@ -19,6 +19,31 @@ _GEMINI_URL_TEMPLATE = "https://generativelanguage.googleapis.com/v1beta/models/
 _GEMINI_STREAM_URL_TEMPLATE = "https://generativelanguage.googleapis.com/v1beta/models/{model}:streamGenerateContent"
 
 
+# Set once a model rejects thinkingConfig, so later calls skip the doomed first request.
+_thinking_rejected = False
+
+
+def _record_usage(usage: dict) -> None:
+    # Thinking tokens are billed as output but reported apart from candidatesTokenCount.
+    output = int(usage.get("candidatesTokenCount") or 0) + int(usage.get("thoughtsTokenCount") or 0)
+    _usage.record("gemini", usage.get("promptTokenCount"), output)
+
+
+def _post_with_thinking_fallback(url, body, **kwargs):
+    """POST; if the model 400s on thinkingConfig, retry without it and remember that."""
+    global _thinking_rejected
+    config_block = body.get("generationConfig", {})
+    if _thinking_rejected:
+        config_block.pop("thinkingConfig", None)
+    response = _HTTP_SESSION.post(url, json=body, **kwargs)
+    if response.status_code == 400 and "thinkingConfig" in config_block:
+        config_block.pop("thinkingConfig", None)
+        response.close()
+        response = _HTTP_SESSION.post(url, json=body, **kwargs)
+        _thinking_rejected = response.status_code != 400
+    return response
+
+
 def _tools_to_gemini_declarations(tools=None):
     """OpenAI-style tools -> Gemini `functionDeclarations`. Cached on `_gemini_tools_cache`."""
     global _gemini_tools_cache
@@ -117,22 +142,13 @@ def _call_gemini(messages, force_tools: bool = False, on_text_delta=None, cancel
         body["systemInstruction"] = {"parts": [{"text": system_text}]}
 
     url = _GEMINI_STREAM_URL_TEMPLATE.format(model=config.GEMINI_MODEL)
-    response = _HTTP_SESSION.post(
+    response = _post_with_thinking_fallback(
         url,
+        body,
         params={"key": config.GEMINI_API_KEY, "alt": "sse"},
-        json=body,
         timeout=(10, 60),
         stream=True,
     )
-    if response.status_code == 400 and "thinkingConfig" in body.get("generationConfig", {}):
-        body["generationConfig"].pop("thinkingConfig", None)
-        response = _HTTP_SESSION.post(
-            url,
-            params={"key": config.GEMINI_API_KEY, "alt": "sse"},
-            json=body,
-            timeout=(10, 60),
-            stream=True,
-        )
     response.raise_for_status()
     text_chunks = []
     tool_calls = []
@@ -169,7 +185,7 @@ def _call_gemini(messages, force_tools: bool = False, on_text_delta=None, cancel
                         tool_calls.append(call)
     finally:
         response.close()
-    _usage.record("gemini", usage.get("promptTokenCount"), usage.get("candidatesTokenCount"))
+    _record_usage(usage)
 
     if block_reason:
         text_chunks = [f"Gemini blocked that request ({block_reason})."]
@@ -216,14 +232,9 @@ def _describe_image_gemini(image_bytes: bytes, mime_type: str, prompt: str) -> s
     url = _GEMINI_URL_TEMPLATE.format(model=config.GEMINI_MODEL)
     try:
         for attempt in range(3):
-            response = _HTTP_SESSION.post(
-                url, params={"key": config.GEMINI_API_KEY}, json=body, timeout=60
+            response = _post_with_thinking_fallback(
+                url, body, params={"key": config.GEMINI_API_KEY}, timeout=60
             )
-            if response.status_code == 400 and "thinkingConfig" in body.get("generationConfig", {}):
-                body["generationConfig"].pop("thinkingConfig", None)
-                response = _HTTP_SESSION.post(
-                    url, params={"key": config.GEMINI_API_KEY}, json=body, timeout=60
-                )
             if response.status_code != 503 or attempt == 2:
                 response.raise_for_status()
                 break
@@ -246,6 +257,7 @@ def _describe_image_gemini(image_bytes: bytes, mime_type: str, prompt: str) -> s
         return f"Gemini API returned an error ({status}) while looking at the screen."
 
     data = response.json()
+    _record_usage(data.get("usageMetadata") or {})
     candidates = data.get("candidates") or []
     if not candidates:
         block_reason = data.get("promptFeedback", {}).get("blockReason")

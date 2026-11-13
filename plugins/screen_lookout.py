@@ -32,6 +32,29 @@ _last_check_in_time: float = 0.0
 _check_in_categories = ["Water", "Stretch", "Look away", "Meals"]
 _check_in_index: int = 0
 
+# Each look is a vision call, so skip it while the screen hasn't changed. A small change (a
+# progress bar) can hide under the threshold, so watches still re-check this often anyway.
+WATCH_RECHECK_SECONDS = 60
+_CHANGE_THRESHOLD = 2.0  # mean grey-level difference on a 32x18 thumbnail
+_last_watch_look: tuple[bytes | None, float] = (None, 0.0)
+_last_commentary_look: bytes | None = None
+
+
+def _screen_fingerprint() -> bytes | None:
+    """Tiny greyscale thumbnail of the screen; None if it can't be captured."""
+    try:
+        from PIL import ImageGrab
+
+        return ImageGrab.grab().convert("L").resize((32, 18)).tobytes()
+    except Exception:
+        return None
+
+
+def _changed(before: bytes | None, now: bytes | None) -> bool:
+    if before is None or now is None or len(before) != len(now):
+        return True
+    return sum(abs(a - b) for a, b in zip(before, now)) / len(now) > _CHANGE_THRESHOLD
+
 
 def _normalize_watch_text(text: str) -> str:
     cleaned = " ".join((text or "").strip().split())
@@ -141,9 +164,10 @@ def evaluate_watches_against_description(screen_description: str) -> str | None:
         return f"Heads up — I spotted '{matched['text']}' on your screen."
 
 
-def check_proactive() -> str | None:
+def check_watch() -> str | None:
     """Background watcher tick for visual lookouts, screen commentary, and check-ins."""
     global _last_screen_watch_time, _last_screen_summary, _last_check_in_time, _check_in_index
+    global _last_watch_look, _last_commentary_look
 
     if getattr(config, "QUIET_MODE", False):
         return None
@@ -152,6 +176,14 @@ def check_proactive() -> str | None:
 
     # 1. Active `watch_for` visual triggers
     watches = get_active_watches()
+    fingerprint = None
+    if watches:
+        fingerprint = _screen_fingerprint()
+        last_print, last_time = _last_watch_look
+        if not _changed(last_print, fingerprint) and now - last_time < WATCH_RECHECK_SECONDS:
+            watches = []  # same screen as last look: nothing new to spot
+        else:
+            _last_watch_look = (fingerprint, now)
     if watches:
         numbered = "; ".join(f"{i + 1}) {w['text']}" for i, w in enumerate(watches))
         question = (
@@ -170,9 +202,13 @@ def check_proactive() -> str | None:
         interval = max(30, int(getattr(config, "SCREEN_WATCH_INTERVAL_SECONDS", 120)))
         if now - _last_screen_watch_time >= interval:
             _last_screen_watch_time = now
-            summary = actions.bridges.describe_screen(
-                "In one short sentence, what is the user currently doing on screen?"
-            )
+            fingerprint = fingerprint or _screen_fingerprint()
+            summary = None
+            if _changed(_last_commentary_look, fingerprint):
+                _last_commentary_look = fingerprint
+                summary = actions.bridges.describe_screen(
+                    "In one short sentence, what is the user currently doing on screen?"
+                )
             if summary and not summary.startswith("Couldn't"):
                 memory.record_screen_observation(summary)
                 normalized = summary.strip().lower()

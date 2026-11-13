@@ -211,7 +211,7 @@ def husk_code_companion(action: str = "status", message: str = "") -> str:
     return "\n".join(lines)
 
 
-def check_proactive() -> str | None:
+def check_watch() -> str | None:
     """Announce queued coding agent permission requests or completion alerts."""
     if not getattr(config, "HUSK_MODE_ENABLED", False) or getattr(config, "QUIET_MODE", False):
         return None
