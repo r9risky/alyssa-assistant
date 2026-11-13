@@ -168,9 +168,20 @@ def apply_voice_layers(
     return np.clip(mixed, -1.0, 1.0).astype(np.float32)
 
 
+def effects_active() -> bool:
+    """True when any voice effect is set; at their neutral values her voice plays untouched."""
+    return bool(
+        abs(float(getattr(config, "VOICE_PITCH_SEMITONES", 0.0) or 0.0)) >= 0.05
+        or abs(float(getattr(config, "VOICE_SPEED_FACTOR", 1.0) or 1.0) - 1.0) >= 0.02
+        or getattr(config, "VOICE_LAYERS_ENABLED", False)
+        or int(getattr(config, "VOICE_ROBOT_AMOUNT", 0) or 0) > 0
+        or int(getattr(config, "VOICE_GLITCH_AMOUNT", 0) or 0) > 0
+    )
+
+
 def process_samples(samples: np.ndarray, sample_rate: int = 24000) -> np.ndarray:
     """Apply all enabled config.VOICE_* DSP effects to normalized float32 samples (-1.0..1.0)."""
-    if not getattr(config, "VOICE_DSP_ENABLED", False) or samples.size == 0:
+    if samples.size == 0:
         return samples
     out = samples.astype(np.float32)
     pitch = float(getattr(config, "VOICE_PITCH_SEMITONES", 0.0) or 0.0)
@@ -194,20 +205,7 @@ def process_samples(samples: np.ndarray, sample_rate: int = 24000) -> np.ndarray
 
 def process_pcm16_mono(pcm_bytes: bytes, sample_rate: int = 24000) -> bytes:
     """Process 16-bit signed mono PCM bytes through the Voice DSP chain."""
-    if not pcm_bytes or not getattr(config, "VOICE_DSP_ENABLED", False):
-        return pcm_bytes
-    pitch = float(getattr(config, "VOICE_PITCH_SEMITONES", 0.0) or 0.0)
-    speed = float(getattr(config, "VOICE_SPEED_FACTOR", 1.0) or 1.0)
-    layers = bool(getattr(config, "VOICE_LAYERS_ENABLED", False))
-    robot = int(getattr(config, "VOICE_ROBOT_AMOUNT", 0) or 0)
-    glitch = int(getattr(config, "VOICE_GLITCH_AMOUNT", 0) or 0)
-    if (
-        abs(pitch) < 0.05
-        and abs(speed - 1.0) < 0.02
-        and not layers
-        and robot <= 0
-        and glitch <= 0
-    ):
+    if not pcm_bytes or not effects_active():
         return pcm_bytes
 
     usable = len(pcm_bytes) - (len(pcm_bytes) % 2)
@@ -236,27 +234,9 @@ def synthesize_typing_blip(
 
 def process_audio_file(input_path: str) -> str | None:
     """Decode input_path, apply voice DSP effects (pitch, speed, robot, glitch, layers),
-    and write to a temporary WAV file. Returns the path to the temp WAV, or None if DSP is disabled,
-    neutral, or fails."""
-    if not getattr(config, "VOICE_DSP_ENABLED", False):
-        return None
-    if not input_path or not os.path.isfile(input_path):
-        return None
-
-    pitch = float(getattr(config, "VOICE_PITCH_SEMITONES", 0.0) or 0.0)
-    speed = float(getattr(config, "VOICE_SPEED_FACTOR", 1.0) or 1.0)
-    layers = bool(getattr(config, "VOICE_LAYERS_ENABLED", False))
-    robot = int(getattr(config, "VOICE_ROBOT_AMOUNT", 0) or 0)
-    glitch = int(getattr(config, "VOICE_GLITCH_AMOUNT", 0) or 0)
-
-    # If all DSP settings are at neutral defaults, bypass processing cleanly
-    if (
-        abs(pitch) < 0.05
-        and abs(speed - 1.0) < 0.02
-        and not layers
-        and robot <= 0
-        and glitch <= 0
-    ):
+    and write to a temporary WAV file. Returns the path to the temp WAV, or None if no effect is set
+    or it fails."""
+    if not effects_active() or not input_path or not os.path.isfile(input_path):
         return None
 
     try:

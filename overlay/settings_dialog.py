@@ -206,7 +206,7 @@ class _SidebarTabs(QWidget):
     ADVANCED_LABELS = frozenset({
         "Pre-speech buffer:", "VAD engine:", "Compute device:", "Precision type:",
         "Whisper model:", "Groq Whisper model:", "Short-term turns:", "Facts recalled / turn:",
-        "Max length per fact:", "Saved memories (max):", "Developer console:", "DSP pipeline:",
+        "Max length per fact:", "Saved memories (max):", "Developer console:",
         "Harmonic layers:", "Pitch shift:", "Speed factor:", "Check every:", "Disk space alert:",
         "IP auto-detection:", "Dimmed level:", "Bounce height:",
     })
@@ -572,6 +572,7 @@ class ConfigDialog(QDialog, AssistantTabMixin, EngineTabMixin, AudioTabMixin,
 
         self._update_responsive_layout()
         self.tabs.apply_filter()  # tucks the advanced rows away
+        self._last_assistant_values = self._gather_assistant_values()  # applies save only what changes
 
         if focus_gemini:
             self.tabs.setCurrentIndex(0)

@@ -167,13 +167,10 @@ class AudioTabMixin:
         # -- Card 4: Voice DSP Effects --
         dsp_card, dsp_form = self._create_card(
             "Voice DSP & Sound Effects",
-            "Optional real-time pitch shifting, speed scaling, synth layers, and UI sound cues.",
+            "Robot and glitch effects and a typing sound; pitch, speed and harmony layers are under "
+            "Show advanced. At 0 / 1.0x her voice plays untouched.",
             "🎛️",
         )
-        self.voice_dsp_enabled_check = QCheckBox("Enable Voice DSP post-processing")
-        self.voice_dsp_enabled_check.setChecked(bool(getattr(config, "VOICE_DSP_ENABLED", False)))
-        self.voice_dsp_enabled_check.toggled.connect(self._queue_assistant_apply)
-        self._add_row(dsp_form, "DSP pipeline:", self.voice_dsp_enabled_check)
 
         self.voice_pitch_spin = QDoubleSpinBox()
         self.voice_pitch_spin.setRange(-12.0, 12.0)

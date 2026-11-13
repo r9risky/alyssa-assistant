@@ -41,7 +41,7 @@ def test_portaudio_reset_is_rate_limited_unless_forced():
 
 def test_missing_mic_lookup_from_barge_in_never_resets_portaudio():
     with (
-        patch.object(recorder.config, "MICROPHONE_DEVICE", "Gone Mic", create=True),
+        patch.object(recorder.config, "MICROPHONE_DEVICE", "Gone Mic"),
         patch.object(recorder, "_find_configured_device", return_value=None),
         patch.object(recorder, "_startup_device_wait_used", True),
         patch.object(recorder, "_rescan_portaudio_if_idle") as rescan,

@@ -1001,7 +1001,6 @@ class AssistantTabMixin:
             "WAKE_WORD_THRESHOLD": round(self.wake_sensitivity_slider.value() / 100.0, 2),
             "WAKE_CHIME_ENABLED": self.wake_chime_check.isChecked(),
             "WAKE_CHIME_VOLUME": round(self.wake_chime_volume_slider.value() / 100.0, 2),
-            "VOICE_DSP_ENABLED": bool(self.voice_dsp_enabled_check.isChecked()) if hasattr(self, "voice_dsp_enabled_check") else bool(getattr(config, "VOICE_DSP_ENABLED", False)),
             "VOICE_PITCH_SEMITONES": round(float(self.voice_pitch_spin.value()), 2) if hasattr(self, "voice_pitch_spin") else float(getattr(config, "VOICE_PITCH_SEMITONES", 0.0)),
             "VOICE_SPEED_FACTOR": round(float(self.voice_speed_spin.value()), 2) if hasattr(self, "voice_speed_spin") else float(getattr(config, "VOICE_SPEED_FACTOR", 1.0)),
             "VOICE_ROBOT_AMOUNT": int(self.voice_robot_slider.value()) if hasattr(self, "voice_robot_slider") else int(getattr(config, "VOICE_ROBOT_AMOUNT", 0)),
@@ -1087,7 +1086,7 @@ class AssistantTabMixin:
 
     def _gather_assistant_updates(self, values=None) -> dict:
         """Non-secret fields to save to settings.json. SECRET_ENV_VARS go through _gather_secret_updates()."""
-        values = values or self._gather_assistant_values()
+        values = self._gather_assistant_values() if values is None else values
         return {
             key: value for key, value in values.items()
             if key not in credential_store.SECRET_ENV_VARS
@@ -1103,12 +1102,18 @@ class AssistantTabMixin:
 
         _set_console_visible = _settings_dialog._set_console_visible
         values = self._gather_assistant_values()
-        updates = self._gather_assistant_updates(values)
-        try:
-            user_settings.save(updates)
-        except OSError as e:
-            QMessageBox.warning(self, "Settings", f"Couldn't save your settings: {e}")
-            return
+        # Only what changed here: re-writing every field put back things changed elsewhere
+        # meanwhile (Quiet mode from its hotkey, a call ending) and pinned every default.
+        last = getattr(self, "_last_assistant_values", None)
+        changed = values if last is None else {k: v for k, v in values.items() if last.get(k) != v}
+        updates = self._gather_assistant_updates(changed)
+        if updates:
+            try:
+                user_settings.save(updates)
+            except OSError as e:
+                QMessageBox.warning(self, "Settings", f"Couldn't save your settings: {e}")
+                return
+        self._last_assistant_values = values
 
         secret_updates = self._gather_secret_updates(values)
         if secret_updates:
@@ -1138,23 +1143,25 @@ class AssistantTabMixin:
         )
         old_spotify = (config.SPOTIFY_CLIENT_ID, config.SPOTIFY_CLIENT_SECRET)
         old_audio_output = getattr(config, "AUDIO_OUTPUT_DEVICE", "default")
-        for key, value in values.items():
+        for key, value in changed.items():
             setattr(config, key, value)
-        import phone_remote
-        remote_error = phone_remote.start()
-        if remote_error:
-            QMessageBox.warning(self, "Phone remote", remote_error)
-        import discord_bot
+        if "PHONE_REMOTE_ENABLED" in changed:  # else its error popped up on every change
+            import phone_remote
+            remote_error = phone_remote.start()
+            if remote_error:
+                QMessageBox.warning(self, "Phone remote", remote_error)
         new_token = self.discord_token_edit.text().strip()
-        if new_token:
-            if credential_store.set_secret("DISCORD_BOT_TOKEN", new_token):
-                self.discord_token_edit.clear()
-                self.discord_token_edit.setPlaceholderText("Saved - paste a new one to replace it")
-            discord_bot.stop()  # log in again with the new token
-        discord_error = discord_bot.start()
-        if discord_error and self.discord_enabled_check.isChecked():
-            QMessageBox.warning(self, "Discord bot", discord_error)
-        QTimer.singleShot(4000, self._refresh_discord_status)
+        if new_token or any(key.startswith("DISCORD_") for key in changed):
+            import discord_bot
+            if new_token:
+                if credential_store.set_secret("DISCORD_BOT_TOKEN", new_token):
+                    self.discord_token_edit.clear()
+                    self.discord_token_edit.setPlaceholderText("Saved - paste a new one to replace it")
+                discord_bot.stop()  # log in again with the new token
+            discord_error = discord_bot.start()
+            if discord_error and self.discord_enabled_check.isChecked():
+                QMessageBox.warning(self, "Discord bot", discord_error)
+            QTimer.singleShot(4000, self._refresh_discord_status)
 
         if old_preset != getattr(config, "SECURITY_PRESET", "balanced"):
             try:

@@ -14,7 +14,6 @@ import random
 import re
 import threading
 
-TAB_TITLE = "Mini-Games & Ink"
 
 _ink_lock = threading.RLock()
 _ink_shapes: list[dict] = []

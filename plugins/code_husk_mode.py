@@ -12,14 +12,16 @@ Claude Code, Codex, and OpenCode:
 from __future__ import annotations
 
 import datetime
+import sys
 from http.server import BaseHTTPRequestHandler, HTTPServer
 import json
 import startup_logging
 import threading
 
 import config
+import user_settings
 
-TAB_TITLE = "Coding buddy mode"
+GUI_PANEL_TITLE = "Coding buddy mode"
 WATCH_INTERVAL_SECONDS = 10
 
 _lock = threading.RLock()
@@ -27,6 +29,11 @@ _recent_events: list[dict] = []
 _pending_alerts: list[str] = []
 _http_server: HTTPServer | None = None
 _http_thread: threading.Thread | None = None
+
+# Reloading add-ons runs this file again: the copy before this one still holds the port.
+_previous = sys.modules.get("plugins.code_husk_mode")
+if _previous is not None and hasattr(_previous, "stop_husk_server"):
+    _previous.stop_husk_server()
 
 
 def record_husk_event(
@@ -182,7 +189,7 @@ def husk_code_companion(action: str = "status", message: str = "") -> str:
     """Inspect or control Coding buddy mode for Claude Code, Codex, and OpenCode."""
     act = (action or "status").strip().lower()
     if act == "enable":
-        config.HUSK_MODE_ENABLED = True
+        user_settings.change("HUSK_MODE_ENABLED", True)
         started = start_husk_server()
         port = getattr(config, "HUSK_PORT", 47831)
         if started:
@@ -190,7 +197,7 @@ def husk_code_companion(action: str = "status", message: str = "") -> str:
         return "Coding buddy mode enabled."
 
     if act == "disable":
-        config.HUSK_MODE_ENABLED = False
+        user_settings.change("HUSK_MODE_ENABLED", False)
         stop_husk_server()
         return "Coding buddy mode disabled."
 
@@ -221,7 +228,7 @@ def check_watch() -> str | None:
         return _pending_alerts.pop(0)
 
 
-def build_gui(parent=None):
+def build_gui_panel(parent=None):
     """Build the Settings tab for Coding buddy mode."""
     from PySide6.QtGui import QGuiApplication
     from PySide6.QtWidgets import (
@@ -236,7 +243,8 @@ def build_gui(parent=None):
         QWidget,
     )
 
-    panel = QWidget(parent)
+    panel = QWidget()
+    panel.setObjectName("tabPage")
     layout = QVBoxLayout(panel)
     layout.setContentsMargins(12, 12, 12, 12)
     layout.setSpacing(10)
@@ -245,7 +253,7 @@ def build_gui(parent=None):
     enable_check.setChecked(bool(getattr(config, "HUSK_MODE_ENABLED", False)))
 
     def _on_toggle(checked: bool):
-        config.HUSK_MODE_ENABLED = bool(checked)
+        user_settings.change("HUSK_MODE_ENABLED", bool(checked))
         if checked:
             start_husk_server()
         else:
@@ -259,7 +267,16 @@ def build_gui(parent=None):
     port_spin = QSpinBox()
     port_spin.setRange(1024, 65535)
     port_spin.setValue(int(getattr(config, "HUSK_PORT", 47831)))
-    port_spin.valueChanged.connect(lambda val: setattr(config, "HUSK_PORT", int(val)))
+    port_spin.setKeyboardTracking(False)  # one restart once typing ends, not one per keystroke
+
+    def _on_port(val: int):
+        user_settings.change("HUSK_PORT", int(val))
+        if _http_server is not None:  # it's listening on the old port: move it
+            stop_husk_server()
+            start_husk_server()
+        snippet_box.setPlainText(get_claude_code_hook_snippet())  # the copied hook must hit the new port
+
+    port_spin.valueChanged.connect(_on_port)
     port_row.addWidget(port_spin)
     port_row.addStretch(1)
     layout.addLayout(port_row)
@@ -286,7 +303,7 @@ def build_gui(parent=None):
     clear_btn.clicked.connect(lambda: (clear_husk_events(), _refresh()))
     _refresh()
 
-    layout.addWidget(QLabel("Claude Code `.claude/settings.json` Hook Snippet:"))
+    layout.addWidget(QLabel("Hook snippet for Claude Code's .claude/settings.json:"))
     snippet_box = QPlainTextEdit()
     snippet_box.setReadOnly(True)
     snippet_box.setPlainText(get_claude_code_hook_snippet())
@@ -301,6 +318,11 @@ def build_gui(parent=None):
     layout.addWidget(copy_btn)
 
     return panel
+
+
+# It stays on across restarts, so its hook listener has to come back too.
+if getattr(config, "HUSK_MODE_ENABLED", False) and not start_husk_server():
+    print(f"[coding buddy] Port {getattr(config, 'HUSK_PORT', 47831)} is taken; pick another in its Settings tab.")
 
 
 TOOLS = [
